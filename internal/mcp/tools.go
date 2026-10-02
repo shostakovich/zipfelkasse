@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log/slog"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -19,29 +20,29 @@ import (
 const serverVersion = "1.0.0"
 
 func serverInfo() map[string]any {
-	return map[string]any{"name": "zipfelkasse", "title": "Zipfelkasse – geteilte Ausgaben", "version": serverVersion}
+	return map[string]any{"name": "zipfelkasse", "title": "Zipfelkasse – shared expenses", "version": serverVersion}
 }
 
 // instructionsText explains the server to the model (initialize,
 // server/discover); instructions() appends today's date.
-const instructionsText = `Zipfelkasse ist die Ausgabenverwaltung einer einzigen Gruppe (wie Splitwise/Spliit). Alle Tools sind nur lesend.
-Beträge sind Euro. In Ergebnissen steht jeder Betrag zweimal: als Text „1234,56“ und als Ganzzahl in Cent (Feld mit Endung _cent).
-Saldo: positiv = bekommt Geld von den anderen, negativ = schuldet Geld.
-Rückzahlungen sind Ausgleichszahlungen zwischen zwei Personen, keine Ausgaben; sie zählen für Salden, nicht für Ausgaben-Statistiken.
-Datumsangaben im Format JJJJ-MM-TT. Personen und Kategorien mit ihrem Namen angeben (Groß-/Kleinschreibung egal).
-Vorgehen: Salden und Ausgleich → salden. Einzelne Buchungen finden → ausgaben_suchen. Summen nach Kategorie, Monat oder Person → statistik.
-Alles andere → zuerst schema lesen, dann sql_abfrage (SQLite, nur SELECT).`
+const instructionsText = `Zipfelkasse manages the shared expenses of a single group (like Splitwise/Spliit). All tools are read-only.
+Amounts are in euros. Every amount in a result appears twice: as text with a dot as decimal separator and no thousands separator ("1234.56") and as an integer in cents (field ending in _cents).
+Balance: positive = is owed money by the others, negative = owes money.
+Reimbursements are settlement payments between two people, not expenses; they count for balances, not for expense statistics.
+Dates use the format YYYY-MM-DD. Refer to people and categories by name (case-insensitive). Names, titles, categories and notes are stored as entered (often in German).
+How to proceed: balances and settlement → balances. Finding individual expenses → search_expenses. Totals by category, month or person → statistics.
+Anything else → read schema first, then sql_query (SQLite, SELECT only).`
 
-// categoryHint explains the kategorie value for expenses without a category.
-const categoryHint = `Use "ohne" for expenses without a category (statistik shows them as "` + store.NoCategory + `").`
+// categoryHint explains the category value for expenses without a category.
+const categoryHint = `Use "` + noCategoryArg + `" for expenses without a category (statistics labels them "` + store.NoCategory + `").`
 
-// server ist der MCP-Handler mit seinen Tools.
+// server is the MCP handler with its tools.
 type server struct {
 	d      web.Deps
 	log    *slog.Logger
-	order  []string // Tool-Reihenfolge für tools/list (deterministisch)
+	order  []string // tool order for tools/list (deterministic)
 	tools  map[string]tool
-	sqlSem chan struct{} // begrenzt parallele sql_abfrage-Sandboxen
+	sqlSem chan struct{} // limits concurrent sql_query sandboxes
 	now    func() time.Time
 }
 
@@ -77,12 +78,24 @@ type tool struct {
 	run func(ctx context.Context, args json.RawMessage) (toolResult, error)
 }
 
-// toolResult: data wird structuredContent (und, ohne text, als JSON der
-// Textinhalt).
+// toolResult: data becomes structuredContent (and, without text, the text
+// content as JSON).
 type toolResult struct {
 	text string
 	data any
 }
+
+// Values of the reimbursements argument of search_expenses.
+const (
+	reimbursementsExclude = "exclude"
+	reimbursementsInclude = "include"
+	reimbursementsOnly    = "only"
+)
+
+var reimbursementModes = []string{reimbursementsExclude, reimbursementsInclude, reimbursementsOnly}
+
+// groupings are the valid group_by values of statistics.
+var groupings = []string{store.StatsByCategory, store.StatsByMonth, store.StatsByPerson, store.StatsByCategoryMonth}
 
 func newServer(d web.Deps) *server {
 	s := &server{d: d, log: newLogger(d), tools: map[string]tool{}, sqlSem: make(chan struct{}, 2), now: time.Now}
@@ -95,76 +108,75 @@ func newServer(d web.Deps) *server {
 		}
 	}
 	dateProp := func(desc string) map[string]any {
-		return map[string]any{"type": "string", "description": desc + " Format JJJJ-MM-TT (auch TT.MM.JJJJ)."}
+		return map[string]any{"type": "string", "description": desc + " Format YYYY-MM-DD (DD.MM.YYYY is accepted too)."}
 	}
 
-	add("salden", "Salden und Ausgleich",
-		"Aktueller Saldo jeder Person in Euro und ein Ausgleichsvorschlag (wer überweist wem wie viel, damit alle bei 0 sind). "+
-			"Positiver Saldo = bekommt Geld, negativer = schuldet Geld. Berücksichtigt alle nicht gelöschten Ausgaben und Rückzahlungen.",
+	add("balances", "Balances and settlement",
+		"Current balance of each person in euros and a settlement proposal (who transfers how much to whom so that everyone ends at 0). "+
+			"Positive balance = is owed money, negative = owes money. Includes all non-deleted expenses and reimbursements.",
 		map[string]any{"type": "object", "properties": map[string]any{}, "additionalProperties": false},
-		s.salden)
+		s.balances)
 
-	add("ausgaben_suchen", "Ausgaben suchen",
-		"Sucht einzelne Ausgaben (neueste zuerst) mit Betrag, Zahler, Kategorie und Aufteilung (Anteil jeder Person). "+
-			"Alle Filter sind optional und werden kombiniert. Liefert außerdem die Gesamtzahl der Treffer, deren Summe und – mit person – "+
-			"die Summe der Anteile dieser Person. Für reine Summen nach Kategorie/Monat ist statistik besser.",
+	add("search_expenses", "Search expenses",
+		"Searches individual expenses (newest first) with amount, payer, category and split (each person's share). "+
+			"All filters are optional and are combined. Also returns the total number of matches, their total and – with person – "+
+			"the total of that person's shares. For plain totals by category/month, statistics is the better choice.",
 		map[string]any{
 			"type": "object",
 			"properties": map[string]any{
-				"von":       dateProp("Erstes Datum (inklusive)."),
-				"bis":       dateProp("Letztes Datum (inklusive)."),
-				"kategorie": map[string]any{"type": "string", "description": "Name der Kategorie, z. B. „Lebensmittel“. " + categoryHint},
-				"person":    map[string]any{"type": "string", "description": "Name einer Person: findet Ausgaben, die sie bezahlt hat ODER an denen sie beteiligt ist."},
-				"text":      map[string]any{"type": "string", "description": "Teilstring in Titel oder Notiz (Groß-/Kleinschreibung egal)."},
-				"rueckzahlungen": map[string]any{"type": "string", "enum": []string{"ohne", "mit", "nur"},
-					"description": "Rückzahlungen (Ausgleichszahlungen zwischen Personen) ausblenden (ohne, Standard), mitliefern (mit) oder nur diese (nur)."},
-				"limit": map[string]any{"type": "integer", "minimum": 1, "maximum": 500, "description": "Höchstzahl gelieferter Ausgaben, Standard 50."},
+				"from":     dateProp("First date (inclusive)."),
+				"to":       dateProp("Last date (inclusive)."),
+				"category": map[string]any{"type": "string", "description": `Category name, e.g. "Lebensmittel". ` + categoryHint},
+				"person":   map[string]any{"type": "string", "description": "Name of a person: finds expenses they paid OR take part in."},
+				"text":     map[string]any{"type": "string", "description": "Substring of the title or notes (case-insensitive)."},
+				"reimbursements": map[string]any{"type": "string", "enum": reimbursementModes,
+					"description": "Reimbursements (settlement payments between people): hide them (exclude, default), include them (include) or return only them (only)."},
+				"limit": map[string]any{"type": "integer", "minimum": 1, "maximum": store.SQLMaxRows, "description": "Maximum number of expenses returned, default 50."},
 			},
 			"additionalProperties": false,
 		},
-		s.ausgabenSuchen)
+		s.searchExpenses)
 
-	add("statistik", "Statistik",
-		"Summen der Ausgaben gruppiert nach kategorie, monat (JJJJ-MM), person oder kategorie_monat, optional für einen Zeitraum. "+
-			"Ohne person: Gesamtbeträge der Ausgaben. Mit person: nur der Anteil dieser Person an jeder Ausgabe, also was sie selbst verbraucht hat "+
-			"(z. B. „Wie viel habe ich 2026 für Restaurants ausgegeben?“). Bei gruppierung=person ist summe der Anteil (Verbrauch) jeder Person "+
-			"und bezahlt, was sie vorgestreckt hat. Rückzahlungen und gelöschte Ausgaben zählen nie mit.",
+	add("statistics", "Statistics",
+		"Expense totals grouped by category, month (YYYY-MM), person or category_month, optionally for a period. "+
+			"Without share_of: total amounts of the expenses. With share_of: only that person's share of each expense, i.e. what they consumed themselves "+
+			`(e.g. "How much did I spend on restaurants in 2026?"). With group_by=person, amount is each person's share (consumption) `+
+			"and paid is what they paid up front. Reimbursements and deleted expenses never count.",
 		map[string]any{
 			"type": "object",
 			"properties": map[string]any{
-				"gruppierung": map[string]any{"type": "string", "enum": []string{store.StatsByCategory, store.StatsByMonth, store.StatsByPerson, store.StatsByCategoryMonth},
-					"description": "Wonach gruppiert wird."},
-				"von":       dateProp("Erstes Datum (inklusive)."),
-				"bis":       dateProp("Letztes Datum (inklusive)."),
-				"person":    map[string]any{"type": "string", "description": "Name einer Person: nur ihr Anteil zählt (Sicht dieser Person). Leer = Gesamtbeträge."},
-				"kategorie": map[string]any{"type": "string", "description": "Only count expenses of this category (name, case-insensitive). " + categoryHint},
+				"group_by": map[string]any{"type": "string", "enum": groupings, "description": "What to group by."},
+				"from":     dateProp("First date (inclusive)."),
+				"to":       dateProp("Last date (inclusive)."),
+				"share_of": map[string]any{"type": "string", "description": "Name of a person: only their share counts (that person's perspective). Empty = total amounts."},
+				"category": map[string]any{"type": "string", "description": "Only count expenses of this category (name, case-insensitive). " + categoryHint},
 			},
-			"required":             []string{"gruppierung"},
+			"required":             []string{"group_by"},
 			"additionalProperties": false,
 		},
-		s.statistik)
+		s.statistics)
 
-	add("schema", "Datenbankschema",
-		"Erklärt die Tabellen und Spalten der Datenbank in Worten (Beträge in Cent, gelöschte Ausgaben, Rückzahlungen, Anteile, Fremdwährung), "+
-			"listet Personen und Kategorien und liefert die CREATE-Statements. Vor sql_abfrage aufrufen.",
+	add("schema", "Database schema",
+		"Explains the database tables and columns in words (amounts in cents, deleted expenses, reimbursements, shares, foreign currency), "+
+			"lists people and categories and returns the CREATE statements. Call before sql_query.",
 		map[string]any{"type": "object", "properties": map[string]any{}, "additionalProperties": false},
 		s.schema)
 
-	add("sql_abfrage", "SQL-Abfrage",
-		fmt.Sprintf("Führt genau eine lesende SQL-Abfrage (SQLite-Dialekt, nur SELECT bzw. WITH … SELECT) auf einer schreibgeschützten Kopie der Daten aus. "+
-			"Vorher schema aufrufen. Wichtig: Beträge sind Cent (für Euro durch 100.0 teilen), gelöschte Ausgaben mit deleted_at IS NULL ausschließen, "+
-			"Rückzahlungen (is_reimbursement = 1) sind keine Ausgaben, den Anteil einer Person liefert expense_shares.amount_cents. "+
-			"Höchstens %d Zeilen, Abbruch nach %d Sekunden, Texte über 2000 Zeichen werden gekürzt. "+
-			"Für Standardfragen sind salden, ausgaben_suchen und statistik einfacher.", store.SQLMaxRows, int(store.SQLTimeout/time.Second)),
+	add("sql_query", "SQL query",
+		fmt.Sprintf("Runs exactly one read-only SQL query (SQLite dialect, only SELECT or WITH … SELECT) on a read-only copy of the data. "+
+			"Call schema first. Important: amounts are cents (divide by 100.0 for euros), exclude deleted expenses with deleted_at IS NULL, "+
+			"reimbursements (is_reimbursement = 1) are not expenses, a person's share is expense_shares.amount_cents. "+
+			"At most %d rows, aborted after %d seconds, texts longer than 2000 characters are truncated. "+
+			"For standard questions, balances, search_expenses and statistics are simpler.", store.SQLMaxRows, int(store.SQLTimeout/time.Second)),
 		map[string]any{
 			"type": "object",
 			"properties": map[string]any{
-				"abfrage": map[string]any{"type": "string", "description": "Die SQL-Abfrage, z. B. SELECT name FROM participants WHERE archived_at IS NULL"},
+				"query": map[string]any{"type": "string", "description": "The SQL query, e.g. SELECT name FROM participants WHERE archived_at IS NULL"},
 			},
-			"required":             []string{"abfrage"},
+			"required":             []string{"query"},
 			"additionalProperties": false,
 		},
-		s.sqlAbfrage)
+		s.sqlQuery)
 	return s
 }
 
@@ -180,7 +192,7 @@ func invalid(format string, args ...any) error {
 	return domain.ValidationError{Msg: fmt.Sprintf(format, args...)}
 }
 
-// decodeArgs liest die Tool-Argumente streng (unbekannte Felder sind Fehler).
+// decodeArgs decodes the tool arguments strictly (unknown fields are errors).
 func decodeArgs(raw json.RawMessage, v any) error {
 	if b := bytes.TrimSpace(raw); len(b) == 0 || string(b) == "null" {
 		return nil
@@ -188,13 +200,38 @@ func decodeArgs(raw json.RawMessage, v any) error {
 	dec := json.NewDecoder(bytes.NewReader(raw))
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(v); err != nil {
-		return invalid("Ungültige Parameter: %v", err)
+		return invalid("Invalid arguments: %v", err)
 	}
 	return nil
 }
 
-// eur formatiert Cent als „1234,56“ (ohne Tausenderpunkte und €).
-func eur(c int64) string { return domain.FormatCentsInput(c) }
+// eur formats cents as a locale-neutral amount: 123456 → "1234.56" (dot as
+// decimal separator, no thousands separator, no currency sign).
+func eur(c int64) string { return decimal(c, 2) }
+
+// decimal formats v (in units of 10^-decimals) with a dot as decimal
+// separator: (1234, 2) → "12.34", (-5, 2) → "-0.05", (7, 0) → "7".
+func decimal(v int64, decimals int) string {
+	sign, u := "", uint64(v)
+	if v < 0 {
+		sign, u = "-", uint64(-v)
+	}
+	if decimals <= 0 {
+		return sign + strconv.FormatUint(u, 10)
+	}
+	p := uint64(1)
+	for range decimals {
+		p *= 10
+	}
+	return fmt.Sprintf("%s%d.%0*d", sign, u/p, decimals, u%p)
+}
+
+// money formats an amount in the smallest unit of a currency: (2340, "USD")
+// → "23.40 USD".
+func money(minor int64, currency string) string {
+	currency = strings.ToUpper(strings.TrimSpace(currency))
+	return decimal(minor, domain.CurrencyDecimals(currency)) + " " + currency
+}
 
 func parseDateArg(name, v string) (time.Time, error) {
 	if v = strings.TrimSpace(v); v == "" {
@@ -202,22 +239,22 @@ func parseDateArg(name, v string) (time.Time, error) {
 	}
 	t, err := domain.ParseDate(v)
 	if err != nil {
-		return time.Time{}, invalid("Ungültiges Datum für %s: „%s“ (erwartet JJJJ-MM-TT).", name, v)
+		return time.Time{}, invalid("Invalid date for %s: %q (expected YYYY-MM-DD).", name, v)
 	}
 	return t, nil
 }
 
-func parseRange(von, bis string) (time.Time, time.Time, error) {
-	from, err := parseDateArg("von", von)
+func parseRange(fromArg, toArg string) (time.Time, time.Time, error) {
+	from, err := parseDateArg("from", fromArg)
 	if err != nil {
 		return from, from, err
 	}
-	to, err := parseDateArg("bis", bis)
+	to, err := parseDateArg("to", toArg)
 	if err != nil {
 		return from, to, err
 	}
 	if !from.IsZero() && !to.IsZero() && to.Before(from) {
-		return from, to, invalid("„bis“ (%s) liegt vor „von“ (%s).", domain.FormatDate(to), domain.FormatDate(from))
+		return from, to, invalid(`"to" (%s) is before "from" (%s).`, to.Format(domain.DateLayout), from.Format(domain.DateLayout))
 	}
 	return from, to, nil
 }
@@ -225,16 +262,16 @@ func parseRange(von, bis string) (time.Time, time.Time, error) {
 func describeRange(from, to time.Time) string {
 	switch {
 	case from.IsZero() && to.IsZero():
-		return "gesamter Zeitraum"
+		return "all time"
 	case to.IsZero():
-		return "ab " + from.Format(domain.DateLayout)
+		return "from " + from.Format(domain.DateLayout)
 	case from.IsZero():
-		return "bis " + to.Format(domain.DateLayout)
+		return "until " + to.Format(domain.DateLayout)
 	}
-	return from.Format(domain.DateLayout) + " bis " + to.Format(domain.DateLayout)
+	return from.Format(domain.DateLayout) + " to " + to.Format(domain.DateLayout)
 }
 
-// participantNames liefert id → Name aller Personen (auch archivierte).
+// participantNames returns id → name of all people (archived ones too).
 func (s *server) participantNames(ctx context.Context) (map[int64]string, []store.Participant, error) {
 	ps, err := s.d.Store.ListParticipants(ctx, true)
 	if err != nil {
@@ -260,7 +297,7 @@ func (s *server) findPerson(ctx context.Context, name string) (store.Participant
 		}
 		names = append(names, p.Name)
 	}
-	return store.Participant{}, invalid("Unbekannte Person „%s“. Vorhanden: %s.", name, strings.Join(names, ", "))
+	return store.Participant{}, invalid("Unknown person %q. Available: %s.", name, strings.Join(names, ", "))
 }
 
 func (s *server) findCategory(ctx context.Context, name string) (store.Category, error) {
@@ -276,11 +313,11 @@ func (s *server) findCategory(ctx context.Context, name string) (store.Category,
 		}
 		names = append(names, c.Name)
 	}
-	return store.Category{}, invalid("Unbekannte Kategorie „%s“. Vorhanden: %s.", name, strings.Join(names, ", "))
+	return store.Category{}, invalid("Unknown category %q. Available: %s.", name, strings.Join(names, ", "))
 }
 
-// categoryArg resolves a kategorie argument: a category name, or "ohne" /
-// "Ohne Kategorie" (the statistik label) for expenses without a category.
+// categoryArg resolves a category argument: a category name, or "none" /
+// "No category" (the statistics label) for expenses without a category.
 // A real category with that name takes precedence.
 func (s *server) categoryArg(ctx context.Context, name string) (id int64, without bool, err error) {
 	if strings.TrimSpace(name) == "" {
@@ -296,26 +333,26 @@ func (s *server) categoryArg(ctx context.Context, name string) (id int64, withou
 	return 0, false, err
 }
 
-// noCategoryArg is the kategorie value for expenses without a category.
-const noCategoryArg = "ohne"
+// noCategoryArg is the category value for expenses without a category.
+const noCategoryArg = "none"
 
-// --- salden ------------------------------------------------------------------
+// --- balances ----------------------------------------------------------------
 
 type balanceOut struct {
-	Person    string `json:"person"`
-	Saldo     string `json:"saldo"`
-	SaldoCent int64  `json:"saldo_cent"`
-	Status    string `json:"status"`
+	Person       string `json:"person"`
+	Balance      string `json:"balance"`
+	BalanceCents int64  `json:"balance_cents"`
+	Status       string `json:"status"`
 }
 
 type transferOut struct {
-	Von        string `json:"von"`
-	An         string `json:"an"`
-	Betrag     string `json:"betrag"`
-	BetragCent int64  `json:"betrag_cent"`
+	From        string `json:"from"`
+	To          string `json:"to"`
+	Amount      string `json:"amount"`
+	AmountCents int64  `json:"amount_cents"`
 }
 
-func (s *server) salden(ctx context.Context, raw json.RawMessage) (toolResult, error) {
+func (s *server) balances(ctx context.Context, raw json.RawMessage) (toolResult, error) {
 	var args struct{}
 	if err := decodeArgs(raw, &args); err != nil {
 		return toolResult{}, err
@@ -328,66 +365,66 @@ func (s *server) salden(ctx context.Context, raw json.RawMessage) (toolResult, e
 	if err != nil {
 		return toolResult{}, err
 	}
-	salden := []balanceOut{}
+	balances := []balanceOut{}
 	for _, p := range ps {
 		v := bal[p.ID]
 		if p.Archived() && v == 0 {
 			continue
 		}
-		status := "ausgeglichen"
+		status := "settled"
 		switch {
 		case v > 0:
-			status = "bekommt Geld"
+			status = "is owed money"
 		case v < 0:
-			status = "schuldet Geld"
+			status = "owes money"
 		}
-		salden = append(salden, balanceOut{Person: p.Name, Saldo: eur(v), SaldoCent: v, Status: status})
+		balances = append(balances, balanceOut{Person: p.Name, Balance: eur(v), BalanceCents: v, Status: status})
 	}
-	ausgleich := []transferOut{}
+	settlements := []transferOut{}
 	for _, t := range domain.Settle(bal) {
-		ausgleich = append(ausgleich, transferOut{Von: names[t.From], An: names[t.To], Betrag: eur(t.AmountCents), BetragCent: t.AmountCents})
+		settlements = append(settlements, transferOut{From: names[t.From], To: names[t.To], Amount: eur(t.AmountCents), AmountCents: t.AmountCents})
 	}
 	return toolResult{data: map[string]any{
-		"salden":    salden,
-		"ausgleich": ausgleich,
-		"hinweis":   "Saldo positiv = bekommt Geld, negativ = schuldet Geld. ausgleich: so viele Überweisungen wie nötig, damit alle bei 0 sind.",
+		"balances":    balances,
+		"settlements": settlements,
+		"note":        "Positive balance = is owed money, negative = owes money. settlements: the transfers needed so that everyone ends at 0.",
 	}}, nil
 }
 
-// --- ausgaben_suchen -----------------------------------------------------------
+// --- search_expenses -------------------------------------------------------------
 
 type shareOut struct {
-	Person     string `json:"person"`
-	Betrag     string `json:"betrag"`
-	BetragCent int64  `json:"betrag_cent"`
+	Person      string `json:"person"`
+	Amount      string `json:"amount"`
+	AmountCents int64  `json:"amount_cents"`
 }
 
 type expenseOut struct {
-	ID           int64      `json:"id"`
-	Datum        string     `json:"datum"`
-	Titel        string     `json:"titel"`
-	Kategorie    string     `json:"kategorie,omitempty"`
-	BezahltVon   string     `json:"bezahlt_von"`
-	Betrag       string     `json:"betrag"`
-	BetragCent   int64      `json:"betrag_cent"`
-	Rueckzahlung bool       `json:"rueckzahlung,omitempty"`
-	An           string     `json:"an,omitempty"` // Empfänger einer Rückzahlung
-	Original     string     `json:"original,omitempty"`
-	Kurs         float64    `json:"kurs,omitempty"`
-	KursQuelle   string     `json:"kurs_quelle,omitempty"`
-	Notiz        string     `json:"notiz,omitempty"`
-	Aufteilung   string     `json:"aufteilung,omitempty"`
-	Anteile      []shareOut `json:"anteile,omitempty"`
+	ID            int64      `json:"id"`
+	Date          string     `json:"date"`
+	Title         string     `json:"title"`
+	Category      string     `json:"category,omitempty"`
+	PaidBy        string     `json:"paid_by"`
+	Amount        string     `json:"amount"`
+	AmountCents   int64      `json:"amount_cents"`
+	Reimbursement bool       `json:"reimbursement,omitempty"`
+	Recipient     string     `json:"recipient,omitempty"` // recipient of a reimbursement
+	Original      string     `json:"original,omitempty"`
+	FXRate        float64    `json:"fx_rate,omitempty"`
+	FXSource      string     `json:"fx_source,omitempty"`
+	Notes         string     `json:"notes,omitempty"`
+	Split         string     `json:"split,omitempty"`
+	Shares        []shareOut `json:"shares,omitempty"`
 }
 
-func (s *server) ausgabenSuchen(ctx context.Context, raw json.RawMessage) (toolResult, error) {
+func (s *server) searchExpenses(ctx context.Context, raw json.RawMessage) (toolResult, error) {
 	var args struct {
-		Von            string `json:"von"`
-		Bis            string `json:"bis"`
-		Kategorie      string `json:"kategorie"`
+		From           string `json:"from"`
+		To             string `json:"to"`
+		Category       string `json:"category"`
 		Person         string `json:"person"`
 		Text           string `json:"text"`
-		Rueckzahlungen string `json:"rueckzahlungen"`
+		Reimbursements string `json:"reimbursements"`
 		Limit          int    `json:"limit"`
 	}
 	if err := decodeArgs(raw, &args); err != nil {
@@ -395,11 +432,11 @@ func (s *server) ausgabenSuchen(ctx context.Context, raw json.RawMessage) (toolR
 	}
 	var f store.ExpenseFilter
 	var err error
-	if f.From, f.To, err = parseRange(args.Von, args.Bis); err != nil {
+	if f.From, f.To, err = parseRange(args.From, args.To); err != nil {
 		return toolResult{}, err
 	}
 	f.Text = strings.TrimSpace(args.Text)
-	if f.CategoryID, f.WithoutCategory, err = s.categoryArg(ctx, args.Kategorie); err != nil {
+	if f.CategoryID, f.WithoutCategory, err = s.categoryArg(ctx, args.Category); err != nil {
 		return toolResult{}, err
 	}
 	var person store.Participant
@@ -409,16 +446,16 @@ func (s *server) ausgabenSuchen(ctx context.Context, raw json.RawMessage) (toolR
 		}
 		f.ParticipantID = person.ID
 	}
-	mode := cmpOr(args.Rueckzahlungen, "ohne")
-	if !slices.Contains([]string{"ohne", "mit", "nur"}, mode) {
-		return toolResult{}, invalid("rueckzahlungen muss „ohne“, „mit“ oder „nur“ sein.")
+	mode := cmpOr(args.Reimbursements, reimbursementsExclude)
+	if !slices.Contains(reimbursementModes, mode) {
+		return toolResult{}, invalid(`reimbursements must be "exclude", "include" or "only".`)
 	}
 	limit := args.Limit
 	switch {
 	case limit == 0:
 		limit = 50
 	case limit < 1 || limit > store.SQLMaxRows:
-		return toolResult{}, invalid("limit muss zwischen 1 und %d liegen.", store.SQLMaxRows)
+		return toolResult{}, invalid("limit must be between 1 and %d.", store.SQLMaxRows)
 	}
 
 	es, err := s.d.Store.ListExpenses(ctx, f)
@@ -433,7 +470,7 @@ func (s *server) ausgabenSuchen(ctx context.Context, raw json.RawMessage) (toolR
 	hits := 0
 	out := []expenseOut{}
 	for _, e := range es {
-		if (mode == "ohne" && e.IsReimbursement) || (mode == "nur" && !e.IsReimbursement) {
+		if (mode == reimbursementsExclude && e.IsReimbursement) || (mode == reimbursementsOnly && !e.IsReimbursement) {
 			continue
 		}
 		hits++
@@ -444,38 +481,38 @@ func (s *server) ausgabenSuchen(ctx context.Context, raw json.RawMessage) (toolR
 		}
 	}
 	data := map[string]any{
-		"treffer":    hits,
-		"angezeigt":  len(out),
-		"gekuerzt":   hits > len(out),
-		"summe":      eur(sum),
-		"summe_cent": sum,
-		"ausgaben":   out,
+		"matches":     hits,
+		"shown":       len(out),
+		"truncated":   hits > len(out),
+		"total":       eur(sum),
+		"total_cents": sum,
+		"expenses":    out,
 	}
 	if person.ID != 0 {
-		data["anteil_person"] = map[string]any{"person": person.Name, "summe": eur(share), "summe_cent": share}
+		data["person_share"] = map[string]any{"person": person.Name, "amount": eur(share), "amount_cents": share}
 	}
 	return toolResult{data: data}, nil
 }
 
 func expenseToOut(e store.Expense, names map[int64]string) expenseOut {
 	o := expenseOut{
-		ID: e.ID, Datum: e.Date.Format(domain.DateLayout), Titel: e.Title, Kategorie: e.CategoryName,
-		BezahltVon: e.PaidByName, Betrag: eur(e.AmountCents), BetragCent: e.AmountCents, Notiz: e.Notes,
+		ID: e.ID, Date: e.Date.Format(domain.DateLayout), Title: e.Title, Category: e.CategoryName,
+		PaidBy: e.PaidByName, Amount: eur(e.AmountCents), AmountCents: e.AmountCents, Notes: e.Notes,
 	}
 	if e.IsForeign() {
-		o.Original = domain.FormatMoney(e.OriginalAmountMinor, e.OriginalCurrency)
-		o.Kurs, o.KursQuelle = e.FXRate, e.FXSource
+		o.Original = money(e.OriginalAmountMinor, e.OriginalCurrency)
+		o.FXRate, o.FXSource = e.FXRate, e.FXSource
 	}
 	if e.IsReimbursement {
-		o.Rueckzahlung = true
+		o.Reimbursement = true
 		if len(e.Shares) > 0 {
-			o.An = names[e.Shares[0].ParticipantID]
+			o.Recipient = names[e.Shares[0].ParticipantID]
 		}
 		return o
 	}
-	o.Aufteilung = e.SplitMode.Label()
+	o.Split = string(e.SplitMode)
 	for _, sh := range e.Shares {
-		o.Anteile = append(o.Anteile, shareOut{Person: names[sh.ParticipantID], Betrag: eur(sh.AmountCents), BetragCent: sh.AmountCents})
+		o.Shares = append(o.Shares, shareOut{Person: names[sh.ParticipantID], Amount: eur(sh.AmountCents), AmountCents: sh.AmountCents})
 	}
 	return o
 }
@@ -487,50 +524,49 @@ func cmpOr(v, fallback string) string {
 	return fallback
 }
 
-// --- statistik -------------------------------------------------------------------
+// --- statistics ------------------------------------------------------------------
 
 type statOut struct {
-	Kategorie   string `json:"kategorie,omitempty"`
-	Monat       string `json:"monat,omitempty"`
+	Category    string `json:"category,omitempty"`
+	Month       string `json:"month,omitempty"`
 	Person      string `json:"person,omitempty"`
-	Anzahl      int64  `json:"anzahl"`
-	Summe       string `json:"summe"`
-	SummeCent   int64  `json:"summe_cent"`
-	Bezahlt     string `json:"bezahlt,omitempty"`
-	BezahltCent *int64 `json:"bezahlt_cent,omitempty"`
+	Count       int64  `json:"count"`
+	Amount      string `json:"amount"`
+	AmountCents int64  `json:"amount_cents"`
+	Paid        string `json:"paid,omitempty"`
+	PaidCents   *int64 `json:"paid_cents,omitempty"`
 }
 
-func (s *server) statistik(ctx context.Context, raw json.RawMessage) (toolResult, error) {
+func (s *server) statistics(ctx context.Context, raw json.RawMessage) (toolResult, error) {
 	var args struct {
-		Gruppierung string `json:"gruppierung"`
-		Von         string `json:"von"`
-		Bis         string `json:"bis"`
-		Person      string `json:"person"`
-		Kategorie   string `json:"kategorie"`
+		GroupBy  string `json:"group_by"`
+		From     string `json:"from"`
+		To       string `json:"to"`
+		ShareOf  string `json:"share_of"`
+		Category string `json:"category"`
 	}
 	if err := decodeArgs(raw, &args); err != nil {
 		return toolResult{}, err
 	}
-	f := store.StatsFilter{GroupBy: strings.TrimSpace(args.Gruppierung)}
-	valid := []string{store.StatsByCategory, store.StatsByMonth, store.StatsByPerson, store.StatsByCategoryMonth}
-	if !slices.Contains(valid, f.GroupBy) {
-		return toolResult{}, invalid("gruppierung muss eine von %s sein.", strings.Join(valid, ", "))
+	f := store.StatsFilter{GroupBy: strings.TrimSpace(args.GroupBy)}
+	if !slices.Contains(groupings, f.GroupBy) {
+		return toolResult{}, invalid("group_by must be one of %s.", strings.Join(groupings, ", "))
 	}
 	var err error
-	if f.From, f.To, err = parseRange(args.Von, args.Bis); err != nil {
+	if f.From, f.To, err = parseRange(args.From, args.To); err != nil {
 		return toolResult{}, err
 	}
-	if f.CategoryID, f.WithoutCategory, err = s.categoryArg(ctx, args.Kategorie); err != nil {
+	if f.CategoryID, f.WithoutCategory, err = s.categoryArg(ctx, args.Category); err != nil {
 		return toolResult{}, err
 	}
-	view := "Gesamtbeträge der Ausgaben"
-	if strings.TrimSpace(args.Person) != "" {
-		p, err := s.findPerson(ctx, args.Person)
+	perspective := "total amounts of the expenses"
+	if strings.TrimSpace(args.ShareOf) != "" {
+		p, err := s.findPerson(ctx, args.ShareOf)
 		if err != nil {
 			return toolResult{}, err
 		}
 		f.ParticipantID = p.ID
-		view = "nur der Anteil von " + p.Name
+		perspective = "only the share of " + p.Name
 	}
 	rows, err := s.d.Store.Stats(ctx, f)
 	if err != nil {
@@ -539,59 +575,60 @@ func (s *server) statistik(ctx context.Context, raw json.RawMessage) (toolResult
 	var total int64
 	out := []statOut{}
 	for _, r := range rows {
-		o := statOut{Kategorie: r.Category, Monat: r.Month, Person: r.Person, Anzahl: r.Count, Summe: eur(r.AmountCents), SummeCent: r.AmountCents}
+		o := statOut{Category: r.Category, Month: r.Month, Person: r.Person, Count: r.Count, Amount: eur(r.AmountCents), AmountCents: r.AmountCents}
 		if f.GroupBy == store.StatsByPerson {
 			paid := r.PaidCents
-			o.Bezahlt, o.BezahltCent = eur(paid), &paid
+			o.Paid, o.PaidCents = eur(paid), &paid
 		}
 		total += r.AmountCents
 		out = append(out, o)
 	}
-	hint := "Rückzahlungen und gelöschte Ausgaben sind nicht enthalten. anzahl = Zahl der Ausgaben."
+	note := "Reimbursements and deleted expenses are not included. count = number of expenses."
 	if f.GroupBy == store.StatsByPerson {
-		hint += " summe = Anteil (Verbrauch) der Person, bezahlt = was sie für die Gruppe bezahlt hat."
+		note += " amount = the person's share (consumption), paid = what they paid for the group."
 	}
 	return toolResult{data: map[string]any{
-		"gruppierung": f.GroupBy,
-		"sicht":       view,
-		"zeitraum":    describeRange(f.From, f.To),
-		"zeilen":      out,
-		"gesamt":      eur(total),
-		"gesamt_cent": total,
-		"hinweis":     hint,
+		"group_by":    f.GroupBy,
+		"perspective": perspective,
+		"period":      describeRange(f.From, f.To),
+		"rows":        out,
+		"total":       eur(total),
+		"total_cents": total,
+		"note":        note,
 	}}, nil
 }
 
 // --- schema -----------------------------------------------------------------------
 
-const schemaText = `Datenbank von Zipfelkasse (SQLite). Eine einzige Gruppe.
-Konventionen: Beträge sind INTEGER in Euro-Cent (für Euro durch 100.0 teilen). Kalenderdaten TEXT 'JJJJ-MM-TT', Zeitstempel TEXT RFC 3339 in UTC. Wahrheitswerte 0/1.
+const schemaText = `Database of Zipfelkasse (SQLite). A single group.
+Conventions: amounts are INTEGER in euro cents (divide by 100.0 for euros). Calendar dates are TEXT 'YYYY-MM-DD', timestamps TEXT RFC 3339 in UTC. Booleans are 0/1.
+Data values (names, titles, categories, notes) are stored as entered, often in German.
 
-Tabellen:
-- participants: Personen der Gruppe. archived_at gesetzt = archiviert (nicht mehr aktiv, ihre Buchungen bleiben).
-- categories: Kategorien (name, position = Anzeigereihenfolge, archived_at).
-- expenses: Ausgaben UND Rückzahlungen.
-  * deleted_at gesetzt = gelöscht (Soft-Delete) → Auswertungen IMMER mit "deleted_at IS NULL".
-  * amount_cents: Betrag in Euro-Cent (bei Fremdwährung umgerechnet). paid_by: wer bezahlt hat (participants.id). category_id NULL = ohne Kategorie.
-  * is_reimbursement = 1: Rückzahlung – paid_by hat Geld an die Person aus dem einzigen expense_shares-Eintrag gezahlt. Das ist keine Ausgabe
-    (Ausgaben-Auswertungen mit "is_reimbursement = 0"), zählt aber für Salden.
-  * split_mode: equal (gleichmäßig), shares (nach Anteilen), percent (Prozent), amount (feste Beträge).
-  * Fremdwährung: original_currency ('EUR' wenn keine), original_amount_minor (Betrag in der kleinsten Einheit dieser Währung),
-    fx_rate (Einheiten Fremdwährung pro 1 EUR, EZB-Format), fx_source ('ezb', 'manuell' oder '' bei EUR). amount_cents ist schon umgerechnet.
-  * recurring_id: automatisch aus einer wiederkehrenden Regel erzeugt. created_at/updated_at: Zeitstempel.
-- expense_shares: Aufteilung jeder Ausgabe auf Personen. amount_cents = Anteil dieser Person in Cent (Summe je Ausgabe = expenses.amount_cents).
-  weight je nach split_mode: equal 1, shares Anteile, percent Basispunkte (Summe 10000), amount Cent.
-- recurring: Regeln für wiederkehrende Ausgaben (template_json = Vorlage als JSON, frequency weekly|monthly|yearly, start_date, next_date, active).
-- activity: Änderungsprotokoll (at, actor_id NULL = System, action expense_created|expense_updated|expense_deleted, expense_id, details_json).
-- fx_rates: Wechselkurse je Währung und Datum (Fremdwährung pro 1 EUR), source 'ezb' oder 'manuell'.
-- settings: Einstellungen (key/value, z. B. group_name, default_currency).
-YNAB-Tabellen (Zugangsdaten) sind über MCP nicht sichtbar.
+Tables:
+- participants: people in the group. archived_at set = archived (no longer active, their entries remain).
+- categories: categories (name, position = display order, archived_at).
+- expenses: expenses AND reimbursements.
+  * deleted_at set = deleted (soft delete) → ALWAYS filter with "deleted_at IS NULL".
+  * amount_cents: amount in euro cents (converted for foreign currency). paid_by: who paid (participants.id). category_id NULL = no category.
+  * is_reimbursement = 1: reimbursement – paid_by paid money to the person in the single expense_shares row. It is not an expense
+    (expense analyses use "is_reimbursement = 0"), but it counts for balances.
+  * split_mode: equal (evenly), shares (by shares), percent (by percentage), amount (fixed amounts).
+  * Foreign currency: original_currency ('EUR' if none), original_amount_minor (amount in the smallest unit of that currency),
+    fx_rate (units of foreign currency per 1 EUR, ECB format), fx_source ('ezb' = ECB reference rate, 'manuell' = entered manually, or '' for EUR). amount_cents is already converted.
+  * recurring_id: created automatically from a recurring rule. created_at/updated_at: timestamps.
+- expense_shares: split of each expense across people. amount_cents = this person's share in cents (sum per expense = expenses.amount_cents).
+  weight depends on split_mode: equal 1, shares the share count, percent basis points (sum 10000), amount cents.
+- recurring: rules for recurring expenses (template_json = template as JSON, frequency weekly|monthly|yearly, start_date, next_date, active).
+- activity: change log (at, actor_id NULL = system, action expense_created|expense_updated|expense_deleted, expense_id, details_json).
+- fx_rates: exchange rates per currency and date (foreign currency per 1 EUR), source 'ezb' or 'manuell'.
+- settings: settings (key/value, e.g. group_name, default_currency).
+YNAB tables (credentials) are not visible via MCP.
 
-Saldo einer Person = Summe amount_cents der von ihr bezahlten Ausgaben − Summe ihrer Anteile in expense_shares
-(nur deleted_at IS NULL, Rückzahlungen eingeschlossen). Positiv = bekommt Geld.
+Balance of a person = sum of amount_cents of the expenses they paid − sum of their shares in expense_shares
+(only deleted_at IS NULL, reimbursements included). Positive = is owed money.
 
-Beispiel – Annas Anteil je Kategorie im Jahr 2026:
-SELECT coalesce(c.name, 'Ohne Kategorie') AS kategorie, sum(x.amount_cents) / 100.0 AS euro
+Example – Anna's share per category in 2026:
+SELECT coalesce(c.name, '` + store.NoCategory + `') AS category, sum(x.amount_cents) / 100.0 AS euros
 FROM expenses e
 JOIN expense_shares x ON x.expense_id = e.id
 JOIN participants p ON p.id = x.participant_id AND p.name = 'Anna'
@@ -621,27 +658,27 @@ func (s *server) schema(ctx context.Context, raw json.RawMessage) (toolResult, e
 	b.WriteString(s.todayLine())
 	b.WriteString("\n\n")
 	b.WriteString(schemaText)
-	b.WriteString("\nPersonen (id: Name): ")
+	b.WriteString("\nPeople (id: name): ")
 	for i, p := range ps {
 		if i > 0 {
 			b.WriteString(", ")
 		}
 		fmt.Fprintf(&b, "%d: %s", p.ID, p.Name)
 		if p.Archived() {
-			b.WriteString(" (archiviert)")
+			b.WriteString(" (archived)")
 		}
 	}
-	b.WriteString("\nKategorien (id: Name): ")
+	b.WriteString("\nCategories (id: name): ")
 	for i, c := range cs {
 		if i > 0 {
 			b.WriteString(", ")
 		}
 		fmt.Fprintf(&b, "%d: %s", c.ID, c.Name)
 		if c.Archived() {
-			b.WriteString(" (archiviert)")
+			b.WriteString(" (archived)")
 		}
 	}
-	b.WriteString("\n\nCREATE-Statements:\n")
+	b.WriteString("\n\nCREATE statements:\n")
 	for _, o := range objs {
 		b.WriteString(o.SQL)
 		b.WriteString(";\n")
@@ -649,40 +686,40 @@ func (s *server) schema(ctx context.Context, raw json.RawMessage) (toolResult, e
 	return toolResult{text: b.String()}, nil
 }
 
-// --- sql_abfrage ------------------------------------------------------------------
+// --- sql_query --------------------------------------------------------------------
 
-func (s *server) sqlAbfrage(ctx context.Context, raw json.RawMessage) (toolResult, error) {
+func (s *server) sqlQuery(ctx context.Context, raw json.RawMessage) (toolResult, error) {
 	var args struct {
-		Abfrage string `json:"abfrage"`
+		Query string `json:"query"`
 	}
 	if err := decodeArgs(raw, &args); err != nil {
 		return toolResult{}, err
 	}
-	if strings.TrimSpace(args.Abfrage) == "" {
-		return toolResult{}, invalid("Parameter abfrage fehlt.")
+	if strings.TrimSpace(args.Query) == "" {
+		return toolResult{}, invalid("Parameter query is missing.")
 	}
 	select {
 	case s.sqlSem <- struct{}{}:
 		defer func() { <-s.sqlSem }()
 	case <-ctx.Done():
-		return toolResult{}, invalid("Zu viele gleichzeitige Abfragen, bitte erneut versuchen.")
+		return toolResult{}, invalid("Too many concurrent queries, please try again.")
 	}
-	res, err := s.d.Store.ReadOnlyQuery(ctx, args.Abfrage)
+	res, err := s.d.Store.ReadOnlyQuery(ctx, args.Query)
 	if err != nil {
 		var ve domain.ValidationError
 		if errors.As(err, &ve) {
 			return toolResult{}, err
 		}
-		return toolResult{}, fmt.Errorf("sql_abfrage: %w", err)
+		return toolResult{}, fmt.Errorf("sql_query: %w", err)
 	}
 	data := map[string]any{
-		"spalten":  res.Columns,
-		"zeilen":   res.Rows,
-		"anzahl":   len(res.Rows),
-		"gekuerzt": res.Truncated,
+		"columns":   res.Columns,
+		"rows":      res.Rows,
+		"row_count": len(res.Rows),
+		"truncated": res.Truncated,
 	}
 	if res.Truncated {
-		data["hinweis"] = fmt.Sprintf("Es gibt mehr als %d Zeilen; nur die ersten %d sind enthalten. Bitte aggregieren oder mit WHERE/LIMIT einschränken.", store.SQLMaxRows, store.SQLMaxRows)
+		data["note"] = fmt.Sprintf("There are more than %d rows; only the first %d are included. Please aggregate or narrow down with WHERE/LIMIT.", store.SQLMaxRows, store.SQLMaxRows)
 	}
 	return toolResult{data: data}, nil
 }

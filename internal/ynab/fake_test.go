@@ -16,19 +16,19 @@ const (
 	testAccount = "acc-geteilt"
 )
 
-// fakeYNAB ist eine minimale YNAB-API im Speicher, als http.RoundTripper
-// (in der Sandbox lassen sich keine Ports öffnen).
+// fakeYNAB is a minimal in-memory YNAB API, as an http.RoundTripper (no
+// ports can be opened in the sandbox).
 type fakeYNAB struct {
 	mu       sync.Mutex
-	txns     map[string]*apiTxn // nach ID, inkl. gelöschter
+	txns     map[string]*apiTxn // by ID, including deleted ones
 	nextID   int
-	requests []string // "METHOD /pfad"
+	requests []string // "METHOD /path"
 
-	// Fehlerinjektion: Status für die nächsten Anfragen (0 = normal).
+	// Error injection: status for the next requests (0 = normal).
 	failNext []int
-	// lostPost: der nächste POST wird ausgeführt, die Antwort geht aber verloren (500).
+	// lostPost: the next POST is executed, but the response gets lost (500).
 	lostPost bool
-	// hold: ist er gesetzt, wartet jede Anfrage, bis der Kanal geschlossen ist.
+	// hold: if set, every request waits until the channel is closed.
 	hold chan struct{}
 	mux  *http.ServeMux
 }
@@ -89,7 +89,7 @@ func writeData(w http.ResponseWriter, status int, data any) {
 
 func (f *fakeYNAB) plans(w http.ResponseWriter, r *http.Request) {
 	if r.URL.Query().Get("include_accounts") != "true" {
-		writeErr(w, 400, "400", "bad_request", "include_accounts fehlt")
+		writeErr(w, 400, "400", "bad_request", "include_accounts missing")
 		return
 	}
 	writeData(w, 200, map[string]any{"plans": []map[string]any{{
@@ -137,11 +137,11 @@ func (f *fakeYNAB) create(w http.ResponseWriter, r *http.Request) {
 	defer f.mu.Unlock()
 	for _, t := range body.Transactions {
 		if _, ok := t["import_id"]; ok {
-			writeErr(w, 400, "400", "bad_request", "import_id nicht erwartet")
+			writeErr(w, 400, "400", "bad_request", "import_id not expected")
 			return
 		}
 		if payee, _ := t["payee_name"].(string); strings.Contains(payee, "ABLEHNEN") {
-			writeErr(w, 400, "400", "bad_request", "payee abgelehnt")
+			writeErr(w, 400, "400", "bad_request", "payee rejected")
 			return
 		}
 	}
@@ -246,7 +246,7 @@ func (f *fakeYNAB) list(w http.ResponseWriter, r *http.Request) {
 	writeData(w, 200, map[string]any{"transactions": out, "server_knowledge": 5})
 }
 
-// live liefert die nicht gelöschten Buchungen, nach ID sortiert.
+// live returns the non-deleted transactions, sorted by ID.
 func (f *fakeYNAB) live() []apiTxn {
 	f.mu.Lock()
 	defer f.mu.Unlock()

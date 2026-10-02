@@ -1,14 +1,14 @@
-// Package mcp ist ein schreibgeschützter MCP-Server (JSON-RPC 2.0 über
-// Streamable HTTP, Antworten nur als JSON) unter /mcp/{MCP_SECRET}.
+// Package mcp is a read-only MCP server (JSON-RPC 2.0 over Streamable HTTP,
+// JSON-only responses) at /mcp/{MCP_SECRET}.
 //
-// Zugang (siehe docs/MCP.md): falsches Secret → 404, Client-IP nicht in
-// MCP_ALLOWED_CIDRS → 403 (hinter TRUSTED_PROXIES zählt X-Forwarded-For),
-// Origin-Header gesetzt → 403. Ohne MCP_SECRET ist MCP abgeschaltet.
+// Access (see docs/MCP.md): wrong secret → 404, client IP not in
+// MCP_ALLOWED_CIDRS → 403 (behind TRUSTED_PROXIES, X-Forwarded-For counts),
+// Origin header set → 403. Without MCP_SECRET, MCP is disabled.
 //
-// Protokoll: „Dual-Era“. Moderne Clients (2026-07-28, zustandslos, _meta in
-// jeder Anfrage, Pflicht-Header) und ältere Clients mit initialize-Handshake
-// (2025-11-25, 2025-06-18, 2025-03-26) werden auf demselben Endpunkt bedient.
-// Es gibt keine Sessions und keine SSE-Streams.
+// Protocol: "dual era". Modern clients (2026-07-28, stateless, _meta in every
+// request, mandatory headers) and older clients with the initialize handshake
+// (2025-11-25, 2025-06-18, 2025-03-26) are served on the same endpoint.
+// There are no sessions and no SSE streams.
 package mcp
 
 import (
@@ -21,45 +21,45 @@ import (
 	"github.com/shostakovich/zipfelkasse/internal/web"
 )
 
-// Register hängt /mcp/{secret} an. Ohne MCP_SECRET bleibt MCP abgeschaltet.
+// Register mounts /mcp/{secret}. Without MCP_SECRET, MCP stays disabled.
 func Register(mux *http.ServeMux, d web.Deps) error {
 	if d.Config.MCPSecret == "" {
-		d.Log.Info("MCP abgeschaltet (MCP_SECRET ist leer)")
+		d.Log.Info("MCP disabled (MCP_SECRET is empty)")
 		return nil
 	}
 	mux.Handle("/mcp/{secret}", newServer(d))
-	d.Log.Info("MCP aktiv", "pfad", "/mcp/***", "erlaubt", d.Config.MCPAllowedCIDRs, "proxys", d.Config.TrustedProxies)
+	d.Log.Info("MCP enabled", "path", "/mcp/***", "allowed", d.Config.MCPAllowedCIDRs, "proxies", d.Config.TrustedProxies)
 	return nil
 }
 
-// maxBody begrenzt die Größe einer JSON-RPC-Nachricht.
+// maxBody limits the size of a JSON-RPC message.
 const maxBody = 1 << 20
 
-// ServeHTTP prüft den Zugang und beantwortet dann die JSON-RPC-Nachricht.
-// Der Pfad (enthält das Secret) wird nie geloggt.
+// ServeHTTP checks access and then answers the JSON-RPC message.
+// The path (it contains the secret) is never logged.
 func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	start := time.Now()
 	ip := clientIP(r, s.d.Config.TrustedProxies)
 	log := s.log.With("ip", ip.String())
 
 	if subtle.ConstantTimeCompare([]byte(r.PathValue("secret")), []byte(s.d.Config.MCPSecret)) != 1 {
-		log.Warn("mcp: falsches Secret", "remote", r.RemoteAddr)
+		log.Warn("mcp: wrong secret", "remote", r.RemoteAddr)
 		http.NotFound(w, r)
 		return
 	}
 	if !ip.IsValid() || !config.ContainsAddr(s.d.Config.MCPAllowedCIDRs, ip) {
-		log.Warn("mcp: IP nicht erlaubt", "remote", r.RemoteAddr,
+		log.Warn("mcp: IP not allowed", "remote", r.RemoteAddr,
 			"x_forwarded_for", r.Header.Values("X-Forwarded-For"), "x_real_ip", r.Header.Get("X-Real-IP"))
-		writeJSON(w, http.StatusForbidden, errorResponse(nil, codeForbidden, "Zugriff von dieser Adresse nicht erlaubt.", nil))
+		writeJSON(w, http.StatusForbidden, errorResponse(nil, codeForbidden, "Access from this address is not allowed.", nil))
 		return
 	}
 	if origin := r.Header.Get("Origin"); origin != "" {
-		log.Warn("mcp: Origin-Header abgelehnt", "origin", origin)
-		writeJSON(w, http.StatusForbidden, errorResponse(nil, codeForbidden, "Zugriff aus dem Browser ist nicht erlaubt.", nil))
+		log.Warn("mcp: Origin header rejected", "origin", origin)
+		writeJSON(w, http.StatusForbidden, errorResponse(nil, codeForbidden, "Access from a browser is not allowed.", nil))
 		return
 	}
 	if r.Method != http.MethodPost {
-		// Keine SSE-Streams und keine Sessions: GET/DELETE gibt es nicht.
+		// No SSE streams and no sessions: there is no GET/DELETE.
 		w.Header().Set("Allow", http.MethodPost)
 		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
 		log.Info("mcp", "http", r.Method, "status", http.StatusMethodNotAllowed)
@@ -68,7 +68,7 @@ func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	rec := &statusRecorder{ResponseWriter: w}
 	info := s.handlePost(rec, r)
-	attrs := []any{"methode", info.method, "status", rec.status, "dauer", time.Since(start).Round(time.Millisecond)}
+	attrs := []any{"method", info.method, "status", rec.status, "duration", time.Since(start).Round(time.Millisecond)}
 	if info.tool != "" {
 		attrs = append(attrs, "tool", info.tool)
 	}
@@ -76,7 +76,7 @@ func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		attrs = append(attrs, "version", info.version)
 	}
 	if info.toolError != "" {
-		attrs = append(attrs, "toolfehler", info.toolError)
+		attrs = append(attrs, "tool_error", info.toolError)
 	}
 	log.Info("mcp", attrs...)
 }
@@ -100,7 +100,7 @@ func (r *statusRecorder) Write(b []byte) (int, error) {
 	return r.ResponseWriter.Write(b)
 }
 
-// requestInfo sammelt, was über eine Anfrage geloggt wird.
+// requestInfo collects what is logged about a request.
 type requestInfo struct {
 	method, tool, version, toolError string
 }

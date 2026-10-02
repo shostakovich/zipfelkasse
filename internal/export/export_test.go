@@ -31,12 +31,12 @@ var (
 	anna    = store.Participant{ID: 1, Name: "Anna"}
 	ben     = store.Participant{ID: 2, Name: "Ben"}
 	juergen = store.Participant{ID: 3, Name: "Jürgen"}
-	cleo    = store.Participant{ID: 4, Name: "Cleo", ArchivedAt: day("2026-01-01")} // nirgends beteiligt
+	cleo    = store.Participant{ID: 4, Name: "Cleo", ArchivedAt: day("2026-01-01")} // not involved anywhere
 	people  = []store.Participant{anna, ben, cleo, juergen}
 	stamp   = time.Date(2026, 9, 1, 10, 0, 0, 0, time.UTC)
 )
 
-// sample sind Ausgaben in chronologischer Reihenfolge.
+// sample returns expenses in chronological order.
 func sample() []store.Expense {
 	eur := func(id int64, title, date string, cents int64, cat int64, catName string, payer store.Participant, shares ...domain.Share) store.Expense {
 		e := store.Expense{ID: id, ExpenseInput: store.ExpenseInput{Title: title, Date: day(date), CategoryID: cat,
@@ -147,7 +147,7 @@ func TestExpensesJSONGolden(t *testing.T) {
 
 func TestYNABPostingsMatchSync(t *testing.T) {
 	ps := ynab.Selection{Today: day("2026-10-02")}.Postings(sample(), anna.ID)
-	// Rückzahlung fehlt, Ausgabe 4 hat keinen Anteil von Anna.
+	// The reimbursement is missing, expense 4 has no share of Anna.
 	if len(ps) != 2 || ps[0].ExpenseID != 1 || ps[1].ExpenseID != 2 {
 		t.Fatalf("postings = %+v", ps)
 	}
@@ -240,7 +240,7 @@ func TestOFXLimitsAndPeriod(t *testing.T) {
 	for _, want := range []string{"<NAME>Sehr langer Titel mit &lt;Sonderzei\r\n", "<MEMO>Zeile 1 Zeile 2\r\n", "<TRNAMT>-0.05\r\n",
 		"<DTSTART>20260901\r\n", "<DTEND>20260930\r\n"} {
 		if !strings.Contains(out, want) {
-			t.Errorf("OFX ohne %q:\n%s", want, out)
+			t.Errorf("OFX without %q:\n%s", want, out)
 		}
 	}
 }
@@ -254,7 +254,7 @@ func TestYNABCSVGolden(t *testing.T) {
 		"2026-09-01,Café & Kuchen,\"Gesamt 12,01 € · bezahlt von Anna · zipfelkasse #1\",6.01,\n" +
 		"2026-09-03,\"Diner \"\"NYC\"\"\",\"Gesamt 80,00 € (90,00 USD) · bezahlt von Ben · zipfelkasse #2\",40.00,\n"
 	if got := buf.String(); got != want {
-		t.Errorf("YNAB-CSV:\n%s\nwant:\n%s", got, want)
+		t.Errorf("YNAB CSV:\n%s\nwant:\n%s", got, want)
 	}
 }
 
@@ -271,7 +271,7 @@ func TestDecimal(t *testing.T) {
 	}
 }
 
-// --- Handler ---------------------------------------------------------------------
+// --- Handlers --------------------------------------------------------------------
 
 type fixture struct {
 	h          http.Handler
@@ -332,14 +332,14 @@ func TestExportPage(t *testing.T) {
 	rec := f.get("/export?von=2026-09-01")
 	if rec.Code != 200 || !strings.Contains(rec.Body.String(), `formaction="/export/ynab.ofx"`) ||
 		!strings.Contains(rec.Body.String(), `value="2026-09-01"`) {
-		t.Errorf("Seite: %d", rec.Code)
+		t.Errorf("page: %d", rec.Code)
 	}
-	if rec := f.get("/export?von=kaputt"); rec.Code != http.StatusUnprocessableEntity {
-		t.Errorf("ungültiges Datum: %d", rec.Code)
+	if rec := f.get("/export?von=garbage"); rec.Code != http.StatusUnprocessableEntity {
+		t.Errorf("invalid date: %d", rec.Code)
 	}
 	if rec := f.get("/export/ausgaben.csv?von=2026-09-10&bis=2026-09-01"); rec.Code != http.StatusUnprocessableEntity ||
 		!strings.Contains(rec.Body.String(), "„Bis“ liegt vor „Von“") {
-		t.Errorf("bis vor von: %d", rec.Code)
+		t.Errorf("to before from: %d", rec.Code)
 	}
 }
 
@@ -377,7 +377,7 @@ func TestYNABDownloads(t *testing.T) {
 		t.Fatalf("OFX: %d %v", rec.Code, rec.Header())
 	}
 	body := rec.Body.String()
-	// Nur Annas Anteil an „Käse“ (Brötchen vor dem Zeitraum, gelöscht und „Nur Jürgen“ ohne Anteil).
+	// Only Anna's share of "Käse" (Brötchen before the range, deleted and "Nur Jürgen" without a share).
 	if strings.Count(body, "<STMTTRN>") != 1 || !strings.Contains(body, "<NAME>Käse\r\n") || !strings.Contains(body, "<TRNAMT>-5.00\r\n") ||
 		!strings.Contains(body, "<ACCTID>ZIPFELKASSE-"+strconv.FormatInt(f.anna, 10)+"\r\n") {
 		t.Errorf("OFX:\n%s", body)
@@ -387,26 +387,26 @@ func TestYNABDownloads(t *testing.T) {
 		"2026-08-30,Brötchen,\"Gesamt 4,00 € · bezahlt von Jürgen · zipfelkasse #1\",2.00,\n" +
 		"2026-09-02,Käse,\"Gesamt 10,00 € · bezahlt von Jürgen · zipfelkasse #2\",5.00,\n"
 	if rec.Code != 200 || rec.Body.String() != want {
-		t.Errorf("YNAB-CSV: %d\n%s", rec.Code, rec.Body)
+		t.Errorf("YNAB CSV: %d\n%s", rec.Code, rec.Body)
 	}
 }
 
-// Die YNAB-Dateien enthalten genau das, was auch der Sync überträgt.
+// The YNAB files contain exactly what the sync transfers too.
 func TestYNABDownloadsFollowSync(t *testing.T) {
 	f := newFixture(t)
 	ctx := context.Background()
-	// ohne YNAB: alle vergangenen Ausgaben, keine künftigen
+	// without YNAB: all past expenses, no future ones
 	future := store.ExpenseInput{Title: "Zukunft", Date: time.Now().AddDate(0, 0, 3), PaidBy: f.juer, SplitMode: domain.SplitEqual,
 		AmountCents: 800, Parts: []domain.Part{{ParticipantID: f.anna}, {ParticipantID: f.juer}}}
 	if _, err := f.st.CreateExpense(ctx, f.juer, future); err != nil {
 		t.Fatal(err)
 	}
 	if body := f.get("/export/ynab.csv").Body.String(); strings.Contains(body, "Zukunft") || !strings.Contains(body, "Brötchen") {
-		t.Errorf("ohne YNAB:\n%s", body)
+		t.Errorf("without YNAB:\n%s", body)
 	}
 
-	// mit YNAB ab 01.09.: Brötchen (30.08., vor dem Einrichten erfasst) fehlt,
-	// eine danach rückdatiert erfasste Ausgabe ist dabei.
+	// with YNAB from 01.09.: Brötchen (30.08., entered before the setup) is
+	// missing, an expense entered afterwards with an earlier date is included.
 	clock := time.Now().Add(time.Hour)
 	f.st.SetClock(func() time.Time { return clock })
 	f.st.SetYNABToken(ctx, f.anna, "tok")
@@ -422,15 +422,15 @@ func TestYNABDownloadsFollowSync(t *testing.T) {
 	rec := f.get("/export/ynab.csv")
 	body := rec.Body.String()
 	if !strings.Contains(body, "Nachgetragen") || !strings.Contains(body, "Käse") || strings.Contains(body, "Brötchen") || strings.Contains(body, "Zukunft") {
-		t.Errorf("mit YNAB:\n%s", body)
+		t.Errorf("with YNAB:\n%s", body)
 	}
-	// Schon in YNAB vorhanden → bleibt dabei; der Zeitraum filtert zusätzlich.
+	// Already in YNAB → stays included; the range filters additionally.
 	f.st.PutYNABSync(ctx, store.YNABSync{ExpenseID: 1, ParticipantID: f.anna, TxnID: "t1", Hash: "h"})
 	if body := f.get("/export/ynab.csv").Body.String(); !strings.Contains(body, "Brötchen") {
-		t.Errorf("in YNAB vorhanden:\n%s", body)
+		t.Errorf("already in YNAB:\n%s", body)
 	}
 	if body := f.get("/export/ynab.ofx?von=2026-09-01").Body.String(); strings.Count(body, "<STMTTRN>") != 1 || !strings.Contains(body, "<NAME>Käse") {
-		t.Errorf("OFX mit Zeitraum:\n%s", body)
+		t.Errorf("OFX with range:\n%s", body)
 	}
 }
 
@@ -441,6 +441,6 @@ func TestYNABCSVInjection(t *testing.T) {
 		t.Fatal(err)
 	}
 	if got := buf.String(); !strings.Contains(got, `"'=HYPERLINK(""x"")"`) || !strings.Contains(got, "'+1 · zipfelkasse #1") {
-		t.Errorf("YNAB-CSV:\n%s", got)
+		t.Errorf("YNAB CSV:\n%s", got)
 	}
 }

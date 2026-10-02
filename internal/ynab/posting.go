@@ -13,21 +13,21 @@ import (
 	"github.com/shostakovich/zipfelkasse/internal/store"
 )
 
-// Posting ist eine Buchung „aus meiner Sicht“: mein Anteil an einer Ausgabe
-// als Ausgang im Verrechnungskonto „Geteilt“. Dieselben Buchungen schreibt
-// der Sync nach YNAB und liefert der Export als OFX/CSV.
+// Posting is a transaction "from my point of view": my share of an expense
+// as an outflow in the clearing account "Geteilt". The sync writes the same
+// transactions to YNAB that the export delivers as OFX/CSV.
 type Posting struct {
 	ExpenseID   int64
 	Date        time.Time
-	AmountCents int64  // mein Anteil in Cent, positiv (= Ausgang)
-	Payee       string // Titel der Ausgabe
-	Memo        string // „Gesamt 84,00 € · bezahlt von Anna · zipfelkasse #123“
-	CategoryID  int64  // App-Kategorie, 0 = keine
+	AmountCents int64  // my share in cents, positive (= outflow)
+	Payee       string // title of the expense
+	Memo        string // "Gesamt 84,00 € · bezahlt von Anna · zipfelkasse #123"
+	CategoryID  int64  // app category, 0 = none
 }
 
-// PostingFor liefert die Buchung von participantID zu e. ok ist false, wenn
-// es keine gibt: gelöschte Ausgaben, Rückzahlungen (die laufen in YNAB als
-// Transfer über die Bank) und Ausgaben ohne eigenen Anteil.
+// PostingFor returns the posting of participantID for e. ok is false if
+// there is none: deleted expenses, reimbursements (those go through the bank
+// as transfers in YNAB) and expenses without an own share.
 func PostingFor(e store.Expense, participantID int64) (p Posting, ok bool) {
 	if e.Deleted() || e.IsReimbursement {
 		return Posting{}, false
@@ -52,27 +52,26 @@ func sortPostings(ps []Posting) {
 	})
 }
 
-// Selection ist die Regel, welche Ausgaben einer Person nach YNAB gehören.
-// Sync und Export (ynab.ofx/ynab.csv) verwenden dieselbe Regel, damit beide
-// denselben Saldo „Geteilt“ ergeben. Eine Ausgabe gehört dazu, wenn es eine
-// Buchung gibt (PostingFor), ihr Datum nicht nach Today liegt (künftige
-// lehnt YNAB ab) und
-//   - ihr Datum ≥ Start ist oder
-//   - sie nach dem Einrichten erfasst wurde (created_at ≥ ConnectedAt): Der
-//     Startsaldo von „Geteilt“ kennt sie nicht, auch wenn sie rückdatiert ist, oder
-//   - sie schon in YNAB steht (InYNAB): Rückt ihr Datum später vor den Start,
-//     bleibt sie trotzdem; entfernt wird sie nur bei Löschung oder Anteil 0.
+// Selection is the rule which of a person's expenses belong in YNAB. Sync
+// and export (ynab.ofx/ynab.csv) use the same rule so that both yield the
+// same balance of "Geteilt". An expense belongs if there is a posting
+// (PostingFor), its date is not after Today (YNAB rejects future ones) and
+//   - its date is ≥ Start, or
+//   - it was entered after the setup (created_at ≥ ConnectedAt): the starting
+//     balance of "Geteilt" does not know it, even if it is backdated, or
+//   - it is already in YNAB (InYNAB): if its date later moves before the
+//     start, it stays anyway; it is only removed on deletion or share 0.
 //
-// Ohne Start (YNAB nicht eingerichtet) zählen alle vergangenen Ausgaben.
+// Without Start (YNAB not set up), all past expenses count.
 type Selection struct {
 	Start       time.Time
 	ConnectedAt time.Time
 	Today       time.Time
-	InYNAB      map[int64]bool // Ausgaben-ID → Buchung in YNAB vorhanden (oder Anlage unklar)
+	InYNAB      map[int64]bool // expense ID → transaction exists in YNAB (or creation unclear)
 }
 
-// NewSelection liest die Regel für die Verbindung cfg. Fehlt ConnectedAt
-// (Verbindungen von vor seiner Einführung), gilt ab jetzt.
+// NewSelection reads the rule for the connection cfg. If ConnectedAt is
+// missing (connections from before it was introduced), now applies.
 func NewSelection(ctx context.Context, st *store.Store, cfg store.YNABConfig, today time.Time) (Selection, error) {
 	sel := Selection{Today: today}
 	if cfg.StartDate.IsZero() || cfg.AccountID == "" {
@@ -99,8 +98,8 @@ func NewSelection(ctx context.Context, st *store.Store, cfg store.YNABConfig, to
 	return sel, nil
 }
 
-// SelectionFor ist NewSelection für participantID (ohne Verbindung: alle
-// vergangenen Ausgaben).
+// SelectionFor is NewSelection for participantID (without a connection: all
+// past expenses).
 func SelectionFor(ctx context.Context, st *store.Store, participantID int64, today time.Time) (Selection, error) {
 	cfg, err := st.GetYNABConfig(ctx, participantID)
 	if err != nil && !errors.Is(err, store.ErrNotFound) {
@@ -110,7 +109,7 @@ func SelectionFor(ctx context.Context, st *store.Store, participantID int64, tod
 	return NewSelection(ctx, st, cfg, today)
 }
 
-// Includes meldet, ob die Ausgabe e mit Buchung p dazugehört.
+// Includes reports whether the expense e with posting p belongs.
 func (sel Selection) Includes(e store.Expense, p Posting) bool {
 	if p.Date.After(sel.Today) {
 		return false
@@ -119,8 +118,8 @@ func (sel Selection) Includes(e store.Expense, p Posting) bool {
 		(!sel.ConnectedAt.IsZero() && !e.CreatedAt.Before(sel.ConnectedAt)) || sel.InYNAB[e.ID]
 }
 
-// Postings liefert die ausgewählten Buchungen von participantID zu es, nach
-// Datum und ID aufsteigend sortiert.
+// Postings returns the selected postings of participantID for es, sorted by
+// date and ID ascending.
 func (sel Selection) Postings(es []store.Expense, participantID int64) []Posting {
 	var out []Posting
 	for _, e := range es {
@@ -132,8 +131,9 @@ func (sel Selection) Postings(es []store.Expense, participantID int64) []Posting
 	return out
 }
 
-// Memo beschreibt die Ausgabe für das Memo-Feld. Die Markierung „zipfelkasse #ID“
-// steht immer am Ende; der Sync erkennt eigene Buchungen daran wieder.
+// Memo describes the expense for the memo field. The text is German (it
+// lands in the user's YNAB budget). The marker "zipfelkasse #ID" is always
+// at the end; the sync recognizes its own transactions by it.
 func Memo(e store.Expense) string {
 	total := "Gesamt " + domain.FormatCents(e.AmountCents)
 	if e.IsForeign() {
@@ -147,12 +147,12 @@ func Memo(e store.Expense) string {
 // markerPrefix starts the marker of an expense in the memo (see Marker).
 const markerPrefix = "zipfelkasse #"
 
-// Marker ist die Kennung einer Ausgabe im Memo.
+// Marker is the identifier of an expense in the memo.
 func Marker(expenseID int64) string { return markerPrefix + strconv.FormatInt(expenseID, 10) }
 
 var markerRe = regexp.MustCompile(regexp.QuoteMeta(markerPrefix) + `(\d+)\s*$`)
 
-// markerID liest die Ausgaben-ID aus einem Memo (siehe Marker).
+// markerID reads the expense ID from a memo (see Marker).
 func markerID(memo string) (int64, bool) {
 	m := markerRe.FindStringSubmatch(memo)
 	if m == nil {
@@ -162,7 +162,7 @@ func markerID(memo string) (int64, bool) {
 	return id, err == nil
 }
 
-// truncate kürzt s auf höchstens n Zeichen (Runen), mit „…“ am Ende.
+// truncate shortens s to at most n characters (runes), with "…" at the end.
 func truncate(s string, n int) string {
 	r := []rune(s)
 	if len(r) <= n {

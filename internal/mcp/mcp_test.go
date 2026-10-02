@@ -87,7 +87,7 @@ type reply struct {
 	body   map[string]any
 }
 
-// send schickt eine Anfrage. hdr: zusätzliche Header; remote "" = anthropic.
+// send sends a request. hdr: additional headers; remote "" = anthropic.
 func (e *env) send(method, path, remote string, hdr map[string]string, body string) reply {
 	e.t.Helper()
 	req := httptest.NewRequest(method, path, strings.NewReader(body))
@@ -109,20 +109,20 @@ func (e *env) send(method, path, remote string, hdr map[string]string, body stri
 	r := reply{status: rec.Code, header: rec.Header(), raw: rec.Body.String()}
 	if strings.HasPrefix(rec.Header().Get("Content-Type"), "application/json") {
 		if err := json.Unmarshal(rec.Body.Bytes(), &r.body); err != nil {
-			e.t.Fatalf("Antwort kein JSON: %v: %s", err, r.raw)
+			e.t.Fatalf("response is not JSON: %v: %s", err, r.raw)
 		}
 	}
 	return r
 }
 
-// legacy schickt eine Legacy-Anfrage (Header MCP-Protocol-Version 2025-06-18).
+// legacy sends a legacy request (header MCP-Protocol-Version 2025-06-18).
 func (e *env) legacy(method string, params any) reply {
 	e.t.Helper()
 	b, _ := json.Marshal(map[string]any{"jsonrpc": "2.0", "id": 1, "method": method, "params": params})
 	return e.send("POST", "/mcp/"+testSecret, "", map[string]string{"MCP-Protocol-Version": "2025-06-18"}, string(b))
 }
 
-// modernReq baut eine moderne Anfrage mit passenden Headern.
+// modern builds a modern request with matching headers.
 func (e *env) modern(method string, params map[string]any, hdr map[string]string) reply {
 	e.t.Helper()
 	if params == nil {
@@ -150,7 +150,7 @@ func (r reply) result(t *testing.T) map[string]any {
 	t.Helper()
 	res, ok := r.body["result"].(map[string]any)
 	if !ok {
-		t.Fatalf("kein result (status %d): %s", r.status, r.raw)
+		t.Fatalf("no result (status %d): %s", r.status, r.raw)
 	}
 	return res
 }
@@ -163,7 +163,7 @@ func (r reply) errCode() float64 {
 	return 0
 }
 
-// call ruft ein Tool (Legacy) und liefert structuredContent bzw. Text und isError.
+// call calls a tool (legacy) and returns structuredContent, the text and isError.
 func (e *env) call(name string, args map[string]any) (map[string]any, string, bool) {
 	e.t.Helper()
 	res := e.legacy("tools/call", map[string]any{"name": name, "arguments": args}).result(e.t)
@@ -184,22 +184,22 @@ func TestAccess(t *testing.T) {
 		hdr    map[string]string
 		want   int
 	}{
-		{"erlaubt", "POST", path, "", nil, 200},
-		{"falsches Secret", "POST", "/mcp/falsch", "", nil, 404},
-		{"Secret-Präfix", "POST", path[:len(path)-1], "", nil, 404},
-		{"falsches Secret von fremder IP", "POST", "/mcp/falsch", "1.2.3.4:1", nil, 404},
-		{"fremde IP", "POST", path, "1.2.3.4:1", nil, 403},
-		{"XFF-Spoofing ohne Proxy", "POST", path, "1.2.3.4:1", map[string]string{"X-Forwarded-For": "160.79.104.10"}, 403},
-		{"X-Real-IP-Spoofing ohne Proxy", "POST", path, "1.2.3.4:1", map[string]string{"X-Real-IP": "160.79.104.10"}, 403},
-		{"über Proxy erlaubt", "POST", path, "10.0.0.1:9", map[string]string{"X-Forwarded-For": "160.79.104.10"}, 200},
-		{"über Proxy, vorangestellte Fälschung", "POST", path, "10.0.0.1:9", map[string]string{"X-Forwarded-For": "160.79.104.10, 1.2.3.4"}, 403},
-		{"über Proxy ohne Header", "POST", path, "10.0.0.1:9", nil, 403},
-		{"über Proxy mit X-Real-IP", "POST", path, "10.0.0.1:9", map[string]string{"X-Real-IP": "160.79.104.10"}, 200},
-		{"Origin gesetzt", "POST", path, "", map[string]string{"Origin": "https://evil.example"}, 403},
+		{"allowed", "POST", path, "", nil, 200},
+		{"wrong secret", "POST", "/mcp/wrong", "", nil, 404},
+		{"secret prefix", "POST", path[:len(path)-1], "", nil, 404},
+		{"wrong secret from foreign IP", "POST", "/mcp/wrong", "1.2.3.4:1", nil, 404},
+		{"foreign IP", "POST", path, "1.2.3.4:1", nil, 403},
+		{"XFF spoofing without proxy", "POST", path, "1.2.3.4:1", map[string]string{"X-Forwarded-For": "160.79.104.10"}, 403},
+		{"X-Real-IP spoofing without proxy", "POST", path, "1.2.3.4:1", map[string]string{"X-Real-IP": "160.79.104.10"}, 403},
+		{"allowed via proxy", "POST", path, "10.0.0.1:9", map[string]string{"X-Forwarded-For": "160.79.104.10"}, 200},
+		{"via proxy, prepended forgery", "POST", path, "10.0.0.1:9", map[string]string{"X-Forwarded-For": "160.79.104.10, 1.2.3.4"}, 403},
+		{"via proxy without header", "POST", path, "10.0.0.1:9", nil, 403},
+		{"via proxy with X-Real-IP", "POST", path, "10.0.0.1:9", map[string]string{"X-Real-IP": "160.79.104.10"}, 200},
+		{"Origin set", "POST", path, "", map[string]string{"Origin": "https://evil.example"}, 403},
 		{"Origin null", "POST", path, "", map[string]string{"Origin": "null"}, 403},
 		{"GET", "GET", path, "", nil, 405},
 		{"DELETE", "DELETE", path, "", nil, 405},
-		{"falscher Content-Type", "POST", path, "", map[string]string{"Content-Type": "text/plain"}, 415},
+		{"wrong Content-Type", "POST", path, "", map[string]string{"Content-Type": "text/plain"}, 415},
 	}
 	for _, tt := range tests {
 		r := e.send(tt.method, tt.path, tt.remote, tt.hdr, ping)
@@ -207,20 +207,20 @@ func TestAccess(t *testing.T) {
 			t.Errorf("%s: status %d, want %d (%s)", tt.name, r.status, tt.want, r.raw)
 		}
 		if tt.want == 404 && strings.Contains(r.raw, "mcp") {
-			t.Errorf("%s: 404 verrät etwas: %q", tt.name, r.raw)
+			t.Errorf("%s: 404 reveals something: %q", tt.name, r.raw)
 		}
 	}
 	if r := e.send("GET", path, "", nil, ""); r.header.Get("Allow") != "POST" {
-		t.Errorf("405 ohne Allow: %v", r.header)
+		t.Errorf("405 without Allow: %v", r.header)
 	}
-	// Das Secret taucht nirgends im Log auf, Zugriffe aber schon.
+	// The secret never shows up in the log, but accesses do.
 	logs := e.logs.String()
 	if strings.Contains(logs, testSecret) || strings.Contains(logs, testSecret[:10]) {
-		t.Errorf("Secret im Log:\n%s", logs)
+		t.Errorf("secret in the log:\n%s", logs)
 	}
-	for _, want := range []string{"methode=ping", "ip=160.79.104.10", "falsches Secret", "IP nicht erlaubt", "Origin"} {
+	for _, want := range []string{"method=ping", "ip=160.79.104.10", "wrong secret", "IP not allowed", "Origin header rejected"} {
 		if !strings.Contains(logs, want) {
-			t.Errorf("Log ohne %q:\n%s", want, logs)
+			t.Errorf("log without %q:\n%s", want, logs)
 		}
 	}
 }
@@ -240,7 +240,7 @@ func TestDisabledWithoutSecret(t *testing.T) {
 
 func TestLegacyProtocol(t *testing.T) {
 	e := newEnv(t)
-	// initialize ohne Versions-Header, gewünschte Version wird übernommen.
+	// initialize without version header, the requested version is accepted.
 	b := `{"jsonrpc":"2.0","id":0,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"claude-ai","version":"0.1.0"}}}`
 	r := e.send("POST", "/mcp/"+testSecret, "", nil, b)
 	res := r.result(t)
@@ -248,26 +248,26 @@ func TestLegacyProtocol(t *testing.T) {
 		t.Errorf("initialize: %d %v %v", r.status, res, r.header)
 	}
 	if tools := res["capabilities"].(map[string]any)["tools"]; tools == nil {
-		t.Errorf("capabilities ohne tools: %v", res)
+		t.Errorf("capabilities without tools: %v", res)
 	}
-	if res["serverInfo"].(map[string]any)["name"] != "zipfelkasse" || !strings.Contains(res["instructions"].(string), "Saldo") {
+	if res["serverInfo"].(map[string]any)["name"] != "zipfelkasse" || !strings.Contains(res["instructions"].(string), "Balance") {
 		t.Errorf("serverInfo/instructions: %v", res)
 	}
 	if _, ok := res["resultType"]; ok {
-		t.Error("Legacy-Ergebnis mit resultType")
+		t.Error("legacy result with resultType")
 	}
-	// Unbekannte Version → neueste Legacy-Version.
+	// Unknown version → newest legacy version.
 	b = `{"jsonrpc":"2.0","id":0,"method":"initialize","params":{"protocolVersion":"2024-11-05"}}`
 	if v := e.send("POST", "/mcp/"+testSecret, "", nil, b).result(t)["protocolVersion"]; v != "2025-11-25" {
-		t.Errorf("Aushandlung 2024-11-05 → %v", v)
+		t.Errorf("negotiation 2024-11-05 → %v", v)
 	}
-	// notifications/initialized → 202 ohne Body.
+	// notifications/initialized → 202 without body.
 	r = e.send("POST", "/mcp/"+testSecret, "", map[string]string{"MCP-Protocol-Version": "2025-06-18"},
 		`{"jsonrpc":"2.0","method":"notifications/initialized"}`)
 	if r.status != 202 || r.raw != "" {
 		t.Errorf("initialized: %d %q", r.status, r.raw)
 	}
-	// tools/list mit und ohne Header (ohne = 2025-03-26).
+	// tools/list with and without header (without = 2025-03-26).
 	res = e.legacy("tools/list", nil).result(t)
 	tools := res["tools"].([]any)
 	var names []string
@@ -275,31 +275,31 @@ func TestLegacyProtocol(t *testing.T) {
 		m := tl.(map[string]any)
 		names = append(names, m["name"].(string))
 		if m["description"] == "" || m["inputSchema"].(map[string]any)["type"] != "object" || m["annotations"].(map[string]any)["readOnlyHint"] != true {
-			t.Errorf("Tool unvollständig: %v", m)
+			t.Errorf("tool incomplete: %v", m)
 		}
 	}
-	if strings.Join(names, ",") != "salden,ausgaben_suchen,statistik,schema,sql_abfrage" {
+	if strings.Join(names, ",") != "balances,search_expenses,statistics,schema,sql_query" {
 		t.Errorf("Tools = %v", names)
 	}
 	r = e.send("POST", "/mcp/"+testSecret, "", nil, `{"jsonrpc":"2.0","id":2,"method":"tools/list"}`)
 	if r.status != 200 || len(r.result(t)["tools"].([]any)) != 5 {
-		t.Errorf("tools/list ohne Header: %d %s", r.status, r.raw)
+		t.Errorf("tools/list without header: %d %s", r.status, r.raw)
 	}
-	// Nicht unterstützte Version im Header → 400 mit Liste.
+	// Unsupported version in the header → 400 with list.
 	r = e.send("POST", "/mcp/"+testSecret, "", map[string]string{"MCP-Protocol-Version": "1999-01-01"}, `{"jsonrpc":"2.0","id":3,"method":"tools/list"}`)
 	if r.status != 400 || r.errCode() != codeUnsupportedVersion {
-		t.Errorf("unbekannte Version: %d %s", r.status, r.raw)
+		t.Errorf("unknown version: %d %s", r.status, r.raw)
 	}
-	// ping, unbekannte Methode.
+	// ping, unknown method.
 	if r = e.legacy("ping", nil); r.status != 200 || len(r.result(t)) != 0 {
 		t.Errorf("ping: %s", r.raw)
 	}
 	if r = e.legacy("resources/list", nil); r.errCode() != codeMethodNotFound {
-		t.Errorf("unbekannte Methode: %d %s", r.status, r.raw)
+		t.Errorf("unknown method: %d %s", r.status, r.raw)
 	}
-	// Unbekanntes Tool ist ein Protokollfehler.
-	if r = e.legacy("tools/call", map[string]any{"name": "gibtsnicht"}); r.errCode() != codeInvalidParams {
-		t.Errorf("unbekanntes Tool: %s", r.raw)
+	// An unknown tool is a protocol error.
+	if r = e.legacy("tools/call", map[string]any{"name": "doesnotexist"}); r.errCode() != codeInvalidParams {
+		t.Errorf("unknown tool: %s", r.raw)
 	}
 }
 
@@ -346,20 +346,20 @@ func TestModernProtocol(t *testing.T) {
 		t.Errorf("supportedVersions = %v", v)
 	}
 	if res["_meta"].(map[string]any)["io.modelcontextprotocol/serverInfo"].(map[string]any)["name"] != "zipfelkasse" {
-		t.Errorf("serverInfo fehlt: %v", res)
+		t.Errorf("serverInfo missing: %v", res)
 	}
 	res = e.modern("tools/list", nil, nil).result(t)
 	if res["resultType"] != "complete" || res["ttlMs"] == nil || len(res["tools"].([]any)) != 5 {
 		t.Errorf("tools/list: %v", res)
 	}
-	res = e.modern("tools/call", map[string]any{"name": "salden", "arguments": map[string]any{}}, nil).result(t)
+	res = e.modern("tools/call", map[string]any{"name": "balances", "arguments": map[string]any{}}, nil).result(t)
 	if res["resultType"] != "complete" || res["isError"] != false || res["structuredContent"] == nil {
 		t.Errorf("tools/call: %v", res)
 	}
-	// Mcp-Name im Base64-Format.
-	r = e.modern("tools/call", map[string]any{"name": "salden"}, map[string]string{"Mcp-Name": "=?base64?c2FsZGVu?="})
+	// Mcp-Name in Base64 format.
+	r = e.modern("tools/call", map[string]any{"name": "balances"}, map[string]string{"Mcp-Name": "=?base64?YmFsYW5jZXM=?="})
 	if r.status != 200 || r.result(t)["isError"] != false {
-		t.Errorf("Base64-Mcp-Name: %d %s", r.status, r.raw)
+		t.Errorf("Base64 Mcp-Name: %d %s", r.status, r.raw)
 	}
 
 	bad := []struct {
@@ -370,17 +370,17 @@ func TestModernProtocol(t *testing.T) {
 		status int
 		code   float64
 	}{
-		{"Versions-Header fehlt", "tools/list", nil, map[string]string{"MCP-Protocol-Version": ""}, 400, codeHeaderMismatch},
-		{"Versions-Header falsch", "tools/list", nil, map[string]string{"MCP-Protocol-Version": "2025-11-25"}, 400, codeHeaderMismatch},
-		{"Mcp-Method fehlt", "tools/list", nil, map[string]string{"Mcp-Method": ""}, 400, codeHeaderMismatch},
-		{"Mcp-Method falsch", "tools/list", nil, map[string]string{"Mcp-Method": "tools/call"}, 400, codeHeaderMismatch},
-		{"Mcp-Name fehlt", "tools/call", map[string]any{"name": "salden"}, map[string]string{"Mcp-Name": ""}, 400, codeHeaderMismatch},
-		{"Mcp-Name falsch", "tools/call", map[string]any{"name": "salden"}, map[string]string{"Mcp-Name": "schema"}, 400, codeHeaderMismatch},
-		{"Mcp-Name Base64 falsch", "tools/call", map[string]any{"name": "salden"}, map[string]string{"Mcp-Name": "=?base64?c2NoZW1h?="}, 400, codeHeaderMismatch},
-		{"Mcp-Name Base64 kaputt", "tools/call", map[string]any{"name": "salden"}, map[string]string{"Mcp-Name": "=?base64?***?="}, 400, codeHeaderMismatch},
-		{"unbekannte Methode", "resources/list", nil, nil, 404, codeMethodNotFound},
+		{"version header missing", "tools/list", nil, map[string]string{"MCP-Protocol-Version": ""}, 400, codeHeaderMismatch},
+		{"version header wrong", "tools/list", nil, map[string]string{"MCP-Protocol-Version": "2025-11-25"}, 400, codeHeaderMismatch},
+		{"Mcp-Method missing", "tools/list", nil, map[string]string{"Mcp-Method": ""}, 400, codeHeaderMismatch},
+		{"Mcp-Method wrong", "tools/list", nil, map[string]string{"Mcp-Method": "tools/call"}, 400, codeHeaderMismatch},
+		{"Mcp-Name missing", "tools/call", map[string]any{"name": "balances"}, map[string]string{"Mcp-Name": ""}, 400, codeHeaderMismatch},
+		{"Mcp-Name wrong", "tools/call", map[string]any{"name": "balances"}, map[string]string{"Mcp-Name": "schema"}, 400, codeHeaderMismatch},
+		{"Mcp-Name Base64 wrong", "tools/call", map[string]any{"name": "balances"}, map[string]string{"Mcp-Name": "=?base64?c2NoZW1h?="}, 400, codeHeaderMismatch},
+		{"Mcp-Name Base64 broken", "tools/call", map[string]any{"name": "balances"}, map[string]string{"Mcp-Name": "=?base64?***?="}, 400, codeHeaderMismatch},
+		{"unknown method", "resources/list", nil, nil, 404, codeMethodNotFound},
 		{"initialize modern", "initialize", nil, nil, 404, codeMethodNotFound},
-		{"unbekanntes Tool", "tools/call", map[string]any{"name": "nix"}, nil, 200, codeInvalidParams},
+		{"unknown tool", "tools/call", map[string]any{"name": "nothing"}, nil, 200, codeInvalidParams},
 	}
 	for _, tt := range bad {
 		r := e.modern(tt.method, tt.params, tt.hdr)
@@ -389,7 +389,7 @@ func TestModernProtocol(t *testing.T) {
 		}
 	}
 
-	// Nicht unterstützte moderne Version: 400 mit supported/requested.
+	// Unsupported modern version: 400 with supported/requested.
 	meta := map[string]any{"io.modelcontextprotocol/protocolVersion": "2099-01-01", "io.modelcontextprotocol/clientCapabilities": map[string]any{}}
 	r = e.modern("tools/list", map[string]any{"_meta": meta}, map[string]string{"MCP-Protocol-Version": "2099-01-01"})
 	if r.status != 400 || r.errCode() != codeUnsupportedVersion {
@@ -399,17 +399,17 @@ func TestModernProtocol(t *testing.T) {
 	if data["requested"] != "2099-01-01" || data["supported"].([]any)[0] != modern {
 		t.Errorf("data = %v", data)
 	}
-	// Moderner Header, aber kein _meta im Body.
+	// Modern header, but no _meta in the body.
 	r = e.send("POST", "/mcp/"+testSecret, "", map[string]string{"MCP-Protocol-Version": modern, "Mcp-Method": "tools/list"},
 		`{"jsonrpc":"2.0","id":1,"method":"tools/list"}`)
 	if r.status != 400 || r.errCode() != codeHeaderMismatch {
-		t.Errorf("ohne _meta: %d %s", r.status, r.raw)
+		t.Errorf("without _meta: %d %s", r.status, r.raw)
 	}
 	// Notification → 202.
 	r = e.send("POST", "/mcp/"+testSecret, "", map[string]string{"MCP-Protocol-Version": modern},
-		`{"jsonrpc":"2.0","method":"notifications/irgendwas","params":{"_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28"}}}`)
+		`{"jsonrpc":"2.0","method":"notifications/whatever","params":{"_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28"}}}`)
 	if r.status != 202 || r.raw != "" {
-		t.Errorf("Notification: %d %q", r.status, r.raw)
+		t.Errorf("notification: %d %q", r.status, r.raw)
 	}
 }
 
@@ -420,7 +420,7 @@ func TestMalformed(t *testing.T) {
 		status int
 		code   float64
 	}{
-		{`{kaputt`, 400, codeParseError},
+		{`{broken`, 400, codeParseError},
 		{`[{"jsonrpc":"2.0","id":1,"method":"ping"}]`, 400, codeInvalidRequest},
 		{`{"id":1,"method":"ping"}`, 400, codeInvalidRequest},
 		{`{"jsonrpc":"2.0","id":1}`, 400, codeInvalidRequest},
@@ -436,44 +436,83 @@ func TestMalformed(t *testing.T) {
 	}
 	big := `{"jsonrpc":"2.0","id":1,"method":"ping","params":{"x":"` + strings.Repeat("a", maxBody) + `"}}`
 	if r := e.send("POST", "/mcp/"+testSecret, "", nil, big); r.status != http.StatusRequestEntityTooLarge {
-		t.Errorf("zu groß: %d", r.status)
+		t.Errorf("too large: %d", r.status)
 	}
 }
 
-func TestAusgabenSuchenUmlaute(t *testing.T) {
+func TestSearchExpensesUmlauts(t *testing.T) {
 	e := newEnv(t)
 	e.expense("Bäckerei", 300, "2026-09-01", "Anna", "Lebensmittel", "Anna", "Ben")
 	e.expense("ÖLWECHSEL", 9000, "2026-09-02", "Ben", "", "Anna", "Ben")
 	for text, want := range map[string]string{"BÄCKEREI": "Bäckerei", "bäcker": "Bäckerei", "ölwechsel": "ÖLWECHSEL", "Ölwechsel": "ÖLWECHSEL"} {
-		sc, msg, isErr := e.call("ausgaben_suchen", map[string]any{"text": text})
-		if isErr || sc["treffer"].(float64) != 1 || sc["ausgaben"].([]any)[0].(map[string]any)["titel"] != want {
+		sc, msg, isErr := e.call("search_expenses", map[string]any{"text": text})
+		if isErr || sc["matches"].(float64) != 1 || sc["expenses"].([]any)[0].(map[string]any)["title"] != want {
 			t.Errorf("text %q: %s", text, msg)
 		}
 	}
 }
 
-// kategorie "ohne" matches the statistik label "Ohne Kategorie".
-func TestCategoryWithout(t *testing.T) {
+// category "none" (and the statistics label "No category") selects expenses
+// without a category.
+func TestCategoryNone(t *testing.T) {
 	e := newEnv(t)
 	e.expense("Tanken", 5000, "2026-09-01", "Anna", "", "Anna", "Ben")
 	e.expense("Rewe", 3000, "2026-09-02", "Ben", "Lebensmittel", "Anna", "Ben")
 	e.expense("Pizza", 2000, "2026-09-03", "Ben", "Restaurant", "Ben")
-	for _, cat := range []string{"ohne", "Ohne Kategorie", "OHNE"} {
-		sc, text, isErr := e.call("ausgaben_suchen", map[string]any{"kategorie": cat})
-		if isErr || sc["treffer"].(float64) != 1 || sc["ausgaben"].([]any)[0].(map[string]any)["titel"] != "Tanken" {
-			t.Errorf("ausgaben_suchen %q: %s", cat, text)
+	for _, cat := range []string{"none", "No category", "NONE"} {
+		sc, text, isErr := e.call("search_expenses", map[string]any{"category": cat})
+		if isErr || sc["matches"].(float64) != 1 || sc["expenses"].([]any)[0].(map[string]any)["title"] != "Tanken" {
+			t.Errorf("search_expenses %q: %s", cat, text)
 		}
 	}
-	sc, text, isErr := e.call("statistik", map[string]any{"gruppierung": "kategorie", "kategorie": "ohne"})
-	if rows := sc["zeilen"].([]any); isErr || len(rows) != 1 || rows[0].(map[string]any)["kategorie"] != "Ohne Kategorie" || sc["gesamt_cent"].(float64) != 5000 {
-		t.Errorf("statistik ohne: %s", text)
+	sc, text, isErr := e.call("statistics", map[string]any{"group_by": "category", "category": "none"})
+	if rows := sc["rows"].([]any); isErr || len(rows) != 1 || rows[0].(map[string]any)["category"] != "No category" || sc["total_cents"].(float64) != 5000 {
+		t.Errorf("statistics none: %s", text)
 	}
-	sc, text, _ = e.call("statistik", map[string]any{"gruppierung": "person", "kategorie": "lebensmittel"})
-	if rows := sc["zeilen"].([]any); len(rows) != 2 || sc["gesamt_cent"].(float64) != 3000 {
-		t.Errorf("statistik person/Lebensmittel: %s", text)
+	sc, text, _ = e.call("statistics", map[string]any{"group_by": "person", "category": "lebensmittel"})
+	if rows := sc["rows"].([]any); len(rows) != 2 || sc["total_cents"].(float64) != 3000 {
+		t.Errorf("statistics person/Lebensmittel: %s", text)
 	}
-	if _, text, isErr := e.call("statistik", map[string]any{"gruppierung": "monat", "kategorie": "Yacht"}); !isErr || !strings.Contains(text, "Yacht") {
+	if _, text, isErr := e.call("statistics", map[string]any{"group_by": "month", "category": "Yacht"}); !isErr || !strings.Contains(text, "Yacht") {
 		t.Errorf("unknown category: %v %s", isErr, text)
+	}
+}
+
+// A real category named like the special value takes precedence.
+func TestCategoryNamedNone(t *testing.T) {
+	e := newEnv(t)
+	id, err := e.st.CreateCategory(context.Background(), "None")
+	if err != nil {
+		t.Fatal(err)
+	}
+	e.cats["None"] = id
+	e.expense("Tanken", 5000, "2026-09-01", "Anna", "", "Anna", "Ben")
+	e.expense("Kram", 1000, "2026-09-02", "Anna", "None", "Anna", "Ben")
+	sc, text, isErr := e.call("search_expenses", map[string]any{"category": "none"})
+	if isErr || sc["matches"].(float64) != 1 || sc["expenses"].([]any)[0].(map[string]any)["title"] != "Kram" {
+		t.Errorf("category None: %s", text)
+	}
+}
+
+func TestDecimal(t *testing.T) {
+	tests := []struct {
+		v        int64
+		decimals int
+		want     string
+	}{
+		{0, 2, "0.00"}, {5, 2, "0.05"}, {-5, 2, "-0.05"}, {123456, 2, "1234.56"}, {-300000, 2, "-3000.00"},
+		{1234, 0, "1234"}, {-7, 0, "-7"}, {12345, 3, "12.345"},
+	}
+	for _, tt := range tests {
+		if got := decimal(tt.v, tt.decimals); got != tt.want {
+			t.Errorf("decimal(%d, %d) = %q, want %q", tt.v, tt.decimals, got, tt.want)
+		}
+	}
+	if got := money(2340, "usd"); got != "23.40 USD" {
+		t.Errorf("money USD = %q", got)
+	}
+	if got := money(1500, "JPY"); got != "1500 JPY" {
+		t.Errorf("money JPY = %q", got)
 	}
 }
 
@@ -493,82 +532,102 @@ func TestTools(t *testing.T) {
 		AmountCents: 500, IsReimbursement: true, Parts: []domain.Part{{ParticipantID: e.ids["Anna"]}}}); err != nil {
 		t.Fatal(err)
 	}
-	// Salden: Anna bezahlt 5000, Anteile 2500, Rückzahlung erhalten 500 → +2000
-	sc, text, isErr := e.call("salden", nil)
+	// balances: Anna paid 5000, shares 2500, received a reimbursement of 500 → +2000
+	sc, text, isErr := e.call("balances", nil)
 	if isErr {
 		t.Fatal(text)
 	}
 	got := map[string]float64{}
-	for _, s := range sc["salden"].([]any) {
+	status := map[string]string{}
+	for _, s := range sc["balances"].([]any) {
 		m := s.(map[string]any)
-		got[m["person"].(string)] = m["saldo_cent"].(float64)
+		got[m["person"].(string)] = m["balance_cents"].(float64)
+		status[m["person"].(string)] = m["status"].(string)
 	}
 	if got["Anna"] != 2000 || got["Ben"] != -3000 || got["Cleo"] != 1000 {
-		t.Errorf("salden = %v", got)
+		t.Errorf("balances = %v", got)
 	}
-	if !strings.Contains(text, `"saldo":"-30,00"`) || !strings.Contains(text, `"von":"Ben"`) {
-		t.Errorf("salden-Text: %s", text)
+	if status["Anna"] != "is owed money" || status["Ben"] != "owes money" {
+		t.Errorf("status = %v", status)
+	}
+	if !strings.Contains(text, `"balance":"-30.00"`) || !strings.Contains(text, `"from":"Ben"`) || !strings.Contains(text, `"settlements":[`) {
+		t.Errorf("balances text: %s", text)
 	}
 
-	// ausgaben_suchen
-	sc, _, isErr = e.call("ausgaben_suchen", map[string]any{"person": "anna", "von": "2026-09-01"})
-	if isErr || sc["treffer"].(float64) != 2 || sc["summe_cent"].(float64) != 3000 {
-		t.Errorf("suche person: %v", sc)
+	// search_expenses
+	sc, _, isErr = e.call("search_expenses", map[string]any{"person": "anna", "from": "2026-09-01"})
+	if isErr || sc["matches"].(float64) != 2 || sc["total_cents"].(float64) != 3000 || sc["total"] != "30.00" {
+		t.Errorf("search person: %v", sc)
 	}
-	if a := sc["anteil_person"].(map[string]any); a["summe_cent"].(float64) != 1500 || a["summe"] != "15,00" {
-		t.Errorf("anteil_person = %v", a)
+	if a := sc["person_share"].(map[string]any); a["amount_cents"].(float64) != 1500 || a["amount"] != "15.00" || a["person"] != "Anna" {
+		t.Errorf("person_share = %v", a)
 	}
-	first := sc["ausgaben"].([]any)[0].(map[string]any)
-	if first["titel"] != "Diner NYC" || first["original"] != "23,40 USD" || first["kurs"].(float64) != 1.17 || len(first["anteile"].([]any)) != 2 {
-		t.Errorf("Fremdwährung: %v", first)
+	first := sc["expenses"].([]any)[0].(map[string]any)
+	if first["title"] != "Diner NYC" || first["original"] != "23.40 USD" || first["fx_rate"].(float64) != 1.17 || first["fx_source"] != "ezb" ||
+		first["split"] != "equal" || first["paid_by"] != "Anna" || first["category"] != "Restaurant" || len(first["shares"].([]any)) != 2 {
+		t.Errorf("foreign currency: %v", first)
 	}
-	sc, _, _ = e.call("ausgaben_suchen", map[string]any{"rueckzahlungen": "nur"})
-	if sc["treffer"].(float64) != 1 || sc["ausgaben"].([]any)[0].(map[string]any)["an"] != "Anna" {
-		t.Errorf("nur Rückzahlungen: %v", sc)
+	if sh := first["shares"].([]any)[0].(map[string]any); sh["amount"] != "10.00" || sh["amount_cents"].(float64) != 1000 {
+		t.Errorf("share = %v", sh)
 	}
-	sc, _, _ = e.call("ausgaben_suchen", map[string]any{"kategorie": "lebensmittel", "limit": 1})
-	if sc["treffer"].(float64) != 2 || sc["angezeigt"].(float64) != 1 || sc["gekuerzt"] != true || sc["summe_cent"].(float64) != 4000 {
-		t.Errorf("kategorie+limit: %v", sc)
+	sc, _, _ = e.call("search_expenses", map[string]any{"reimbursements": "only"})
+	if r := sc["expenses"].([]any)[0].(map[string]any); sc["matches"].(float64) != 1 || r["recipient"] != "Anna" || r["reimbursement"] != true {
+		t.Errorf("only reimbursements: %v", sc)
 	}
-	_, text, _ = e.call("ausgaben_suchen", map[string]any{"text": "wein"})
+	sc, _, _ = e.call("search_expenses", map[string]any{"reimbursements": "include"})
+	if sc["matches"].(float64) != 5 {
+		t.Errorf("include reimbursements: %v", sc)
+	}
+	sc, _, _ = e.call("search_expenses", map[string]any{"category": "lebensmittel", "limit": 1})
+	if sc["matches"].(float64) != 2 || sc["shown"].(float64) != 1 || sc["truncated"] != true || sc["total_cents"].(float64) != 4000 {
+		t.Errorf("category+limit: %v", sc)
+	}
+	_, text, _ = e.call("search_expenses", map[string]any{"text": "wein"})
 	if !strings.Contains(text, "Pizza & Wein") {
-		t.Errorf("Text ohne & : %s", text)
+		t.Errorf("text without &: %s", text)
 	}
 	for _, args := range []map[string]any{
-		{"person": "Dora"}, {"kategorie": "Yacht"}, {"von": "gestern"}, {"von": "2026-09-02", "bis": "2026-09-01"},
-		{"limit": 1000}, {"rueckzahlungen": "egal"}, {"unbekannt": 1}, {"limit": "zehn"},
+		{"person": "Dora"}, {"category": "Yacht"}, {"from": "yesterday"}, {"from": "2026-09-02", "to": "2026-09-01"},
+		{"limit": 1000}, {"reimbursements": "whatever"}, {"unknown": 1}, {"limit": "ten"}, {"von": "2026-09-01"},
 	} {
-		if _, text, isErr := e.call("ausgaben_suchen", args); !isErr || text == "" || strings.Contains(text, "Interner Fehler") {
+		if _, text, isErr := e.call("search_expenses", args); !isErr || text == "" || strings.Contains(text, "Internal error") {
 			t.Errorf("%v: isError=%v %q", args, isErr, text)
 		}
 	}
-	if _, text, _ := e.call("ausgaben_suchen", map[string]any{"person": "Dora"}); !strings.Contains(text, "Anna, Ben, Cleo") {
-		t.Errorf("Fehler ohne Namensliste: %s", text)
+	if _, text, _ := e.call("search_expenses", map[string]any{"person": "Dora"}); !strings.Contains(text, "Anna, Ben, Cleo") {
+		t.Errorf("error without list of names: %s", text)
+	}
+	if _, text, _ := e.call("search_expenses", map[string]any{"from": "2026-09-02", "to": "2026-09-01"}); !strings.Contains(text, `"to" (2026-09-01) is before "from" (2026-09-02)`) {
+		t.Errorf("range error: %s", text)
 	}
 
-	// statistik
-	sc, _, isErr = e.call("statistik", map[string]any{"gruppierung": "kategorie", "person": "Ben"})
+	// statistics
+	sc, _, isErr = e.call("statistics", map[string]any{"group_by": "category", "share_of": "Ben"})
 	if isErr {
 		t.Fatal(sc)
 	}
-	zeilen := sc["zeilen"].([]any)
-	if len(zeilen) != 2 || zeilen[0].(map[string]any)["kategorie"] != "Restaurant" || zeilen[0].(map[string]any)["summe_cent"].(float64) != 3000 ||
-		sc["gesamt_cent"].(float64) != 4500 || !strings.Contains(sc["sicht"].(string), "Ben") {
-		t.Errorf("statistik Ben: %v", sc)
+	rows := sc["rows"].([]any)
+	if len(rows) != 2 || rows[0].(map[string]any)["category"] != "Restaurant" || rows[0].(map[string]any)["amount_cents"].(float64) != 3000 ||
+		sc["total_cents"].(float64) != 4500 || sc["total"] != "45.00" || !strings.Contains(sc["perspective"].(string), "Ben") {
+		t.Errorf("statistics Ben: %v", sc)
 	}
-	sc, _, _ = e.call("statistik", map[string]any{"gruppierung": "person"})
-	if z := sc["zeilen"].([]any)[0].(map[string]any); z["person"] != "Ben" || z["bezahlt_cent"].(float64) != 1000 || sc["gesamt_cent"].(float64) != 10000 {
-		t.Errorf("statistik person: %v", sc)
+	sc, _, _ = e.call("statistics", map[string]any{"group_by": "person"})
+	if r := sc["rows"].([]any)[0].(map[string]any); r["person"] != "Ben" || r["paid_cents"].(float64) != 1000 || r["paid"] != "10.00" || sc["total_cents"].(float64) != 10000 {
+		t.Errorf("statistics person: %v", sc)
 	}
-	sc, _, _ = e.call("statistik", map[string]any{"gruppierung": "monat", "von": "2026-09-01", "bis": "30.09.2026"})
-	if z := sc["zeilen"].([]any); len(z) != 1 || z[0].(map[string]any)["monat"] != "2026-09" || sc["zeitraum"] != "2026-09-01 bis 2026-09-30" {
-		t.Errorf("statistik monat: %v", sc)
+	sc, _, _ = e.call("statistics", map[string]any{"group_by": "month", "from": "2026-09-01", "to": "30.09.2026"})
+	if r := sc["rows"].([]any); len(r) != 1 || r[0].(map[string]any)["month"] != "2026-09" || r[0].(map[string]any)["count"].(float64) != 3 ||
+		sc["period"] != "2026-09-01 to 2026-09-30" {
+		t.Errorf("statistics month: %v", sc)
 	}
-	if _, _, isErr := e.call("statistik", map[string]any{"gruppierung": "jahr"}); !isErr {
-		t.Error("ungültige gruppierung ohne Fehler")
+	sc, _, _ = e.call("statistics", map[string]any{"group_by": "category_month", "share_of": "anna"})
+	if r := sc["rows"].([]any); len(r) != 3 || sc["period"] != "all time" || r[0].(map[string]any)["month"] == "" || r[0].(map[string]any)["category"] == "" {
+		t.Errorf("statistics category_month: %v", sc)
 	}
-	if _, _, isErr := e.call("statistik", nil); !isErr {
-		t.Error("fehlende gruppierung ohne Fehler")
+	for _, args := range []map[string]any{nil, {"group_by": "year"}, {"group_by": "month", "person": "Anna"}, {"group_by": "month", "share_of": "Dora"}} {
+		if _, text, isErr := e.call("statistics", args); !isErr || strings.Contains(text, "Internal error") {
+			t.Errorf("statistics %v: isError=%v %s", args, isErr, text)
+		}
 	}
 
 	// schema
@@ -578,20 +637,24 @@ func TestTools(t *testing.T) {
 		t.Errorf("schema: %s", text)
 	}
 
-	// sql_abfrage
-	sc, _, isErr = e.call("sql_abfrage", map[string]any{"abfrage": "SELECT name, archived_at FROM participants ORDER BY name"})
-	if isErr || sc["anzahl"].(float64) != 3 || sc["zeilen"].([]any)[0].([]any)[0] != "Anna" || sc["spalten"].([]any)[1] != "archived_at" {
+	// sql_query
+	sc, _, isErr = e.call("sql_query", map[string]any{"query": "SELECT name, archived_at FROM participants ORDER BY name"})
+	if isErr || sc["row_count"].(float64) != 3 || sc["rows"].([]any)[0].([]any)[0] != "Anna" || sc["columns"].([]any)[1] != "archived_at" || sc["truncated"] != false {
 		t.Errorf("sql: %v", sc)
 	}
-	for _, q := range []string{"SELECT token FROM ynab_config", "DELETE FROM expenses", "SELECT 1; DELETE FROM expenses", "SELECT * FROM gibtsnicht", ""} {
-		if _, text, isErr := e.call("sql_abfrage", map[string]any{"abfrage": q}); !isErr || strings.Contains(text, "Interner Fehler") {
+	sc, _, _ = e.call("sql_query", map[string]any{"query": "WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n LIMIT 600) SELECT i FROM n"})
+	if note, _ := sc["note"].(string); sc["truncated"] != true || sc["row_count"].(float64) != store.SQLMaxRows || !strings.Contains(note, "more than") {
+		t.Errorf("sql truncated: %v %v", sc["row_count"], sc["note"])
+	}
+	for _, q := range []string{"SELECT token FROM ynab_config", "DELETE FROM expenses", "SELECT 1; DELETE FROM expenses", "SELECT * FROM doesnotexist", ""} {
+		if _, text, isErr := e.call("sql_query", map[string]any{"query": q}); !isErr || strings.Contains(text, "Internal error") {
 			t.Errorf("sql %q: isError=%v %s", q, isErr, text)
 		}
 	}
 	if es, _ := e.st.ListExpenses(ctx, store.ExpenseFilter{}); len(es) != 5 {
-		t.Errorf("Ausgaben nach sql_abfrage: %d", len(es))
+		t.Errorf("expenses after sql_query: %d", len(es))
 	}
-	if !strings.Contains(e.logs.String(), "tool=sql_abfrage") {
-		t.Error("Tool-Aufruf nicht geloggt")
+	if !strings.Contains(e.logs.String(), "tool=sql_query") {
+		t.Error("tool call not logged")
 	}
 }

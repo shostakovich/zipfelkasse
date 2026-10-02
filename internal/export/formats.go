@@ -15,11 +15,12 @@ import (
 	"github.com/shostakovich/zipfelkasse/internal/ynab"
 )
 
-// --- Ausgaben als CSV (für Excel/Numbers) -------------------------------------
+// --- Expenses as CSV (for Excel/Numbers) -------------------------------------
 
-// writeExpensesCSV schreibt alle Ausgaben als CSV im deutschen Excel-Format:
-// UTF-8 mit BOM, Semikolon, Komma als Dezimaltrenner, CRLF. Je beteiligter
-// Person gibt es eine Spalte „Anteil <Name>“. es ist chronologisch sortiert.
+// writeExpensesCSV writes all expenses as CSV in the German Excel format:
+// UTF-8 with BOM, semicolon, comma as decimal separator, CRLF. The headers are
+// German (user-facing). There is one column "Anteil <Name>" per involved
+// person. es is sorted chronologically.
 func writeExpensesCSV(w io.Writer, people []store.Participant, es []store.Expense) error {
 	if _, err := io.WriteString(w, "\uFEFF"); err != nil {
 		return err
@@ -73,7 +74,7 @@ func writeExpensesCSV(w io.Writer, people []store.Participant, es []store.Expens
 	return cw.Error()
 }
 
-// involved filtert people auf die, die in es zahlen oder beteiligt sind.
+// involved filters people to those who pay or take part in es.
 func involved(people []store.Participant, es []store.Expense) []store.Participant {
 	seen := map[int64]bool{}
 	for _, e := range es {
@@ -91,8 +92,8 @@ func involved(people []store.Participant, es []store.Expense) []store.Participan
 	return out
 }
 
-// cell entschärft Text, den Tabellenprogramme sonst als Formel ausführen
-// würden (CSV-Injection): führendes =, +, -, @, Tab oder CR bekommt ein '.
+// cell defuses text that spreadsheet programs would otherwise execute as a
+// formula (CSV injection): a leading =, +, -, @, tab or CR gets a '.
 func cell(s string) string {
 	if s != "" && strings.ContainsRune("=+-@\t\r", rune(s[0])) {
 		return "'" + s
@@ -100,8 +101,8 @@ func cell(s string) string {
 	return s
 }
 
-// decimal formatiert minor mit decimals Nachkommastellen, ohne
-// Tausendertrenner: (123456, 2, ',') → "1234,56".
+// decimal formats minor with decimals decimal places, without thousands
+// separators: (123456, 2, ',') → "1234,56".
 func decimal(minor int64, decimals int, sep byte) string {
 	neg := minor < 0
 	if neg {
@@ -120,7 +121,7 @@ func decimal(minor int64, decimals int, sep byte) string {
 	return s
 }
 
-// --- Ausgaben als JSON ---------------------------------------------------------
+// --- Expenses as JSON ---------------------------------------------------------
 
 type jsonExport struct {
 	Group        string            `json:"group"`
@@ -209,11 +210,11 @@ func writeExpensesJSON(w io.Writer, group string, now time.Time, p period, peopl
 	return enc.Encode(out)
 }
 
-// --- Meine Anteile für YNAB: OFX -------------------------------------------------
+// --- My shares for YNAB: OFX ----------------------------------------------------
 
-// writeOFX schreibt die Buchungen als OFX 1.02 (SGML) – ein Kontoauszug des
-// Verrechnungskontos. FITID ist stabil je Ausgabe („zipfelkasse-<ID>“). Kodierung
-// UTF-8 (so deklariert), Zeilenende CRLF.
+// writeOFX writes the transactions as OFX 1.02 (SGML) – a statement of the
+// clearing account. FITID is stable per expense ("zipfelkasse-<ID>").
+// Encoding UTF-8 (declared as such), line ending CRLF.
 func writeOFX(w io.Writer, ps []ynab.Posting, accountID string, from, to, now time.Time) error {
 	if from.IsZero() || to.IsZero() {
 		lo, hi := now, now
@@ -291,8 +292,8 @@ func writeOFX(w io.Writer, ps []ynab.Posting, accountID string, from, to, now ti
 	return err
 }
 
-// sgml kürzt auf n Zeichen (OFX-Feldlängen), entfernt Zeilenumbrüche und
-// maskiert &, < und >.
+// sgml truncates to n characters (OFX field lengths), removes line breaks and
+// escapes &, < and >.
 func sgml(s string, n int) string {
 	s = strings.Join(strings.Fields(s), " ")
 	if r := []rune(s); len(r) > n {
@@ -301,11 +302,11 @@ func sgml(s string, n int) string {
 	return strings.NewReplacer("&", "&amp;", "<", "&lt;", ">", "&gt;").Replace(s)
 }
 
-// --- Meine Anteile für YNAB: CSV ------------------------------------------------
+// --- My shares for YNAB: CSV -----------------------------------------------------
 
-// writeYNABCSV schreibt die Buchungen im CSV-Format des YNAB-Dateiimports:
-// Date,Payee,Memo,Outflow,Inflow; Datum ISO (Jahr zuerst, eindeutig), Beträge
-// mit Punkt, UTF-8 ohne BOM.
+// writeYNABCSV writes the transactions in the CSV format of the YNAB file
+// import: Date,Payee,Memo,Outflow,Inflow; ISO date (year first, unambiguous),
+// amounts with a dot, UTF-8 without BOM.
 func writeYNABCSV(w io.Writer, ps []ynab.Posting) error {
 	cw := csv.NewWriter(w)
 	if err := cw.Write([]string{"Date", "Payee", "Memo", "Outflow", "Inflow"}); err != nil {

@@ -1,8 +1,9 @@
-// Package export bietet Ausgaben als CSV/JSON und die eigenen Anteile als
-// OFX/CSV für YNAB zum Herunterladen an.
+// Package export offers expenses as CSV/JSON and one's own shares as OFX/CSV
+// for YNAB for download.
 //
-// Die YNAB-Dateien enthalten genau die Buchungen, die auch der YNAB-Sync
-// schreibt (ynab.Selection) – als Fallback für den Dateiimport ins Konto „Geteilt“.
+// The YNAB files contain exactly the transactions the YNAB sync writes too
+// (ynab.Selection) – as a fallback for the file import into the "Geteilt"
+// account.
 package export
 
 import (
@@ -29,7 +30,7 @@ type handlers struct {
 	now   func() time.Time
 }
 
-// Register hängt die Routen unter /export an.
+// Register mounts the routes under /export.
 func Register(mux *http.ServeMux, d web.Deps) error {
 	pages, err := d.Render.Load(templatesFS, "templates/*.html")
 	if err != nil {
@@ -44,7 +45,7 @@ func Register(mux *http.ServeMux, d web.Deps) error {
 	return nil
 }
 
-// period ist der optionale Zeitraum (?von=…&bis=…, jeweils inklusive).
+// period is the optional date range (?von=…&bis=…, both inclusive).
 type period struct {
 	From, To time.Time
 }
@@ -68,7 +69,7 @@ func parsePeriod(r *http.Request) (period, error) {
 	return p, nil
 }
 
-// suffix für Dateinamen: Zeitraum oder Tagesdatum.
+// suffix for file names: the date range or today's date.
 func (p period) suffix(today time.Time) string {
 	switch {
 	case !p.From.IsZero() && !p.To.IsZero():
@@ -113,17 +114,17 @@ func (h handlers) serverError(w http.ResponseWriter, r *http.Request, err error)
 	h.d.Render.Error(w, r, http.StatusInternalServerError, "Da ist etwas schiefgegangen.")
 }
 
-// expenses lädt die nicht gelöschten Ausgaben im Zeitraum, chronologisch.
+// expenses loads the non-deleted expenses in the range, chronologically.
 func (h handlers) expenses(r *http.Request, p period, participantID int64) ([]store.Expense, error) {
 	es, err := h.d.Store.ListExpenses(r.Context(), store.ExpenseFilter{From: p.From, To: p.To, ParticipantID: participantID})
 	if err != nil {
 		return nil, err
 	}
-	slices.Reverse(es) // ListExpenses liefert neueste zuerst
+	slices.Reverse(es) // ListExpenses returns the newest first
 	return es, nil
 }
 
-// load parst den Zeitraum und lädt die Ausgaben; false = Antwort schon geschrieben.
+// load parses the range and loads the expenses; false = response already written.
 func (h handlers) load(w http.ResponseWriter, r *http.Request, participantID int64) (period, []store.Expense, bool) {
 	p, err := parsePeriod(r)
 	if err != nil {
@@ -138,7 +139,7 @@ func (h handlers) load(w http.ResponseWriter, r *http.Request, participantID int
 	return p, es, true
 }
 
-// send schreibt einen fertig gepufferten Download.
+// send writes a fully buffered download.
 func send(w http.ResponseWriter, contentType, filename string, body []byte) {
 	w.Header().Set("Content-Type", contentType)
 	w.Header().Set("Content-Disposition", `attachment; filename="`+filename+`"`)
@@ -183,9 +184,9 @@ func (h handlers) expensesJSON(w http.ResponseWriter, r *http.Request) {
 	send(w, "application/json; charset=utf-8", "zipfelkasse-ausgaben-"+p.suffix(h.d.Today())+".json", buf.Bytes())
 }
 
-// postings liefert meine Buchungen (aktuelle Person) im Zeitraum – mit
-// derselben Auswahl wie der YNAB-Sync (ynab.Selection: Startdatum,
-// nachträglich erfasste, schon übertragene, keine künftigen).
+// postings returns my transactions (current person) in the range – with the
+// same selection as the YNAB sync (ynab.Selection: start date, entered later,
+// already transferred, no future ones).
 func (h handlers) postings(w http.ResponseWriter, r *http.Request) (store.Participant, period, []ynab.Posting, bool) {
 	me, _ := web.Me(r.Context())
 	p, es, ok := h.load(w, r, me.ID)

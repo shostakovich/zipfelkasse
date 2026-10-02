@@ -1,163 +1,190 @@
-# MCP – Auswertung mit Claude
+# MCP – analysis with Claude
 
-Zipfelkasse hat einen eigenen MCP-Server, über den Claude die Ausgaben auswerten kann. Er hat **nur lesende Tools**.
-Er läuft unter `/mcp/<MCP_SECRET>`. Ohne `MCP_SECRET` ist er abgeschaltet.
+Zipfelkasse has its own MCP server through which Claude can analyze the expenses. It has **read-only tools only**.
+It runs at `/mcp/<MCP_SECRET>`. Without `MCP_SECRET` it is disabled.
+
+The whole MCP interface is in English (tool names, parameters, output keys, instructions, error messages). Data
+values from the database (names, titles, categories, notes) are returned as entered, i.e. usually in German.
 
 ## Tools
 
-| Tool | Wofür |
+| Tool | Purpose |
 |---|---|
-| `salden` | Saldo je Person und Ausgleichsvorschlag |
-| `ausgaben_suchen` | einzelne Ausgaben mit Anteilen, gefiltert nach Zeitraum, Kategorie, Person, Text und Rückzahlungen (ohne/mit/nur), mit Limit |
-| `statistik` | Summen nach `kategorie`, `monat`, `person` oder `kategorie_monat`. Entweder Gesamtbeträge oder nur der Anteil einer Person. Rückzahlungen zählen nicht mit |
-| `schema` | erklärt Tabellen und Spalten, listet Personen und Kategorien, liefert die CREATE-Statements |
-| `sql_abfrage` | ein beliebiges `SELECT`/`WITH` (SQLite), höchstens 500 Zeilen, Abbruch nach 5 s |
+| `balances` | balance per person and a settlement proposal |
+| `search_expenses` | individual expenses with shares, filtered by `from`/`to`, `category`, `person`, `text` and `reimbursements` (`exclude`/`include`/`only`), with `limit` |
+| `statistics` | totals by `group_by` = `category`, `month`, `person` or `category_month`. Either total amounts or – with `share_of` – only one person's share. Reimbursements never count |
+| `schema` | explains tables and columns, lists people and categories, returns the CREATE statements |
+| `sql_query` | any `SELECT`/`WITH` (SQLite) as `query`, at most 500 rows, aborted after 5 s |
 
-`kategorie: "ohne"` selects expenses without a category, both in `ausgaben_suchen` and in `statistik` (which labels
-them „Ohne Kategorie“). The instructions and the `schema` text state today's date in the server time zone (`TZ`),
-computed per request; `server/discover` is therefore cached at most until midnight.
+Parameters in detail:
 
-Jeder Betrag kommt zweimal: als Text `"1234,56"` und als Cent-Wert (Feld mit der Endung `_cent`).
+- `search_expenses`: `from`, `to` (dates, inclusive), `category`, `person` (expenses the person paid **or** takes
+  part in), `text` (substring of title or notes), `reimbursements` (`exclude` = default, `include`, `only`),
+  `limit` (1–500, default 50).
+- `statistics`: `group_by` (required), `from`, `to`, `share_of` (only this person's share counts; empty = total
+  amounts), `category`.
 
-**Schutz in `sql_abfrage`:** Die Abfrage läuft nicht auf der echten Datenbank. Sie läuft auf einer frischen
-In-Memory-Kopie. Der Server hängt die echte Datei per `ATTACH 'file:…?mode=ro'` an, kopiert die freigegebenen Tabellen
-in einer Lese-Transaktion und hängt die Datei wieder ab. Danach ist `ATTACH` per `sqlite3_limit` gesperrt und
-`PRAGMA query_only` an. Lexikalisch ist nur genau ein `SELECT`/`WITH` erlaubt. Die Abfrage wird zusätzlich als
-Unterabfrage eingebettet.
+`category: "none"` selects expenses without a category, both in `search_expenses` and in `statistics` (which labels
+them "No category"; that label is accepted as input too). A real category with that name takes precedence. The
+instructions and the `schema` text state today's date in the server time zone (`TZ`), computed per request;
+`server/discover` is therefore cached at most until midnight.
 
-Freigegeben sind participants, categories, expenses, expense_shares, recurring, activity, fx_rates und settings
-(ohne `ynab…`-Schlüssel). Die YNAB-Tabellen mit dem Token existieren in der Kopie gar nicht. Neue Tabellen sind erst
-sichtbar, wenn sie in `store.MCPTables` stehen.
+Every amount appears twice: as locale-neutral text `"1234.56"` (dot as decimal separator, no thousands separator, no
+currency sign) and as an integer number of cents (field ending in `_cents`), e.g. `amount`/`amount_cents`,
+`balance`/`balance_cents`, `total`/`total_cents`. Foreign-currency originals look like `"23.40 USD"`.
 
-## Zugang
+Main output keys:
 
-Es gibt drei Prüfungen, in dieser Reihenfolge:
+- `balances`: `balances[]` (`person`, `balance`, `balance_cents`, `status`), `settlements[]` (`from`, `to`, `amount`,
+  `amount_cents`), `note`.
+- `search_expenses`: `matches`, `shown`, `truncated`, `total`, `total_cents`, `expenses[]` (`id`, `date`, `title`,
+  `category`, `paid_by`, `amount`, `amount_cents`, `reimbursement`, `recipient`, `original`, `fx_rate`, `fx_source`,
+  `notes`, `split`, `shares[]`), with `person` also `person_share`.
+- `statistics`: `group_by`, `perspective`, `period`, `rows[]` (`category`, `month`, `person`, `count`, `amount`,
+  `amount_cents`, with `group_by=person` also `paid`, `paid_cents`), `total`, `total_cents`, `note`.
+- `sql_query`: `columns`, `rows`, `row_count`, `truncated`, and `note` when truncated.
 
-1. Das Secret im Pfad wird in konstanter Zeit verglichen. Ist es falsch, kommt **404**, und die Antwort verrät nichts.
-2. Die Client-IP muss in `MCP_ALLOWED_CIDRS` liegen. Standard ist `160.79.104.0/21`, das ist Anthropic. Sonst
-   kommt **403**.
-3. Ein nicht leerer `Origin`-Header ergibt **403**. Browser sollen hier nie zugreifen, deshalb funktioniert auch der
-   MCP Inspector im Browser nicht.
+**Protection in `sql_query`:** the query does not run on the real database. It runs on a fresh in-memory copy. The
+server attaches the real file via `ATTACH 'file:…?mode=ro'`, copies the allowed tables in a read transaction and
+detaches the file again. After that, `ATTACH` is blocked via `sqlite3_limit` and `PRAGMA query_only` is on.
+Lexically, exactly one `SELECT`/`WITH` is allowed. The query is additionally embedded as a subquery.
 
-Bei der Client-IP gilt: Kommt die Verbindung von einer Adresse in `TRUSTED_PROXIES`, zählt `X-Forwarded-For`. Gelesen
-wird von rechts, und es zählt die erste Adresse, die selbst kein vertrauenswürdiger Proxy ist. Fehlt der Header, gilt
-`X-Real-IP`. In allen anderen Fällen zählt die TCP-Adresse, und Forwarded-Header werden ignoriert.
+The allowed tables are participants, categories, expenses, expense_shares, recurring, activity, fx_rates and settings
+(without `ynab…` keys). The YNAB tables holding the token do not exist in the copy at all. New tables only become
+visible once they are listed in `store.MCPTables`.
 
-Jeder Zugriff wird geloggt: IP, Methode, Tool, Status und Dauer. Der Pfad mit dem Secret steht nie im Log.
+## Access
 
-### Umgebungsvariablen
+There are three checks, in this order:
 
-| Variable | Beispiel |
+1. The secret in the path is compared in constant time. If it is wrong, the response is **404** and reveals nothing.
+2. The client IP must be in `MCP_ALLOWED_CIDRS`. The default is `160.79.104.0/21`, which is Anthropic. Otherwise the
+   response is **403**.
+3. A non-empty `Origin` header results in **403**. Browsers should never access this endpoint, which is why the
+   MCP Inspector in the browser does not work either.
+
+For the client IP: if the connection comes from an address in `TRUSTED_PROXIES`, `X-Forwarded-For` counts. It is
+read from the right, and the first address that is not itself a trusted proxy counts. If the header is missing,
+`X-Real-IP` applies. In all other cases the TCP address counts, and forwarded headers are ignored.
+
+Every access is logged: IP, method, tool, status and duration. The path containing the secret is never logged.
+
+### Environment variables
+
+| Variable | Example |
 |---|---|
-| `MCP_SECRET` | `openssl rand -hex 32` (nur `[0-9a-f]`, also URL-sicher) |
-| `MCP_ALLOWED_CIDRS` | `160.79.104.0/21` (Standard), für das LAN z. B. `160.79.104.0/21,192.168.178.0/24` |
-| `TRUSTED_PROXIES` | genau die Adresse des Newt-/Pangolin-Containers als /32, z. B. `172.18.0.5/32` (nicht das ganze Docker-Netz, siehe unten) |
+| `MCP_SECRET` | `openssl rand -hex 32` (only `[0-9a-f]`, so URL-safe) |
+| `MCP_ALLOWED_CIDRS` | `160.79.104.0/21` (default), for the LAN e.g. `160.79.104.0/21,192.168.178.0/24` |
+| `TRUSTED_PROXIES` | exactly the address of the Newt/Pangolin container as /32, e.g. `172.18.0.5/32` (not the whole Docker network, see below) |
 
-## Pangolin einrichten
+## Setting up Pangolin
 
-1. Öffne die Ressource von Zipfelkasse, gehe zu **Rules** und aktiviere die Regeln.
-2. Lege eine Regel an: Aktion **Bypass Auth**, Match **Path**, Wert `/mcp/*`. Damit kommt Claude ohne Pangolin-Login
-   durch. Die App schützt sich mit Secret, IP-Filter und Origin-Prüfung selbst.
-3. Stelle `TRUSTED_PROXIES` ein: Starte die App zunächst ohne die Variable und rufe den Endpunkt einmal über die Domain
-   auf. Im Log steht dann `mcp: IP nicht erlaubt` mit `remote=<Adresse>` (das ist der Newt-/Traefik-Hop) und
-   `x_forwarded_for=[…]`. Alternativ: `docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}} {{end}}' newt`
-   (Containername anpassen). Trage **nur diese eine Adresse als /32** in `TRUSTED_PROXIES` ein, z. B. `172.18.0.5/32`.
-   Danach muss `ip=` die echte Client-Adresse zeigen.
+1. Open the Zipfelkasse resource, go to **Rules** and enable the rules.
+2. Add a rule: action **Bypass Auth**, match **Path**, value `/mcp/*`. This lets Claude through without the Pangolin
+   login. The app protects itself with the secret, the IP filter and the Origin check.
+3. Set `TRUSTED_PROXIES`: start the app without the variable first and call the endpoint once via the domain. The
+   log then shows `mcp: IP not allowed` with `remote=<address>` (that is the Newt/Traefik hop) and
+   `x_forwarded_for=[…]`. Alternatively: `docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}} {{end}}' newt`
+   (adjust the container name). Enter **only this one address as /32** in `TRUSTED_PROXIES`, e.g. `172.18.0.5/32`.
+   After that, `ip=` must show the real client address.
 
-   Warum nicht das ganze Docker-Netz (`172.18.0.0/16`)? Jeder Container in diesem Netz dürfte dann
-   `X-Forwarded-For` setzen und sich als Anthropic ausgeben – ein kompromittierter Nachbar-Container käme so am
-   IP-Filter vorbei. Damit die Adresse nach einem Neustart gleich bleibt, gib dem Newt-Container in seinem
-   Compose-File eine feste Adresse (`networks: <netz>: ipv4_address: 172.18.0.5`) oder prüfe sie nach Updates erneut.
-4. Prüfe die Header: Traefik in Pangolin setzt `X-Forwarded-For` und `X-Real-Ip`. Steht in `x_forwarded_for` nichts,
-   reicht `X-Real-IP`.
+   Why not the whole Docker network (`172.18.0.0/16`)? Every container in that network could then set
+   `X-Forwarded-For` and pretend to be Anthropic – a compromised neighbor container would get past the IP filter
+   that way. To keep the address stable across restarts, give the Newt container a fixed address in its compose file
+   (`networks: <network>: ipv4_address: 172.18.0.5`) or check it again after updates.
+4. Check the headers: Traefik in Pangolin sets `X-Forwarded-For` and `X-Real-Ip`. If `x_forwarded_for` is empty,
+   `X-Real-IP` is enough.
 
-### Mit Caddy zwischen Newt und Zipfelkasse
+### With Caddy between Newt and Zipfelkasse
 
-Läuft der Weg `Pangolin → Newt → Caddy → Zipfelkasse`, gibt es zwei Proxy-Hops. Dann gilt:
+If the path is `Pangolin → Newt → Caddy → Zipfelkasse`, there are two proxy hops. Then:
 
-- **Caddy muss Newt vertrauen**, sonst verwirft es das eingehende `X-Forwarded-For` (mit der Anthropic-IP) und
-  schreibt nur die Newt-Adresse hinein. Im Caddyfile global:
+- **Caddy must trust Newt**, otherwise it discards the incoming `X-Forwarded-For` (with the Anthropic IP) and only
+  writes the Newt address into it. Globally in the Caddyfile:
 
   ```caddyfile
   {
   	servers {
-  		trusted_proxies static 172.18.0.5/32  # Adresse des Newt-Containers
+  		trusted_proxies static 172.18.0.5/32  # address of the Newt container
   	}
   }
   ```
 
-  Caddy hängt dann die Newt-Adresse an: `X-Forwarded-For: <Anthropic-IP>, <Newt-IP>`.
-- **Zipfelkasse muss beiden vertrauen:** `TRUSTED_PROXIES=<Caddy-IP>/32,<Newt-IP>/32`. Zipfelkasse liest von rechts, überspringt
-  Newt und landet bei der Anthropic-IP.
-- Kontrolle wie oben über die Logzeile: `remote=` ist Caddy, `x_forwarded_for=[<Anthropic-IP> <Newt-IP>]`, `ip=` die
-  Anthropic-IP.
+  Caddy then appends the Newt address: `X-Forwarded-For: <Anthropic IP>, <Newt IP>`.
+- **Zipfelkasse must trust both:** `TRUSTED_PROXIES=<Caddy IP>/32,<Newt IP>/32`. Zipfelkasse reads from the right,
+  skips Newt and arrives at the Anthropic IP.
+- Check via the log line as above: `remote=` is Caddy, `x_forwarded_for=[<Anthropic IP> <Newt IP>]`, `ip=` the
+  Anthropic IP.
 
-Im Heimnetz (direkt über Caddy, ohne Pangolin) steht in `x_forwarded_for` deine LAN-Adresse. Soll Claude Code im
-LAN zugreifen dürfen, nimm dein Netz zusätzlich in `MCP_ALLOWED_CIDRS` auf.
+On the home network (directly via Caddy, without Pangolin), `x_forwarded_for` contains your LAN address. If Claude
+Code should have access from the LAN, add your network to `MCP_ALLOWED_CIDRS` as well.
 
-## Claude verbinden
+## Connecting Claude
 
-**Claude (Web/Desktop):** Gehe zu Einstellungen → Connectors → **Custom Connector hinzufügen** und trage ein:
+**Claude (web/desktop):** go to Settings → Connectors → **Add custom connector** and enter:
 
 - Name: `zipfelkasse`
 - URL: `https://<domain>/mcp/<MCP_SECRET>`
-- keine Authentifizierung (kein OAuth)
+- no authentication (no OAuth)
 
-Die Anfragen kommen dann von Anthropic, also aus `160.79.104.0/21`.
+The requests then come from Anthropic, i.e. from `160.79.104.0/21`.
 
-**Claude Code im LAN**, direkt ohne Pangolin:
+**Claude Code on the LAN**, directly without Pangolin:
 
 ```sh
-claude mcp add --transport http zipfelkasse http://heimserver:8080/mcp/<MCP_SECRET>
+claude mcp add --transport http zipfelkasse http://homeserver:8080/mcp/<MCP_SECRET>
 ```
 
-Dafür muss das LAN in `MCP_ALLOWED_CIDRS` stehen. Je nach Docker-Setup kommt statt der LAN-Adresse das Docker-Gateway
-an, etwa `172.17.0.1`. Die tatsächliche Adresse steht im Log unter `ip=`.
+For this, the LAN must be in `MCP_ALLOWED_CIDRS`. Depending on the Docker setup, the Docker gateway (e.g.
+`172.17.0.1`) arrives instead of the LAN address. The actual address is in the log under `ip=`.
 
-## Beispielfragen
+## Example questions
 
-- „Wer schuldet wem gerade wie viel?“
-- „Wie viel habe ich (Robert) 2026 für Restaurants ausgegeben, Monat für Monat?“
-- „Was waren die zehn teuersten Ausgaben im Urlaub im August?“
-- „Welche Kategorie ist im Vergleich zum Vorjahr am stärksten gestiegen?“
-- „Zeig alle Ausgaben in USD mit Kurs.“
-- „Wer hat wie viel vorgestreckt und wie viel selbst verbraucht?“
+Questions can be asked in any language; Claude maps them to the English tools.
 
-## Test mit curl
+- "Who owes whom how much right now?"
+- "How much did I (Robert) spend on restaurants in 2026, month by month?"
+- "What were the ten most expensive expenses on vacation in August?"
+- "Which category grew the most compared to last year?"
+- "Show all expenses in USD with their exchange rate."
+- "Who paid how much up front and how much did each person consume?"
 
-Lokal muss die eigene Adresse erlaubt sein, z. B. mit `MCP_ALLOWED_CIDRS=127.0.0.1/32`:
+## Testing with curl
+
+Locally, your own address must be allowed, e.g. with `MCP_ALLOWED_CIDRS=127.0.0.1/32`:
 
 ```sh
 URL=http://localhost:8080/mcp/$MCP_SECRET
 
-# Legacy-Client (initialize-Handshake)
+# Legacy client (initialize handshake)
 curl -s $URL -H 'Content-Type: application/json' -H 'Accept: application/json, text/event-stream' \
   -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"curl","version":"1"}}}'
 curl -s $URL -H 'Content-Type: application/json' -H 'MCP-Protocol-Version: 2025-06-18' \
-  -d '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"salden","arguments":{}}}'
+  -d '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"balances","arguments":{}}}'
 
-# Moderner Client (2026-07-28, zustandslos, Pflicht-Header)
+# Modern client (2026-07-28, stateless, mandatory headers)
 META='"_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28","io.modelcontextprotocol/clientCapabilities":{}}'
 curl -s $URL -H 'Content-Type: application/json' -H 'MCP-Protocol-Version: 2026-07-28' -H 'Mcp-Method: server/discover' \
   -d "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"server/discover\",\"params\":{$META}}"
-curl -s $URL -H 'Content-Type: application/json' -H 'MCP-Protocol-Version: 2026-07-28' -H 'Mcp-Method: tools/call' -H 'Mcp-Name: statistik' \
-  -d "{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"tools/call\",\"params\":{\"name\":\"statistik\",\"arguments\":{\"gruppierung\":\"kategorie\"},$META}}"
+curl -s $URL -H 'Content-Type: application/json' -H 'MCP-Protocol-Version: 2026-07-28' -H 'Mcp-Method: tools/call' -H 'Mcp-Name: statistics' \
+  -d "{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"tools/call\",\"params\":{\"name\":\"statistics\",\"arguments\":{\"group_by\":\"category\"},$META}}"
 
-# Erwartete Fehler
-curl -s -o /dev/null -w '%{http_code}\n' -X POST http://localhost:8080/mcp/falsch   # 404
+# Expected errors
+curl -s -o /dev/null -w '%{http_code}\n' -X POST http://localhost:8080/mcp/wrong   # 404
 curl -s -o /dev/null -w '%{http_code}\n' $URL                                       # 405 (GET)
 ```
 
-## Protokoll
+## Protocol
 
-Der Server ist „Dual-Era“:
+The server is "dual era":
 
-- **Modern (2026-07-28):** zustandslos. Jede Anfrage trägt `_meta.io.modelcontextprotocol/protocolVersion`. Die
-  Header `MCP-Protocol-Version`, `Mcp-Method` und bei `tools/call` `Mcp-Name` (auch als `=?base64?…?=`) müssen zum
-  Body passen, sonst kommt 400 mit `-32020`. Eine unbekannte Version ergibt 400 mit `-32022` und `data.supported`,
-  eine unbekannte Methode 404 mit `-32601`. Unterstützt werden `server/discover`, `tools/list`, `tools/call` und
-  `ping`.
-- **Legacy (2025-11-25, 2025-06-18, 2025-03-26):** `initialize` handelt die Version aus, `notifications/initialized`
-  ergibt 202. Danach folgen `tools/list`, `tools/call` und `ping`. Fehlt der Versions-Header, gilt 2025-03-26.
-- Für beide gilt: Antworten kommen nur als `application/json`, ohne SSE und ohne Session-IDs. GET und DELETE ergeben
-  405, Notifications 202 ohne Body. Batches werden abgelehnt, und eine Nachricht darf höchstens 1 MB groß sein.
+- **Modern (2026-07-28):** stateless. Every request carries `_meta.io.modelcontextprotocol/protocolVersion`. The
+  headers `MCP-Protocol-Version`, `Mcp-Method` and, for `tools/call`, `Mcp-Name` (also as `=?base64?…?=`) must match
+  the body, otherwise the response is 400 with `-32020`. An unknown version results in 400 with `-32022` and
+  `data.supported`, an unknown method in 404 with `-32601`. Supported are `server/discover`, `tools/list`,
+  `tools/call` and `ping`.
+- **Legacy (2025-11-25, 2025-06-18, 2025-03-26):** `initialize` negotiates the version, `notifications/initialized`
+  results in 202. After that come `tools/list`, `tools/call` and `ping`. Without the version header, 2025-03-26
+  applies.
+- For both: responses are only sent as `application/json`, without SSE and without session IDs. GET and DELETE
+  result in 405, notifications in 202 without a body. Batches are rejected, and a message may be at most 1 MB.
