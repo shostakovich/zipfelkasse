@@ -102,6 +102,48 @@
     }
   });
 
+  // Submit lock: a POST form is sent only once, so that a double click or a
+  // second Enter does not create an expense twice. The buttons are disabled
+  // only after the submission has started: disabled buttons would drop the
+  // clicked button's name/value (e.g. "Wer bist du?") and formaction. After
+  // a validation error the server renders a fresh page anyway; if the
+  // navigation is stopped, the lock is lifted after a while.
+  var LOCK_MS = 10000;
+  function unlock(form) {
+    delete form.dataset.submitting;
+    form.querySelectorAll("[data-submit-locked]").forEach(function (b) {
+      b.disabled = false;
+      b.removeAttribute("data-submit-locked");
+    });
+  }
+  document.addEventListener("submit", function (ev) {
+    var form = ev.target;
+    if (ev.defaultPrevented || (form.getAttribute("method") || "").toLowerCase() !== "post") return;
+    if (form.dataset.submitting) {
+      ev.preventDefault();
+      return;
+    }
+    form.dataset.submitting = "1";
+    setTimeout(function () {
+      if (ev.defaultPrevented) {
+        // Cancelled by a later handler: nothing was sent.
+        delete form.dataset.submitting;
+        return;
+      }
+      form.querySelectorAll('button:not([type]), button[type="submit"], input[type="submit"]').forEach(function (b) {
+        if (!b.disabled) {
+          b.disabled = true;
+          b.setAttribute("data-submit-locked", "");
+        }
+      });
+      setTimeout(function () { unlock(form); }, LOCK_MS);
+    }, 0);
+  });
+  // Back/forward cache: the page comes back as it was left, still locked.
+  window.addEventListener("pageshow", function (ev) {
+    if (ev.persisted) document.querySelectorAll("form[data-submitting]").forEach(unlock);
+  });
+
   // Service worker only for installability (no offline cache).
   if ("serviceWorker" in navigator && window.isSecureContext) {
     window.addEventListener("load", function () {
