@@ -1,9 +1,9 @@
--- Migration 001: komplettes Grundschema von Zipfelkasse.
--- Konventionen:
---   * Beträge in Cent (INTEGER), Fremdwährung in der kleinsten Einheit.
---   * Kalenderdaten als TEXT 'YYYY-MM-DD', Zeitstempel als TEXT RFC 3339 UTC.
---   * Wahrheitswerte als INTEGER 0/1.
---   * Nichts wird hart gelöscht, was referenziert ist: archived_at / deleted_at.
+-- Migration 001: complete base schema of Zipfelkasse.
+-- Conventions:
+--   * Amounts in cents (INTEGER), foreign currency in its smallest unit.
+--   * Calendar dates as TEXT 'YYYY-MM-DD', timestamps as TEXT RFC 3339 UTC.
+--   * Booleans as INTEGER 0/1.
+--   * Nothing that is referenced gets hard-deleted: archived_at / deleted_at.
 
 CREATE TABLE participants (
     id          INTEGER PRIMARY KEY,
@@ -19,9 +19,9 @@ CREATE TABLE categories (
     archived_at TEXT
 );
 
--- Regel für wiederkehrende Ausgaben. template_json ist ein store.ExpenseInput
--- als JSON (das Datum darin wird ignoriert). Termine werden immer vom
--- start_date (Anker) aus berechnet, next_date ist der nächste fällige Termin.
+-- Rule for recurring expenses. template_json is a store.ExpenseInput as JSON
+-- (its date is ignored). Occurrences are always computed from start_date
+-- (the anchor); next_date is the next due occurrence.
 CREATE TABLE recurring (
     id            INTEGER PRIMARY KEY,
     template_json TEXT    NOT NULL,
@@ -46,10 +46,10 @@ CREATE TABLE expenses (
     is_reimbursement      INTEGER NOT NULL DEFAULT 0 CHECK (is_reimbursement IN (0, 1)),
     split_mode            TEXT    NOT NULL CHECK (split_mode IN ('equal', 'shares', 'percent', 'amount')),
     amount_cents          INTEGER NOT NULL CHECK (amount_cents > 0),
-    -- Originalbetrag; bei EUR gleich amount_cents, fx_rate 1, fx_source ''.
+    -- Original amount; for EUR equal to amount_cents, fx_rate 1, fx_source ''.
     original_amount_minor INTEGER NOT NULL,
     original_currency     TEXT    NOT NULL DEFAULT 'EUR',
-    fx_rate               REAL    NOT NULL DEFAULT 1,  -- Fremdwährung pro 1 EUR (EZB-Format)
+    fx_rate               REAL    NOT NULL DEFAULT 1,  -- foreign currency per 1 EUR (ECB format)
     fx_source             TEXT    NOT NULL DEFAULT '', -- '' | 'ezb' | 'manuell'
     recurring_id          INTEGER REFERENCES recurring (id) ON DELETE SET NULL,
     created_at            TEXT    NOT NULL,
@@ -60,12 +60,12 @@ CREATE TABLE expenses (
 CREATE INDEX expenses_date ON expenses (date DESC, id DESC) WHERE deleted_at IS NULL;
 CREATE INDEX expenses_paid_by ON expenses (paid_by);
 CREATE INDEX expenses_category ON expenses (category_id);
--- Verhindert doppelte Instanzen einer Wiederholung (auch nach Neustart).
+-- Prevents duplicate instances of a recurrence (also after a restart).
 CREATE UNIQUE INDEX expenses_recurring_date ON expenses (recurring_id, date) WHERE recurring_id IS NOT NULL;
 
--- weight hängt von split_mode ab: equal → 1, shares → Anteile,
--- percent → Basispunkte (Summe 10000), amount → Cent. amount_cents ist der
--- berechnete Anteil in Cent (Summe = expenses.amount_cents).
+-- weight depends on split_mode: equal → 1, shares → shares,
+-- percent → basis points (sum 10000), amount → cents. amount_cents is the
+-- computed share in cents (sum = expenses.amount_cents).
 CREATE TABLE expense_shares (
     expense_id     INTEGER NOT NULL REFERENCES expenses (id) ON DELETE CASCADE,
     participant_id INTEGER NOT NULL REFERENCES participants (id),
@@ -76,8 +76,8 @@ CREATE TABLE expense_shares (
 
 CREATE INDEX expense_shares_participant ON expense_shares (participant_id);
 
--- Aktivitätsprotokoll. actor_id NULL = System (z. B. Wiederholung).
--- details_json: siehe store.ActivityDetails.
+-- Activity log. actor_id NULL = system (e.g. recurrence).
+-- details_json: see store.ActivityDetails.
 CREATE TABLE activity (
     id           INTEGER PRIMARY KEY,
     at           TEXT    NOT NULL,
@@ -89,7 +89,7 @@ CREATE TABLE activity (
 
 CREATE INDEX activity_expense ON activity (expense_id);
 
--- Wechselkurse im EZB-Format (Fremdwährung pro 1 EUR).
+-- Exchange rates in ECB format (foreign currency per 1 EUR).
 CREATE TABLE fx_rates (
     date     TEXT NOT NULL,
     currency TEXT NOT NULL,

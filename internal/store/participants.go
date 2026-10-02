@@ -7,8 +7,8 @@ import (
 	"time"
 )
 
-// Participant ist eine Person der Gruppe. Personen werden nie gelöscht,
-// nur archiviert (ArchivedAt nicht null).
+// Participant is a person in the group. People are never deleted, only
+// archived (ArchivedAt not null).
 type Participant struct {
 	ID         int64
 	Name       string
@@ -30,7 +30,7 @@ func scanParticipant(row interface{ Scan(...any) error }) (Participant, error) {
 	return p, nil
 }
 
-// ListParticipants liefert Personen alphabetisch, archivierte nur auf Wunsch.
+// ListParticipants returns people alphabetically, archived ones only on request.
 func (s *Store) ListParticipants(ctx context.Context, includeArchived bool) ([]Participant, error) {
 	q := "SELECT " + participantCols + " FROM participants"
 	if !includeArchived {
@@ -53,7 +53,7 @@ func (s *Store) ListParticipants(ctx context.Context, includeArchived bool) ([]P
 	return out, rows.Err()
 }
 
-// GetParticipant liefert eine Person (auch archiviert) oder ErrNotFound.
+// GetParticipant returns a person (archived ones too) or ErrNotFound.
 func (s *Store) GetParticipant(ctx context.Context, id int64) (Participant, error) {
 	p, err := scanParticipant(s.db.QueryRowContext(ctx, "SELECT "+participantCols+" FROM participants WHERE id = ?", id))
 	if errors.Is(err, sql.ErrNoRows) {
@@ -62,8 +62,8 @@ func (s *Store) GetParticipant(ctx context.Context, id int64) (Participant, erro
 	return p, err
 }
 
-// CreateParticipant legt eine Person an. Doppelte Namen (ohne Groß-/
-// Kleinschreibung) ergeben einen domain.ValidationError.
+// CreateParticipant creates a person. Duplicate names (case-insensitive)
+// yield a domain.ValidationError.
 func (s *Store) CreateParticipant(ctx context.Context, name string) (int64, error) {
 	name, err := cleanName(name, "die Person")
 	if err != nil {
@@ -79,7 +79,7 @@ func (s *Store) CreateParticipant(ctx context.Context, name string) (int64, erro
 	return res.LastInsertId()
 }
 
-// RenameParticipant benennt eine Person um.
+// RenameParticipant renames a person.
 func (s *Store) RenameParticipant(ctx context.Context, id int64, name string) error {
 	name, err := cleanName(name, "die Person")
 	if err != nil {
@@ -92,7 +92,7 @@ func (s *Store) RenameParticipant(ctx context.Context, id int64, name string) er
 	return checkAffected(res, err)
 }
 
-// SetParticipantArchived archiviert eine Person bzw. holt sie zurück.
+// SetParticipantArchived archives or restores a person.
 func (s *Store) SetParticipantArchived(ctx context.Context, id int64, archived bool) error {
 	var v any
 	if archived {

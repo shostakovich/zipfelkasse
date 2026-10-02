@@ -1,4 +1,4 @@
-// Package config liest die Konfiguration aus Umgebungsvariablen.
+// Package config reads the configuration from environment variables.
 package config
 
 import (
@@ -9,21 +9,21 @@ import (
 	"time"
 )
 
-// Config ist die gesamte Laufzeitkonfiguration.
+// Config is the complete runtime configuration.
 type Config struct {
-	Addr            string         // ZIPFELKASSE_ADDR, Standard ":8080"
-	DBPath          string         // ZIPFELKASSE_DB, Standard "./data/zipfelkasse.db" (Container: /data/zipfelkasse.db)
-	BackupDir       string         // ZIPFELKASSE_BACKUP_DIR, Standard <Verzeichnis der DB>/backups
-	MCPSecret       string         // MCP_SECRET; leer = MCP abgeschaltet
-	MCPAllowedCIDRs []netip.Prefix // MCP_ALLOWED_CIDRS, Standard 160.79.104.0/21
-	TrustedProxies  []netip.Prefix // TRUSTED_PROXIES (IPs oder CIDRs), Standard leer
-	Location        *time.Location // aus TZ (Go liest TZ selbst), Standard UTC
+	Addr            string         // ZIPFELKASSE_ADDR, default ":8080"
+	DBPath          string         // ZIPFELKASSE_DB, default "./data/zipfelkasse.db" (container: /data/zipfelkasse.db)
+	BackupDir       string         // ZIPFELKASSE_BACKUP_DIR, default <directory of the DB>/backups
+	MCPSecret       string         // MCP_SECRET; empty = MCP disabled
+	MCPAllowedCIDRs []netip.Prefix // MCP_ALLOWED_CIDRS, default 160.79.104.0/21
+	TrustedProxies  []netip.Prefix // TRUSTED_PROXIES (IPs or CIDRs), default empty
+	Location        *time.Location // from TZ (Go reads TZ itself), default UTC
 }
 
-// DefaultMCPAllowedCIDRs ist der Adressbereich von Anthropic.
+// DefaultMCPAllowedCIDRs is Anthropic's address range.
 const DefaultMCPAllowedCIDRs = "160.79.104.0/21"
 
-// FromEnv baut die Konfiguration aus getenv (z. B. os.Getenv).
+// FromEnv builds the configuration from getenv (e.g. os.Getenv).
 func FromEnv(getenv func(string) string) (Config, error) {
 	c := Config{
 		Addr:      or(getenv("ZIPFELKASSE_ADDR"), ":8080"),
@@ -47,8 +47,8 @@ func FromEnv(getenv func(string) string) (Config, error) {
 	return c, nil
 }
 
-// ParsePrefixes liest eine durch Komma oder Leerzeichen getrennte Liste von
-// CIDRs oder einzelnen IP-Adressen (diese werden zu /32 bzw. /128).
+// ParsePrefixes parses a comma- or whitespace-separated list of CIDRs or
+// single IP addresses (which become /32 or /128 respectively).
 func ParsePrefixes(s string) ([]netip.Prefix, error) {
 	var out []netip.Prefix
 	for _, f := range strings.FieldsFunc(s, func(r rune) bool { return r == ',' || r == ' ' || r == '\t' || r == '\n' }) {
@@ -69,7 +69,7 @@ func ParsePrefixes(s string) ([]netip.Prefix, error) {
 	return out, nil
 }
 
-// ContainsAddr meldet, ob a in einem der Präfixe liegt (IPv4-mapped IPv6 wird entpackt).
+// ContainsAddr reports whether a lies in one of the prefixes (IPv4-mapped IPv6 is unmapped).
 func ContainsAddr(prefixes []netip.Prefix, a netip.Addr) bool {
 	a = a.Unmap()
 	for _, p := range prefixes {

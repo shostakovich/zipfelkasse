@@ -26,7 +26,7 @@ func TestFromEnv(t *testing.T) {
 	c, err := FromEnv(env(map[string]string{
 		"ZIPFELKASSE_ADDR":  "127.0.0.1:9000",
 		"ZIPFELKASSE_DB":    "/data/zipfelkasse.db",
-		"MCP_SECRET":        " geheim ",
+		"MCP_SECRET":        " secret ",
 		"MCP_ALLOWED_CIDRS": "10.0.0.0/8, 192.168.1.5",
 		"TRUSTED_PROXIES":   "172.18.0.2 fd00::/8",
 		"TZ":                "Europe/Berlin",
@@ -34,7 +34,7 @@ func TestFromEnv(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if c.BackupDir != "/data/backups" || c.MCPSecret != "geheim" || c.Location.String() != "Europe/Berlin" {
+	if c.BackupDir != "/data/backups" || c.MCPSecret != "secret" || c.Location.String() != "Europe/Berlin" {
 		t.Errorf("Config = %+v", c)
 	}
 	if !ContainsAddr(c.MCPAllowedCIDRs, netip.MustParseAddr("10.1.2.3")) ||
@@ -49,12 +49,12 @@ func TestFromEnv(t *testing.T) {
 
 func TestFromEnvErrors(t *testing.T) {
 	for _, m := range []map[string]string{
-		{"MCP_ALLOWED_CIDRS": "kein-cidr"},
+		{"MCP_ALLOWED_CIDRS": "not-a-cidr"},
 		{"TRUSTED_PROXIES": "1.2.3.4/99"},
 		{"TZ": "Mars/Olympus"},
 	} {
 		if _, err := FromEnv(env(m)); err == nil {
-			t.Errorf("FromEnv(%v) ohne Fehler", m)
+			t.Errorf("FromEnv(%v) returned no error", m)
 		}
 	}
 }

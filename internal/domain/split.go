@@ -5,21 +5,21 @@ import (
 	"slices"
 )
 
-// SplitMode bestimmt, wie eine Ausgabe auf die Beteiligten verteilt wird und
-// was Part.Weight bedeutet.
+// SplitMode determines how an expense is divided among the participants and
+// what Part.Weight means.
 type SplitMode string
 
 const (
-	SplitEqual   SplitMode = "equal"   // gleichmäßig; Weight wird ignoriert und als 1 gespeichert
-	SplitShares  SplitMode = "shares"  // nach Anteilen; Weight = ganzzahlige Anteile (>= 0)
-	SplitPercent SplitMode = "percent" // nach Prozent; Weight = Basispunkte, Summe 10000
-	SplitAmount  SplitMode = "amount"  // nach Beträgen; Weight = Cent, Summe = Gesamtbetrag
+	SplitEqual   SplitMode = "equal"   // evenly; Weight is ignored and stored as 1
+	SplitShares  SplitMode = "shares"  // by shares; Weight = integer shares (>= 0)
+	SplitPercent SplitMode = "percent" // by percentage; Weight = basis points, sum 10000
+	SplitAmount  SplitMode = "amount"  // by amounts; Weight = cents, sum = total amount
 )
 
-// SplitModes in der Reihenfolge, in der sie im Formular angeboten werden.
+// SplitModes in the order in which they are offered in the form.
 var SplitModes = []SplitMode{SplitEqual, SplitShares, SplitPercent, SplitAmount}
 
-// maxShareWeight begrenzt Anteile, damit total*weight nicht überläuft.
+// maxShareWeight caps shares so that total*weight cannot overflow.
 const maxShareWeight = 1_000_000
 
 func (m SplitMode) Valid() bool {
@@ -30,7 +30,7 @@ func (m SplitMode) Valid() bool {
 	return false
 }
 
-// Label liefert die deutsche Bezeichnung.
+// Label returns the German display name.
 func (m SplitMode) Label() string {
 	switch m {
 	case SplitEqual:
@@ -45,27 +45,27 @@ func (m SplitMode) Label() string {
 	return string(m)
 }
 
-// Part ist eine Eingabe für Split: wer ist beteiligt, mit welchem Gewicht.
+// Part is an input to Split: who takes part, with which weight.
 type Part struct {
 	ParticipantID int64 `json:"participant_id"`
 	Weight        int64 `json:"weight"`
 }
 
-// Share ist der berechnete Anteil einer Person an einer Ausgabe.
+// Share is a person's computed share of an expense.
 type Share struct {
 	ParticipantID int64 `json:"participant_id"`
 	Weight        int64 `json:"weight"`
 	AmountCents   int64 `json:"amount_cents"`
 }
 
-// Split verteilt total (Cent, > 0) gemäß mode auf parts. Das Ergebnis ist
-// nach ParticipantID sortiert und summiert sich exakt zu total. Rundungsreste
-// werden nach der Methode des größten Rests verteilt. Bei Gleichstand rotiert
-// der Vorrang mit rotation (der Ausgaben-ID): Die gleichrangigen Personen
-// stehen nach ID sortiert im Kreis, der erste Cent geht an die mit Index
-// rotation mod Anzahl, der nächste an die folgende usw. So trägt bei vielen
-// ungerade geteilten Ausgaben nicht immer dieselbe Person den Extra-Cent.
-// Die JS-Vorschau (static/expense-form.js) rechnet genauso.
+// Split divides total (cents, > 0) among parts according to mode. The result
+// is sorted by ParticipantID and sums to exactly total. Rounding remainders
+// are distributed using the largest-remainder method. On ties, precedence
+// rotates with rotation (the expense ID): the tied people form a circle
+// sorted by ID, the first cent goes to the one at index rotation mod count,
+// the next to the following one, and so on. That way, across many unevenly
+// split expenses, the extra cent does not always land on the same person.
+// The JS preview (static/expense-form.js) computes the same way.
 func Split(mode SplitMode, total int64, parts []Part, rotation int64) ([]Share, error) {
 	if !mode.Valid() {
 		return nil, invalid("Unbekannte Aufteilungsart „%s“.", mode)
@@ -150,8 +150,8 @@ func Split(mode SplitMode, total int64, parts []Part, rotation int64) ([]Share, 
 	for i := range order {
 		order[i] = i
 	}
-	// Größter Rest zuerst; Gleichrangige bleiben nach ID sortiert (ps ist es)
-	// und werden dann um rotation gedreht.
+	// Largest remainder first; ties stay sorted by ID (ps is) and are then
+	// rotated by rotation.
 	slices.SortStableFunc(order, func(a, b int) int { return cmp.Compare(rems[b], rems[a]) })
 	for i := 0; i < len(order); {
 		j := i + 1
@@ -162,7 +162,7 @@ func Split(mode SplitMode, total int64, parts []Part, rotation int64) ([]Share, 
 		rotate(order[i:j], int((rotation%n+n)%n))
 		i = j
 	}
-	// Der Rest ist kleiner als die Zahl der Personen: höchstens ein Cent je Person.
+	// The remainder is smaller than the number of people: at most one cent per person.
 	for k := 0; allocated < total; k++ {
 		out[order[k]].AmountCents++
 		allocated++
@@ -170,7 +170,7 @@ func Split(mode SplitMode, total int64, parts []Part, rotation int64) ([]Share, 
 	return out, nil
 }
 
-// rotate dreht s um k Stellen nach links (s[k] steht danach vorn).
+// rotate rotates s left by k positions (s[k] ends up first).
 func rotate(s []int, k int) {
 	slices.Reverse(s[:k])
 	slices.Reverse(s[k:])

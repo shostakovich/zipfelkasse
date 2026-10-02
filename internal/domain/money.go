@@ -1,5 +1,5 @@
-// Package domain enthält die reine Fachlogik von Zipfelkasse: Geld, Aufteilung,
-// Salden, Ausgleich und Wiederholungsregeln. Kein IO, keine Abhängigkeiten.
+// Package domain contains Zipfelkasse's pure business logic: money, splitting,
+// balances, settlement and recurrence rules. No IO, no dependencies.
 package domain
 
 import (
@@ -9,14 +9,14 @@ import (
 	"strings"
 )
 
-// Beträge sind überall int64 in der kleinsten Einheit (Cent bei EUR).
+// Amounts are int64 in the smallest unit everywhere (cents for EUR).
 
-// MaxAmountCents begrenzt Beträge, damit Multiplikationen bei der Aufteilung
-// nicht überlaufen (10 Mrd. €).
+// MaxAmountCents caps amounts so that multiplications during splitting
+// cannot overflow (10 billion €).
 const MaxAmountCents int64 = 1_000_000_000_000
 
-// ValidationError ist ein Eingabefehler mit einer deutschen, für Nutzer
-// lesbaren Meldung. Handler zeigen Error() direkt im Formular an.
+// ValidationError is an input error with a German, user-readable message.
+// Handlers show Error() directly in the form.
 type ValidationError struct {
 	Msg string
 }
@@ -27,19 +27,19 @@ func invalid(format string, args ...any) error {
 	return ValidationError{Msg: fmt.Sprintf(format, args...)}
 }
 
-// FormatCents formatiert Cent als deutschen Euro-Betrag: 123456 → "1.234,56 €".
+// FormatCents formats cents as a German euro amount: 123456 → "1.234,56 €".
 func FormatCents(c int64) string {
 	return formatFixed(c, 2, true) + " €"
 }
 
-// FormatCentsInput formatiert Cent für ein Eingabefeld, ohne Tausenderpunkte
-// und ohne Währungszeichen: 123456 → "1234,56".
+// FormatCentsInput formats cents for an input field, without thousands
+// separators and without currency symbol: 123456 → "1234,56".
 func FormatCentsInput(c int64) string {
 	return formatFixed(c, 2, false)
 }
 
-// FormatMoney formatiert einen Betrag in der kleinsten Einheit der Währung:
-// (1234, "USD") → "12,34 USD", EUR bzw. "" → "12,34 €".
+// FormatMoney formats an amount given in the currency's smallest unit:
+// (1234, "USD") → "12,34 USD", EUR or "" → "12,34 €".
 func FormatMoney(minor int64, currency string) string {
 	currency = strings.ToUpper(strings.TrimSpace(currency))
 	if currency == "" || currency == "EUR" {
@@ -48,17 +48,17 @@ func FormatMoney(minor int64, currency string) string {
 	return formatFixed(minor, CurrencyDecimals(currency), true) + " " + currency
 }
 
-// FormatBasisPoints formatiert Basispunkte als Prozent: 3333 → "33,33 %".
+// FormatBasisPoints formats basis points as a percentage: 3333 → "33,33 %".
 func FormatBasisPoints(bp int64) string {
 	return formatFixed(bp, 2, false) + " %"
 }
 
-// ParseCents liest einen Euro-Betrag wie „12,34“, „12.34“, „1.234,56 €“.
+// ParseCents parses a euro amount such as "12,34", "12.34", "1.234,56 €".
 func ParseCents(s string) (int64, error) {
 	return ParseMinor(s, 2)
 }
 
-// ParseBasisPoints liest eine Prozentangabe wie „33,33“ oder „50 %“ als Basispunkte.
+// ParseBasisPoints parses a percentage such as "33,33" or "50 %" as basis points.
 func ParseBasisPoints(s string) (int64, error) {
 	s = strings.TrimSpace(strings.TrimSuffix(strings.TrimSpace(s), "%"))
 	v, err := parseFixed(s, 2)
@@ -68,9 +68,9 @@ func ParseBasisPoints(s string) (int64, error) {
 	return v, nil
 }
 
-// ParseMinor liest einen Betrag mit der gegebenen Zahl an Nachkommastellen
-// und liefert ihn in der kleinsten Einheit. Komma und Punkt sind als
-// Dezimaltrennzeichen erlaubt; Tausendertrennzeichen werden erkannt.
+// ParseMinor parses an amount with the given number of decimal places and
+// returns it in the smallest unit. Both comma and dot are accepted as
+// decimal separator; thousands separators are recognized.
 func ParseMinor(s string, decimals int) (int64, error) {
 	s = strings.TrimSpace(s)
 	s = strings.TrimSuffix(s, "€")
@@ -115,12 +115,13 @@ func parseFixed(s string, decimals int) (int64, error) {
 	return v, nil
 }
 
-// splitNumber zerlegt eine Zahl mit Komma oder Punkt als Dezimaltrenner
-// und optionalen Tausendertrennern in Vorzeichen, Ganzzahl- und
-// Nachkommaziffern (ohne Trenner; intPart mindestens "0"). Kommen beide
-// Trenner vor, ist der letzte der Dezimaltrenner; mehrfach dieselbe Sorte
-// sind Tausendertrenner. Ein einzelner Punkt vor genau drei Ziffern gilt als
-// Tausendertrenner, wenn dotThousands gesetzt ist („17.000“ = 17000).
+// splitNumber splits a number with comma or dot as decimal separator and
+// optional thousands separators into sign, integer digits and fraction
+// digits (without separators; intPart is at least "0"). If both separators
+// occur, the last one is the decimal separator; repeated occurrences of the
+// same kind are thousands separators. A single dot before exactly three
+// digits counts as a thousands separator if dotThousands is set
+// ("17.000" = 17000).
 func splitNumber(s string, dotThousands bool) (neg bool, intPart, frac string, ok bool) {
 	if s == "" {
 		return false, "", "", false
@@ -161,13 +162,13 @@ func splitNumber(s string, dotThousands bool) (neg bool, intPart, frac string, o
 		intPart, frac = s[:dec], s[dec+1:]
 	case dots+commas == 0:
 	case dots+commas > 1:
-		// Nur eine Sorte Trenner, mehrfach: Tausendertrenner.
+		// Only one kind of separator, repeated: thousands separators.
 		thousands = '.'
 		if commas > 0 {
 			thousands = ','
 		}
 	default:
-		// Genau ein Trenner.
+		// Exactly one separator.
 		pos := max(lastDot, lastComma)
 		after := len(s) - pos - 1
 		if s[pos] == '.' && after == 3 && dotThousands && pos > 0 {
@@ -203,11 +204,11 @@ func splitNumber(s string, dotThousands bool) (neg bool, intPart, frac string, o
 	return neg, intPart, frac, true
 }
 
-// ParseRate liest einen Wechselkurs (Einheiten der Währung pro 1 €) wie
-// „1,0857“, „1.0857“, „17000“, „17.000,5“ oder „17,000.5“. Trenner wie bei
-// Beträgen (ParseMinor): Ein einzelner Punkt vor genau drei Ziffern ist ein
-// Tausenderpunkt („17.000“ = 17000, „1.085“ = 1085); Nachkommastellen also
-// mit Komma oder mit mehr/weniger als drei Ziffern angeben. Kurse ≤ 0 sind ungültig.
+// ParseRate parses an exchange rate (units of the currency per 1 €) such as
+// "1,0857", "1.0857", "17000", "17.000,5" or "17,000.5". Separators work as
+// for amounts (ParseMinor): a single dot before exactly three digits is a
+// thousands separator ("17.000" = 17000, "1.085" = 1085), so decimals must be
+// given with a comma or with more/fewer than three digits. Rates ≤ 0 are invalid.
 func ParseRate(s string) (float64, error) {
 	s = strings.ReplaceAll(strings.TrimSpace(s), " ", "")
 	s = strings.ReplaceAll(s, " ", "")
@@ -223,8 +224,8 @@ func ParseRate(s string) (float64, error) {
 	return v, nil
 }
 
-// formatFixed formatiert v mit decimals Nachkommastellen, Komma als
-// Dezimaltrenner und optional Punkten als Tausendertrenner.
+// formatFixed formats v with the given number of decimals, a comma as
+// decimal separator and optionally dots as thousands separators.
 func formatFixed(v int64, decimals int, group bool) string {
 	neg := v < 0
 	u := uint64(v)
@@ -260,8 +261,8 @@ func formatFixed(v int64, decimals int, group bool) string {
 	return out
 }
 
-// CurrencyDecimals liefert die Zahl der Nachkommastellen einer Währung
-// (ISO 4217). Unbekannte Währungen haben 2.
+// CurrencyDecimals returns the number of decimal places of a currency
+// (ISO 4217). Unknown currencies have 2.
 func CurrencyDecimals(currency string) int {
 	switch strings.ToUpper(currency) {
 	case "JPY", "KRW", "ISK", "HUF", "CLP", "VND", "XAF", "XOF", "PYG", "UGX", "IDR":
@@ -273,9 +274,9 @@ func CurrencyDecimals(currency string) int {
 	}
 }
 
-// ToEURCents rechnet einen Fremdwährungsbetrag (kleinste Einheit) in Euro-Cent
-// um. rate ist im EZB-Format angegeben: Einheiten Fremdwährung pro 1 EUR.
-// Gerundet wird kaufmännisch. Bei ungültigem Kurs (<= 0) ist das Ergebnis 0.
+// ToEURCents converts a foreign-currency amount (smallest unit) to euro
+// cents. rate is given in ECB format: units of foreign currency per 1 EUR.
+// Rounds half away from zero. For an invalid rate (<= 0) the result is 0.
 func ToEURCents(minor int64, currency string, rate float64) int64 {
 	if rate <= 0 || math.IsNaN(rate) || math.IsInf(rate, 0) {
 		return 0

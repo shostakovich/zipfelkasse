@@ -6,10 +6,10 @@ import (
 	"strings"
 )
 
-// Queries, die nur die Weboberfläche (Paket web) braucht.
+// Queries needed only by the web UI (package web).
 
-// SetGroupName ändert den Gruppennamen. Leere oder zu lange Namen ergeben
-// einen domain.ValidationError.
+// SetGroupName changes the group name. Empty or overly long names yield a
+// domain.ValidationError.
 func (s *Store) SetGroupName(ctx context.Context, name string) error {
 	name, err := cleanName(name, "die Gruppe")
 	if err != nil {
@@ -18,11 +18,11 @@ func (s *Store) SetGroupName(ctx context.Context, name string) error {
 	return s.SetSetting(ctx, SettingGroupName, name)
 }
 
-// MoveCategory verschiebt eine aktive Kategorie in der Anzeigereihenfolge um
-// eine Stelle nach oben (up) bzw. unten, unter den aktiven Kategorien. Danach
-// sind die Positionen der aktiven Kategorien neu durchnummeriert (10, 20, …),
-// neue Kategorien landen also am Ende. Am Rand passiert nichts. Unbekannte
-// oder archivierte Kategorien ergeben ErrNotFound.
+// MoveCategory moves an active category one position up (up) or down in
+// the display order, among the active categories. Afterwards the positions
+// of the active categories are renumbered (10, 20, …), so new categories end
+// up at the end. Nothing happens at the edges. Unknown or archived categories
+// yield ErrNotFound.
 func (s *Store) MoveCategory(ctx context.Context, id int64, up bool) error {
 	return s.inTx(ctx, func(tx *sql.Tx) error {
 		rows, err := tx.QueryContext(ctx,
@@ -69,15 +69,15 @@ func (s *Store) MoveCategory(ctx context.Context, id int64, up bool) error {
 	})
 }
 
-// ExpenseCountByCategory liefert die Zahl der nicht gelöschten Ausgaben je
-// Kategorie (für die Kategorienverwaltung). Kategorien ohne Ausgaben fehlen.
+// ExpenseCountByCategory returns the number of non-deleted expenses per
+// category (for category management). Categories without expenses are missing.
 func (s *Store) ExpenseCountByCategory(ctx context.Context) (map[int64]int, error) {
 	return s.countBy(ctx, `SELECT category_id, count(*) FROM expenses
 		WHERE deleted_at IS NULL AND category_id IS NOT NULL GROUP BY category_id`)
 }
 
-// ExpenseCountByParticipant liefert die Zahl der nicht gelöschten Ausgaben, an
-// denen eine Person beteiligt ist (als Zahler oder mit Anteil).
+// ExpenseCountByParticipant returns the number of non-deleted expenses a
+// person is involved in (as payer or with a share).
 func (s *Store) ExpenseCountByParticipant(ctx context.Context) (map[int64]int, error) {
 	return s.countBy(ctx, `SELECT pid, count(DISTINCT eid) FROM (
 			SELECT e.paid_by AS pid, e.id AS eid FROM expenses e WHERE e.deleted_at IS NULL

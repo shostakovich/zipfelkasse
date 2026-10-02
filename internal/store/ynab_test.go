@@ -11,27 +11,27 @@ func TestYNABConfig(t *testing.T) {
 	f := newFixture(t)
 	ctx := context.Background()
 	if _, err := f.s.GetYNABConfig(ctx, f.anna); !errors.Is(err, ErrNotFound) {
-		t.Fatalf("leer: %v", err)
+		t.Fatalf("empty: %v", err)
 	}
 	if err := f.s.SetYNABTarget(ctx, f.anna, "p", "a", date("2026-09-01")); !errors.Is(err, ErrNotFound) {
-		t.Errorf("Ziel ohne Token: %v", err)
+		t.Errorf("target without token: %v", err)
 	}
 	if err := f.s.SetYNABToken(ctx, f.anna, "tok"); err != nil {
 		t.Fatal(err)
 	}
 	c, err := f.s.GetYNABConfig(ctx, f.anna)
 	if err != nil || c.Token != "tok" || !c.Enabled || c.Ready() || !c.StartDate.IsZero() {
-		t.Fatalf("nach Token: %+v, %v", c, err)
+		t.Fatalf("after token: %+v, %v", c, err)
 	}
 	if err := f.s.SetYNABTarget(ctx, f.anna, "p", "a", date("2026-09-01")); err != nil {
 		t.Fatal(err)
 	}
 	c, _ = f.s.GetYNABConfig(ctx, f.anna)
 	if c.PlanID != "p" || c.AccountID != "a" || c.StartDate != date("2026-09-01") || !c.Ready() {
-		t.Errorf("nach Ziel: %+v", c)
+		t.Errorf("after target: %+v", c)
 	}
 
-	// Ben hat einen Token, Cleo ist archiviert, Anna trennt später.
+	// Ben has a token, Cleo is archived, Anna disconnects later.
 	f.s.SetYNABToken(ctx, f.ben, "tok-b")
 	f.s.SetYNABToken(ctx, f.cleo, "tok-c")
 	f.s.SetParticipantArchived(ctx, f.cleo, true)
@@ -42,10 +42,10 @@ func TestYNABConfig(t *testing.T) {
 	f.s.SetYNABToken(ctx, f.anna, "")
 	c, _ = f.s.GetYNABConfig(ctx, f.anna)
 	if c.Token != "" || c.Enabled || c.Ready() || c.PlanID != "p" {
-		t.Errorf("nach Trennen: %+v", c)
+		t.Errorf("after disconnect: %+v", c)
 	}
 	if list, _ := f.s.ListYNABConfigs(ctx); len(list) != 1 {
-		t.Errorf("nach Trennen: %+v", list)
+		t.Errorf("after disconnect: %+v", list)
 	}
 }
 
@@ -63,14 +63,14 @@ func TestYNABTargetChangeResetsSync(t *testing.T) {
 	if len(rows) != 1 || rows[0].TxnID != "t1" || !rows[0].SyncedAt.Equal(at) {
 		t.Fatalf("rows = %+v", rows)
 	}
-	// Nur das Startdatum ändern: Abgleich bleibt.
+	// Changing only the start date: sync state is kept.
 	f.s.SetYNABTarget(ctx, f.anna, "p", "a", date("2026-08-01"))
 	if rows, _ := f.s.ListYNABSync(ctx, f.anna); len(rows) != 1 {
-		t.Error("Startdatum hat Abgleich verworfen")
+		t.Error("start date discarded sync state")
 	}
 	f.s.SetYNABTarget(ctx, f.anna, "p", "b", date("2026-08-01"))
 	if rows, _ := f.s.ListYNABSync(ctx, f.anna); len(rows) != 0 {
-		t.Error("Kontowechsel hat Abgleich nicht verworfen")
+		t.Error("account change did not discard sync state")
 	}
 }
 
@@ -81,7 +81,7 @@ func TestYNABCategoryMapAndSummary(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := f.s.SetYNABCategoryMap(ctx, f.anna, map[int64]string{999: "y2"}); !isValidation(err) {
-		t.Errorf("unbekannte Kategorie: %v", err)
+		t.Errorf("unknown category: %v", err)
 	}
 	m, err := f.s.YNABCategoryMap(ctx, f.anna)
 	if err != nil || len(m) != 1 || m[f.food] != "y1" {
@@ -95,9 +95,9 @@ func TestYNABCategoryMapAndSummary(t *testing.T) {
 	b, _ := f.s.CreateExpense(ctx, f.anna, f.equal("B", 1000, "2026-09-11", f.anna, f.anna, f.ben))
 	f.s.PutYNABSync(ctx,
 		YNABSync{ExpenseID: a, ParticipantID: f.anna, TxnID: "t1", Hash: "h"},
-		YNABSync{ExpenseID: b, ParticipantID: f.anna, LastError: "kaputt"})
+		YNABSync{ExpenseID: b, ParticipantID: f.anna, LastError: "broken"})
 	n, problems, err := f.s.YNABSyncSummary(ctx, f.anna)
-	if err != nil || n != 1 || len(problems) != 1 || problems[0].Title != "B" || problems[0].Error != "kaputt" || problems[0].Date != date("2026-09-11") {
+	if err != nil || n != 1 || len(problems) != 1 || problems[0].Title != "B" || problems[0].Error != "broken" || problems[0].Date != date("2026-09-11") {
 		t.Errorf("summary = %d, %+v, %v", n, problems, err)
 	}
 	if err := f.s.DeleteYNABSync(ctx, f.anna, a, b); err != nil {
@@ -115,28 +115,28 @@ func TestYNABConnectedAt(t *testing.T) {
 	f.s.SetClock(func() time.Time { return clock })
 	f.s.SetYNABToken(ctx, f.anna, "tok")
 	if c, _ := f.s.GetYNABConfig(ctx, f.anna); !c.ConnectedAt.IsZero() {
-		t.Errorf("nur Token: ConnectedAt = %v", c.ConnectedAt)
+		t.Errorf("token only: ConnectedAt = %v", c.ConnectedAt)
 	}
 	f.s.SetYNABTarget(ctx, f.anna, "p", "a", date("2026-09-01"))
 	if c, _ := f.s.GetYNABConfig(ctx, f.anna); !c.ConnectedAt.Equal(clock) {
-		t.Errorf("nach Ziel: ConnectedAt = %v", c.ConnectedAt)
+		t.Errorf("after target: ConnectedAt = %v", c.ConnectedAt)
 	}
-	// Nur das Startdatum ändern: Zeitpunkt bleibt.
+	// Changing only the start date: timestamp is kept.
 	clock = clock.Add(time.Hour)
 	f.s.SetYNABTarget(ctx, f.anna, "p", "a", date("2026-08-01"))
 	if c, _ := f.s.GetYNABConfig(ctx, f.anna); !c.ConnectedAt.Equal(clock.Add(-time.Hour)) {
-		t.Errorf("Startdatum geändert: ConnectedAt = %v", c.ConnectedAt)
+		t.Errorf("start date changed: ConnectedAt = %v", c.ConnectedAt)
 	}
-	// Konto gewechselt: neu eingerichtet.
+	// Account changed: set up anew.
 	f.s.SetYNABTarget(ctx, f.anna, "p", "b", date("2026-08-01"))
 	c, _ := f.s.GetYNABConfig(ctx, f.anna)
 	if !c.ConnectedAt.Equal(clock) {
-		t.Errorf("Kontowechsel: ConnectedAt = %v", c.ConnectedAt)
+		t.Errorf("account change: ConnectedAt = %v", c.ConnectedAt)
 	}
 	if list, _ := f.s.ListYNABConfigs(ctx); len(list) != 1 || !list[0].ConnectedAt.Equal(clock) {
 		t.Errorf("ListYNABConfigs = %+v", list)
 	}
-	// Altbestand ohne gespeicherten Zeitpunkt: EnsureYNABConnectedAt setzt ihn einmalig.
+	// Legacy data without a stored timestamp: EnsureYNABConnectedAt sets it once.
 	f.s.SetYNABToken(ctx, f.ben, "tok-b")
 	got, err := f.s.EnsureYNABConnectedAt(ctx, f.ben)
 	if err != nil || !got.Equal(clock) {
@@ -144,6 +144,6 @@ func TestYNABConnectedAt(t *testing.T) {
 	}
 	clock = clock.Add(time.Hour)
 	if got, _ := f.s.EnsureYNABConnectedAt(ctx, f.ben); !got.Equal(clock.Add(-time.Hour)) {
-		t.Errorf("Ensure überschreibt: %v", got)
+		t.Errorf("Ensure overwrites: %v", got)
 	}
 }

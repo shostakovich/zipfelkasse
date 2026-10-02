@@ -5,34 +5,34 @@ import (
 	"time"
 )
 
-// Kalenderdaten (Ausgabedatum, Termine) sind time.Time um 00:00 UTC.
-// So vergleichen und speichern sie sich ohne Zeitzonen-Überraschungen;
-// gespeichert werden sie als "2006-01-02".
+// Calendar dates (expense date, occurrences) are time.Time at 00:00 UTC.
+// That way they compare and store without time-zone surprises; they are
+// stored as "2006-01-02".
 
-// DateLayout ist das Speicher- und HTML-<input type=date>-Format.
+// DateLayout is the storage and HTML <input type=date> format.
 const DateLayout = "2006-01-02"
 
-// DateOf schneidet die Uhrzeit ab und liefert das Kalenderdatum von t (in
-// t's Zeitzone) als 00:00 UTC.
+// DateOf truncates the time of day and returns the calendar date of t (in
+// t's time zone) as 00:00 UTC.
 func DateOf(t time.Time) time.Time {
 	y, m, d := t.Date()
 	return time.Date(y, m, d, 0, 0, 0, 0, time.UTC)
 }
 
-// Today liefert das heutige Datum in der Zeitzone loc.
+// Today returns today's date in the time zone loc.
 func Today(loc *time.Location) time.Time {
 	return DateOf(time.Now().In(loc))
 }
 
-// Plausible Jahre für Kalenderdaten. Schützt vor Tippfehlern („0026“) und
-// vor riesigen Schleifen bei Wiederholungen ab einem absurden Startdatum.
+// Plausible years for calendar dates. Guards against typos ("0026") and
+// against huge loops for recurrences starting at an absurd date.
 const (
 	MinYear = 2000
 	MaxYear = 2100
 )
 
-// ParseDate liest „2006-01-02“ oder „02.01.2006“ (auch „2.1.2006“). Jahre
-// außerhalb MinYear–MaxYear werden abgelehnt.
+// ParseDate parses "2006-01-02" or "02.01.2006" (also "2.1.2006"). Years
+// outside MinYear–MaxYear are rejected.
 func ParseDate(s string) (time.Time, error) {
 	s = strings.TrimSpace(s)
 	if s == "" {
@@ -49,7 +49,7 @@ func ParseDate(s string) (time.Time, error) {
 	return time.Time{}, invalid("Ungültiges Datum „%s“.", s)
 }
 
-// FormatDate formatiert deutsch: „02.10.2026“. Nullwert → "".
+// FormatDate formats German style: "02.10.2026". Zero value → "".
 func FormatDate(t time.Time) string {
 	if t.IsZero() {
 		return ""
@@ -57,7 +57,7 @@ func FormatDate(t time.Time) string {
 	return t.Format("02.01.2006")
 }
 
-// Frequency ist der Rhythmus einer wiederkehrenden Ausgabe.
+// Frequency is the interval of a recurring expense.
 type Frequency string
 
 const (
@@ -76,7 +76,7 @@ func (f Frequency) Valid() bool {
 	return false
 }
 
-// Label liefert die deutsche Bezeichnung.
+// Label returns the German display name.
 func (f Frequency) Label() string {
 	switch f {
 	case FreqWeekly:
@@ -89,9 +89,9 @@ func (f Frequency) Label() string {
 	return string(f)
 }
 
-// Occurrence liefert den n-ten Termin (n=0 ist anchor) einer Wiederholung.
-// Termine werden immer vom Ankerdatum aus berechnet: Ein Anker am 31. Januar
-// ergibt 28./29. Februar, danach wieder den 31. März. Ungültige Frequenz → anchor.
+// Occurrence returns the n-th occurrence (n=0 is anchor) of a recurrence.
+// Occurrences are always computed from the anchor date: an anchor on January 31
+// yields February 28/29, then March 31 again. Invalid frequency → anchor.
 func Occurrence(f Frequency, anchor time.Time, n int) time.Time {
 	anchor = DateOf(anchor)
 	switch f {
@@ -105,14 +105,14 @@ func Occurrence(f Frequency, anchor time.Time, n int) time.Time {
 	return anchor
 }
 
-// NextDate liefert den ersten Termin der Wiederholung, der strikt nach after
-// liegt. Liegt after vor dem Anker, ist das der Anker selbst.
+// NextDate returns the first occurrence of the recurrence strictly after
+// after. If after is before the anchor, that is the anchor itself.
 func NextDate(f Frequency, anchor, after time.Time) time.Time {
 	anchor, after = DateOf(anchor), DateOf(after)
 	if after.Before(anchor) || !f.Valid() {
 		return anchor
 	}
-	// Schätzung, dann vorwärts laufen.
+	// Estimate, then step forward.
 	var n int
 	switch f {
 	case FreqWeekly:

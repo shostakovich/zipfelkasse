@@ -11,12 +11,11 @@ import (
 	"github.com/shostakovich/zipfelkasse/internal/domain"
 )
 
-// Wechselkurse liegen in fx_rates im EZB-Format (Fremdwährung pro 1 EUR).
-// Pro (Währung, Datum) gibt es höchstens einen Eintrag: Ein manueller Kurs
-// ersetzt einen EZB-Kurs desselben Tages, EZB-Kurse überschreiben nie einen
-// manuellen Kurs.
+// Exchange rates live in fx_rates in ECB format (foreign currency per 1 EUR).
+// There is at most one entry per (currency, date): a manual rate replaces an
+// ECB rate of the same day; ECB rates never overwrite a manual rate.
 
-// ValidCurrencyCode meldet, ob s ein dreistelliger Großbuchstaben-Code ist.
+// ValidCurrencyCode reports whether s is a three-letter upper-case code.
 func ValidCurrencyCode(s string) bool {
 	if len(s) != 3 {
 		return false
@@ -29,9 +28,9 @@ func ValidCurrencyCode(s string) bool {
 	return true
 }
 
-// LookupFXRate liefert den jüngsten Kurs der Quelle source (domain.FXSourceECB
-// oder domain.FXSourceManual) für currency mit notBefore ≤ Datum ≤ date.
-// notBefore Nullwert = ohne Untergrenze. Ohne Treffer: ErrNotFound.
+// LookupFXRate returns the most recent rate from source (domain.FXSourceECB
+// or domain.FXSourceManual) for currency with notBefore ≤ date of rate ≤ date.
+// Zero notBefore = no lower bound. No match: ErrNotFound.
 func (s *Store) LookupFXRate(ctx context.Context, currency, source string, date, notBefore time.Time) (domain.FXRate, error) {
 	q := "SELECT date, rate FROM fx_rates WHERE currency = ? AND source = ? AND date <= ?"
 	args := []any{currency, source, formatDate(date)}
@@ -53,8 +52,8 @@ func (s *Store) LookupFXRate(ctx context.Context, currency, source string, date,
 	return r, err
 }
 
-// SaveECBRates speichert EZB-Kurse (Source wird auf "ezb" gesetzt). Vorhandene
-// EZB-Kurse werden aktualisiert, manuelle Kurse bleiben unangetastet.
+// SaveECBRates stores ECB rates (Source is set to "ezb"). Existing ECB rates
+// are updated; manual rates are left untouched.
 func (s *Store) SaveECBRates(ctx context.Context, rates []domain.FXRate) error {
 	return s.inTx(ctx, func(tx *sql.Tx) error {
 		stmt, err := tx.PrepareContext(ctx, `INSERT INTO fx_rates (date, currency, rate, source) VALUES (?, ?, ?, 'ezb')
@@ -75,8 +74,8 @@ func (s *Store) SaveECBRates(ctx context.Context, rates []domain.FXRate) error {
 	})
 }
 
-// SetManualFXRate speichert einen von Hand eingetragenen Kurs, gültig ab date
-// (ersetzt einen vorhandenen Kurs desselben Tages).
+// SetManualFXRate stores a manually entered rate, valid from date on
+// (replacing an existing rate of the same day).
 func (s *Store) SetManualFXRate(ctx context.Context, currency string, date time.Time, rate float64) error {
 	currency = strings.ToUpper(strings.TrimSpace(currency))
 	switch {
@@ -95,34 +94,34 @@ func (s *Store) SetManualFXRate(ctx context.Context, currency string, date time.
 	return err
 }
 
-// DeleteManualFXRate löscht einen manuellen Kurs (ErrNotFound, wenn es ihn
-// nicht gibt).
+// DeleteManualFXRate deletes a manual rate (ErrNotFound if it does not
+// exist).
 func (s *Store) DeleteManualFXRate(ctx context.Context, currency string, date time.Time) error {
 	res, err := s.db.ExecContext(ctx, "DELETE FROM fx_rates WHERE currency = ? AND date = ? AND source = 'manuell'",
 		strings.ToUpper(currency), formatDate(date))
 	return checkAffected(res, err)
 }
 
-// ListManualFXRates liefert alle manuellen Kurse (Währung, dann neueste zuerst).
+// ListManualFXRates returns all manual rates (by currency, then newest first).
 func (s *Store) ListManualFXRates(ctx context.Context) ([]domain.FXRate, error) {
 	return s.queryFXRates(ctx, "SELECT currency, date, rate, source FROM fx_rates WHERE source = 'manuell' ORDER BY currency, date DESC")
 }
 
-// LatestECBRates liefert die EZB-Kurse des jüngsten zwischengespeicherten
-// Tages (nach Währung sortiert); leer, wenn noch nichts im Cache ist.
+// LatestECBRates returns the ECB rates of the most recent cached day (sorted
+// by currency); empty if nothing is cached yet.
 func (s *Store) LatestECBRates(ctx context.Context) ([]domain.FXRate, error) {
 	return s.queryFXRates(ctx, `SELECT currency, date, rate, source FROM fx_rates
 		WHERE source = 'ezb' AND date = (SELECT max(date) FROM fx_rates WHERE source = 'ezb') ORDER BY currency`)
 }
 
-// FXCacheStats beschreibt den Inhalt des EZB-Caches.
+// FXCacheStats describes the contents of the ECB cache.
 type FXCacheStats struct {
-	Count      int       // Anzahl EZB-Kurse
-	Currencies int       // Anzahl Währungen
-	From, To   time.Time // ältester/jüngster Tag; Nullwerte bei leerem Cache
+	Count      int       // number of ECB rates
+	Currencies int       // number of currencies
+	From, To   time.Time // oldest/newest day; zero values for an empty cache
 }
 
-// ECBCacheStats liefert Kennzahlen zum EZB-Cache.
+// ECBCacheStats returns statistics about the ECB cache.
 func (s *Store) ECBCacheStats(ctx context.Context) (FXCacheStats, error) {
 	var st FXCacheStats
 	var from, to sql.NullString
@@ -140,7 +139,7 @@ func (s *Store) ECBCacheStats(ctx context.Context) (FXCacheStats, error) {
 	return st, nil
 }
 
-// ListFXCurrencies liefert alle Währungen, für die es irgendeinen Kurs gibt.
+// ListFXCurrencies returns all currencies for which any rate exists.
 func (s *Store) ListFXCurrencies(ctx context.Context) ([]string, error) {
 	rows, err := s.db.QueryContext(ctx, "SELECT DISTINCT currency FROM fx_rates ORDER BY currency")
 	if err != nil {
@@ -158,7 +157,7 @@ func (s *Store) ListFXCurrencies(ctx context.Context) ([]string, error) {
 	return out, rows.Err()
 }
 
-// HasECBCurrency meldet, ob der Cache irgendeinen EZB-Kurs für currency hat.
+// HasECBCurrency reports whether the cache has any ECB rate for currency.
 func (s *Store) HasECBCurrency(ctx context.Context, currency string) (bool, error) {
 	var n int
 	err := s.db.QueryRowContext(ctx,
@@ -166,15 +165,15 @@ func (s *Store) HasECBCurrency(ctx context.Context, currency string) (bool, erro
 	return n > 0, err
 }
 
-// UsedFXRate ist ein in einer Ausgabe verwendeter Kurs.
+// UsedFXRate is a rate used in an expense.
 type UsedFXRate struct {
-	domain.FXRate        // Date = Ausgabedatum, Source = fx_source der Ausgabe
+	domain.FXRate        // Date = expense date, Source = the expense's fx_source
 	ExpenseID     int64  //
-	Title         string // Titel der Ausgabe
+	Title         string // expense title
 }
 
-// RecentUsedFXRates liefert die Kurse der jüngsten (nicht gelöschten)
-// Fremdwährungs-Ausgaben, neueste zuerst.
+// RecentUsedFXRates returns the rates of the most recent (non-deleted)
+// foreign-currency expenses, newest first.
 func (s *Store) RecentUsedFXRates(ctx context.Context, limit int) ([]UsedFXRate, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT id, title, original_currency, date, fx_rate, fx_source FROM expenses
 		WHERE deleted_at IS NULL AND original_currency <> 'EUR' ORDER BY date DESC, id DESC LIMIT ?`, limit)

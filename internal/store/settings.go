@@ -6,14 +6,14 @@ import (
 	"errors"
 )
 
-// Bekannte Schlüssel in der Tabelle settings. Feature-Pakete dürfen eigene
-// Schlüssel mit Präfix verwenden (z. B. "ynab.").
+// Known keys in the settings table. Feature packages may use their own
+// prefixed keys (e.g. "ynab.").
 const (
 	SettingGroupName       = "group_name"
 	SettingDefaultCurrency = "default_currency"
 )
 
-// GetSetting liefert den Wert zu key oder ErrNotFound.
+// GetSetting returns the value for key, or ErrNotFound.
 func (s *Store) GetSetting(ctx context.Context, key string) (string, error) {
 	var v string
 	err := s.db.QueryRowContext(ctx, "SELECT value FROM settings WHERE key = ?", key).Scan(&v)
@@ -23,7 +23,7 @@ func (s *Store) GetSetting(ctx context.Context, key string) (string, error) {
 	return v, err
 }
 
-// SetSetting setzt key auf value (legt den Schlüssel bei Bedarf an).
+// SetSetting sets key to value (creating the key if needed).
 func (s *Store) SetSetting(ctx context.Context, key, value string) error {
 	_, err := s.db.ExecContext(ctx,
 		"INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT (key) DO UPDATE SET value = excluded.value",
@@ -31,7 +31,7 @@ func (s *Store) SetSetting(ctx context.Context, key, value string) error {
 	return err
 }
 
-// GroupName liefert den Gruppennamen (Fallback „Zipfelkasse“).
+// GroupName returns the group name (fallback "Zipfelkasse").
 func (s *Store) GroupName(ctx context.Context) string {
 	v, err := s.GetSetting(ctx, SettingGroupName)
 	if err != nil || v == "" {

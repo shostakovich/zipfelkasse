@@ -11,21 +11,21 @@ import (
 	"github.com/shostakovich/zipfelkasse/internal/domain"
 )
 
-// Aktionen im Aktivitätsprotokoll für wiederkehrende Ausgaben.
+// Activity log actions for recurring expenses.
 const (
 	ActionRecurringCreated = "recurring_created"
 	ActionRecurringDeleted = "recurring_deleted"
 )
 
-// Recurring ist eine Regel für eine wiederkehrende Ausgabe.
+// Recurring is a rule for a recurring expense.
 type Recurring struct {
 	ID        int64
-	Template  ExpenseInput // Vorlage; Date und RecurringID darin sind bedeutungslos
+	Template  ExpenseInput // template; its Date and RecurringID are meaningless
 	Frequency domain.Frequency
-	StartDate time.Time // Anker, von dem aus alle Termine berechnet werden
-	NextDate  time.Time // nächster noch nicht angelegter Termin
+	StartDate time.Time // anchor from which all occurrences are computed
+	NextDate  time.Time // next occurrence not yet created
 	Active    bool
-	CreatedBy int64 // 0 = unbekannt
+	CreatedBy int64 // 0 = unknown
 	CreatedAt time.Time
 	UpdatedAt time.Time
 }
@@ -41,14 +41,14 @@ func scanRecurring(row interface{ Scan(...any) error }) (Recurring, error) {
 		return r, err
 	}
 	if err := json.Unmarshal([]byte(tmpl), &r.Template); err != nil {
-		return r, fmt.Errorf("wiederholung %d: vorlage: %w", r.ID, err)
+		return r, fmt.Errorf("recurring %d: template: %w", r.ID, err)
 	}
 	var err error
 	if r.StartDate, err = parseDate(start); err != nil {
-		return r, fmt.Errorf("wiederholung %d: start_date %q: %w", r.ID, start, err)
+		return r, fmt.Errorf("recurring %d: start_date %q: %w", r.ID, start, err)
 	}
 	if r.NextDate, err = parseDate(next); err != nil {
-		return r, fmt.Errorf("wiederholung %d: next_date %q: %w", r.ID, next, err)
+		return r, fmt.Errorf("recurring %d: next_date %q: %w", r.ID, next, err)
 	}
 	r.Frequency = domain.Frequency(freq)
 	r.CreatedBy = createdBy.Int64
@@ -73,7 +73,7 @@ func (s *Store) queryRecurring(ctx context.Context, q string, args ...any) ([]Re
 	return out, rows.Err()
 }
 
-// templateOf macht aus einer gespeicherten Ausgabe eine Vorlage.
+// templateOf turns a stored expense into a template.
 func templateOf(e Expense) ExpenseInput {
 	t := e.ExpenseInput
 	t.Date = time.Time{}
@@ -81,10 +81,10 @@ func templateOf(e Expense) ExpenseInput {
 	return t
 }
 
-// CreateRecurringFromExpense legt eine Wiederholung mit der Ausgabe expenseID
-// als Vorlage und erster Instanz an: Anker ist das Datum der Ausgabe, die
-// Ausgabe bekommt die recurring_id, und der nächste Termin ist der erste nach
-// dem Anker. Ausgaben, die schon zu einer Wiederholung gehören, ergeben einen
+// CreateRecurringFromExpense creates a recurrence with expense expenseID as
+// template and first instance: the anchor is the expense's date, the expense
+// gets the recurring_id, and the next occurrence is the first one after the
+// anchor. Expenses that already belong to a recurrence yield a
 // ValidationError.
 func (s *Store) CreateRecurringFromExpense(ctx context.Context, actorID, expenseID int64, freq domain.Frequency) (int64, error) {
 	if !freq.Valid() {
@@ -144,7 +144,7 @@ func frequencyAdverb(f domain.Frequency) string {
 	return string(f)
 }
 
-// GetRecurring liefert eine Wiederholung oder ErrNotFound.
+// GetRecurring returns a recurrence or ErrNotFound.
 func (s *Store) GetRecurring(ctx context.Context, id int64) (Recurring, error) {
 	r, err := scanRecurring(s.db.QueryRowContext(ctx, "SELECT "+recurringCols+" FROM recurring WHERE id = ?", id))
 	if errors.Is(err, sql.ErrNoRows) {
@@ -153,28 +153,28 @@ func (s *Store) GetRecurring(ctx context.Context, id int64) (Recurring, error) {
 	return r, err
 }
 
-// ListRecurring liefert alle Wiederholungen: aktive zuerst, dann nach
-// nächstem Termin.
+// ListRecurring returns all recurrences: active ones first, then by next
+// occurrence.
 func (s *Store) ListRecurring(ctx context.Context) ([]Recurring, error) {
 	return s.queryRecurring(ctx, "SELECT "+recurringCols+" FROM recurring ORDER BY active DESC, next_date, id")
 }
 
-// DueRecurring liefert die aktiven Wiederholungen mit next_date ≤ today.
+// DueRecurring returns the active recurrences with next_date ≤ today.
 func (s *Store) DueRecurring(ctx context.Context, today time.Time) ([]Recurring, error) {
 	return s.queryRecurring(ctx, "SELECT "+recurringCols+" FROM recurring WHERE active = 1 AND next_date <= ? ORDER BY next_date, id",
 		formatDate(today))
 }
 
-// SetRecurringNextDate schreibt den nächsten fälligen Termin fort.
+// SetRecurringNextDate advances the next due occurrence.
 func (s *Store) SetRecurringNextDate(ctx context.Context, id int64, next time.Time) error {
 	res, err := s.db.ExecContext(ctx, "UPDATE recurring SET next_date = ?, updated_at = ? WHERE id = ?",
 		formatDate(next), s.nowString(), id)
 	return checkAffected(res, err)
 }
 
-// SetRecurringActive pausiert eine Wiederholung bzw. setzt sie fort. Beim
-// Fortsetzen werden Termine aus der Pause nicht nachgeholt: next_date wird auf
-// den ersten Termin ab today gesetzt (falls er nicht ohnehin später liegt).
+// SetRecurringActive pauses or resumes a recurrence. On resume, occurrences
+// from the pause are not caught up: next_date is set to the first occurrence
+// from today on (unless it is later anyway).
 func (s *Store) SetRecurringActive(ctx context.Context, id int64, active bool, today time.Time) error {
 	return s.inTx(ctx, func(tx *sql.Tx) error {
 		r, err := scanRecurring(tx.QueryRowContext(ctx, "SELECT "+recurringCols+" FROM recurring WHERE id = ?", id))
@@ -194,9 +194,9 @@ func (s *Store) SetRecurringActive(ctx context.Context, id int64, active bool, t
 	})
 }
 
-// UpdateRecurringTemplateFromLatest übernimmt die jüngste (nicht gelöschte)
-// Instanz der Wiederholung als neue Vorlage – z. B. nachdem dort der Betrag
-// geändert wurde. Ohne Instanz: ErrNotFound.
+// UpdateRecurringTemplateFromLatest adopts the most recent (non-deleted)
+// instance of the recurrence as the new template, e.g. after its amount was
+// changed. Without an instance: ErrNotFound.
 func (s *Store) UpdateRecurringTemplateFromLatest(ctx context.Context, id int64) error {
 	return s.inTx(ctx, func(tx *sql.Tx) error {
 		es, err := queryExpenses(ctx, tx, expenseSelect+
@@ -217,8 +217,8 @@ func (s *Store) UpdateRecurringTemplateFromLatest(ctx context.Context, id int64)
 	})
 }
 
-// DeleteRecurring löscht eine Wiederholung. Bereits angelegte Ausgaben
-// bleiben erhalten (ihre recurring_id wird per ON DELETE SET NULL geleert).
+// DeleteRecurring deletes a recurrence. Expenses already created are kept
+// (their recurring_id is cleared via ON DELETE SET NULL).
 func (s *Store) DeleteRecurring(ctx context.Context, actorID, id int64) error {
 	return s.inTx(ctx, func(tx *sql.Tx) error {
 		r, err := scanRecurring(tx.QueryRowContext(ctx, "SELECT "+recurringCols+" FROM recurring WHERE id = ?", id))

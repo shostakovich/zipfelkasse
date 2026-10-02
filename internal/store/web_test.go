@@ -16,7 +16,7 @@ func TestSetGroupName(t *testing.T) {
 		t.Errorf("GroupName = %q", got)
 	}
 	if err := s.SetGroupName(ctx, "   "); !isValidation(err) {
-		t.Errorf("leerer Name: %v", err)
+		t.Errorf("empty name: %v", err)
 	}
 }
 
@@ -40,30 +40,30 @@ func TestMoveCategory(t *testing.T) {
 		t.Fatal(err)
 	}
 	if got := names(); got[0] != second.Name || got[1] != first.Name {
-		t.Errorf("nach hoch: %v", got)
+		t.Errorf("after up: %v", got)
 	}
-	// Am Rand: nichts passiert.
+	// At the edge: nothing happens.
 	if err := s.MoveCategory(ctx, second.ID, true); err != nil {
 		t.Fatal(err)
 	}
 	if got := names(); got[0] != second.Name {
-		t.Errorf("am Rand: %v", got)
+		t.Errorf("at the edge: %v", got)
 	}
 	if err := s.MoveCategory(ctx, second.ID, false); err != nil {
 		t.Fatal(err)
 	}
 	if got := names(); got[0] != first.Name || got[1] != second.Name {
-		t.Errorf("nach runter: %v", got)
+		t.Errorf("after down: %v", got)
 	}
-	// Archivierte werden übersprungen bzw. lassen sich nicht verschieben.
+	// Archived ones are skipped and cannot be moved.
 	s.SetCategoryArchived(ctx, second.ID, true)
 	if err := s.MoveCategory(ctx, second.ID, true); !errors.Is(err, ErrNotFound) {
-		t.Errorf("archiviert: %v", err)
+		t.Errorf("archived: %v", err)
 	}
 	if err := s.MoveCategory(ctx, 999, true); !errors.Is(err, ErrNotFound) {
-		t.Errorf("unbekannt: %v", err)
+		t.Errorf("unknown: %v", err)
 	}
-	// Neue Kategorie landet am Ende.
+	// A new category ends up at the end.
 	cats, _ = s.ListCategories(ctx, false)
 	s.MoveCategory(ctx, cats[len(cats)-1].ID, true)
 	id, err := s.CreateCategory(ctx, "Neu")
@@ -72,7 +72,7 @@ func TestMoveCategory(t *testing.T) {
 	}
 	cats, _ = s.ListCategories(ctx, false)
 	if cats[len(cats)-1].ID != id {
-		t.Errorf("neue Kategorie nicht am Ende: %+v", cats[len(cats)-1])
+		t.Errorf("new category not at the end: %+v", cats[len(cats)-1])
 	}
 }
 

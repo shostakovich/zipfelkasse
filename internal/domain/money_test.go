@@ -176,7 +176,7 @@ func TestToEURCents(t *testing.T) {
 		{1000, "JPY", 160.5, 623},    // 1000 JPY / 160.5 = 6.2305 €
 		{1234, "EUR", 1, 1234},
 		{-10000, "USD", 1.0823, -9240},
-		{100, "USD", 0, 0}, // ungültiger Kurs
+		{100, "USD", 0, 0}, // invalid rate
 	}
 	for _, tt := range tests {
 		if got := ToEURCents(tt.minor, tt.currency, tt.rate); got != tt.want {
@@ -195,7 +195,7 @@ func TestParseRate(t *testing.T) {
 		{"17000", 17000},
 		{"17.000,5", 17000.5},
 		{"17,000.5", 17000.5},
-		{"17.000", 17000}, // Punkt vor genau drei Ziffern = Tausender (wie bei Beträgen)
+		{"17.000", 17000}, // dot before exactly three digits = thousands (as for amounts)
 		{"1.234.567,25", 1234567.25},
 		{" 0,8653 ", 0.8653},
 		{"162,45", 162.45},
@@ -209,7 +209,7 @@ func TestParseRate(t *testing.T) {
 	}
 	for _, in := range []string{"", "0", "0,0", "-1,2", "abc", "1,2,3", "1.2.3", "17.00.0", "1e5", "NaN", "Inf", "1,", ",5x"} {
 		if v, err := ParseRate(in); err == nil {
-			t.Errorf("ParseRate(%q) = %v, want Fehler", in, v)
+			t.Errorf("ParseRate(%q) = %v, want error", in, v)
 		} else if _, ok := err.(ValidationError); !ok {
 			t.Errorf("ParseRate(%q): %T", in, err)
 		}

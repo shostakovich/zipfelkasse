@@ -8,52 +8,52 @@ import (
 	"time"
 )
 
-// Aktionen im Aktivitätsprotokoll. Feature-Pakete dürfen eigene Aktionen
-// ergänzen (z. B. "recurring_created"); die Aktivitätsseite zeigt
-// unbekannte Aktionen mit Details.Text an.
+// Activity log actions. Feature packages may add their own actions
+// (e.g. "recurring_created"); the activity page shows unknown actions
+// using Details.Text.
 const (
 	ActionExpenseCreated = "expense_created"
 	ActionExpenseUpdated = "expense_updated"
 	ActionExpenseDeleted = "expense_deleted"
-	// ActionSettingsUpdated: Einstellungen geändert (Personen, Kategorien,
-	// Kurse, Wiederholungen, YNAB …); Details.Text beschreibt die Änderung.
+	// ActionSettingsUpdated: settings changed (people, categories, rates,
+	// recurrences, YNAB …); Details.Text describes the change.
 	ActionSettingsUpdated = "settings_updated"
-	// ActionSharesRecalculated: Eine Migration hat Cent-Anteile bestehender
-	// Ausgaben neu berechnet (System, Details.Text).
+	// ActionSharesRecalculated: a migration recomputed the cent shares of
+	// existing expenses (system, Details.Text).
 	ActionSharesRecalculated = "shares_recalculated"
 )
 
-// ActivityDetails ist der Inhalt von activity.details_json.
+// ActivityDetails is the content of activity.details_json.
 type ActivityDetails struct {
-	Title       string        `json:"title,omitempty"`        // Titel der Ausgabe (Stand nach der Aktion)
-	AmountCents int64         `json:"amount_cents,omitempty"` // Betrag der Ausgabe
-	Changes     []FieldChange `json:"changes,omitempty"`      // bei expense_updated
-	Text        string        `json:"text,omitempty"`         // freie Beschreibung für sonstige Aktionen
+	Title       string        `json:"title,omitempty"`        // expense title (as of after the action)
+	AmountCents int64         `json:"amount_cents,omitempty"` // expense amount
+	Changes     []FieldChange `json:"changes,omitempty"`      // for expense_updated
+	Text        string        `json:"text,omitempty"`         // free-form description for other actions
 }
 
-// FieldChange ist eine geänderte Eigenschaft, bereits für die Anzeige
-// formatiert (deutsche Feldnamen, formatierte Werte).
+// FieldChange is a changed property, already formatted for display
+// (German field names, formatted values).
 type FieldChange struct {
 	Field string `json:"field"`
 	Old   string `json:"old"`
 	New   string `json:"new"`
 }
 
-// Activity ist ein Eintrag im Aktivitätsprotokoll.
+// Activity is an entry in the activity log.
 type Activity struct {
 	ID        int64
 	At        time.Time
-	ActorID   int64  // 0 = System
-	ActorName string // "" bei System
+	ActorID   int64  // 0 = system
+	ActorName string // "" for system
 	Action    string
-	ExpenseID int64 // 0 = ohne Bezug
+	ExpenseID int64 // 0 = not related to an expense
 	Details   ActivityDetails
 }
 
-// ActivityFilter schränkt ListActivity ein.
+// ActivityFilter narrows ListActivity.
 type ActivityFilter struct {
-	ExpenseID int64 // nur Einträge zu dieser Ausgabe
-	BeforeID  int64 // für Blättern: nur Einträge mit kleinerer ID
+	ExpenseID int64 // only entries for this expense
+	BeforeID  int64 // for paging: only entries with a smaller ID
 	Limit     int   // 0 = 100
 }
 
@@ -68,15 +68,15 @@ func (s *Store) insertActivity(ctx context.Context, tx *sql.Tx, actorID int64, a
 	return err
 }
 
-// AddActivity schreibt einen eigenen Eintrag (für Aktionen außerhalb der
-// Ausgaben-Methoden, die ihre Einträge selbst schreiben).
+// AddActivity writes a custom entry (for actions outside the expense
+// methods, which write their own entries).
 func (s *Store) AddActivity(ctx context.Context, actorID int64, action string, expenseID int64, d ActivityDetails) error {
 	return s.inTx(ctx, func(tx *sql.Tx) error {
 		return s.insertActivity(ctx, tx, actorID, action, expenseID, d)
 	})
 }
 
-// ListActivity liefert die neuesten Einträge zuerst.
+// ListActivity returns the newest entries first.
 func (s *Store) ListActivity(ctx context.Context, f ActivityFilter) ([]Activity, error) {
 	var where []string
 	var args []any
@@ -113,7 +113,7 @@ func (s *Store) ListActivity(ctx context.Context, f ActivityFilter) ([]Activity,
 			return nil, err
 		}
 		a.At, a.ActorID, a.ExpenseID = parseTime(at), actor.Int64, expense.Int64
-		_ = json.Unmarshal([]byte(details), &a.Details) // kaputte Details sind kein Grund, die Liste scheitern zu lassen
+		_ = json.Unmarshal([]byte(details), &a.Details) // broken details are no reason to fail the whole list
 		out = append(out, a)
 	}
 	return out, rows.Err()

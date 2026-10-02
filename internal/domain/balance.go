@@ -1,15 +1,15 @@
 package domain
 
-// Entry ist eine Ausgabe in der für Salden nötigen Form. Rückzahlungen sind
-// normale Entries: Zahler = wer zurückzahlt, einziger Anteil = Empfänger.
+// Entry is an expense in the form needed for balances. Reimbursements are
+// ordinary entries: payer = whoever pays back, single share = recipient.
 type Entry struct {
 	PaidBy      int64
 	AmountCents int64
 	Shares      []Share
 }
 
-// Balances berechnet den Saldo pro Person in Cent: positiv = bekommt Geld,
-// negativ = schuldet Geld. Die Summe aller Salden ist 0.
+// Balances computes each person's balance in cents: positive = is owed money,
+// negative = owes money. All balances sum to 0.
 func Balances(entries []Entry) map[int64]int64 {
 	b := map[int64]int64{}
 	for _, e := range entries {
@@ -21,17 +21,16 @@ func Balances(entries []Entry) map[int64]int64 {
 	return b
 }
 
-// Transfer ist eine vorgeschlagene Zahlung: From zahlt AmountCents an To.
+// Transfer is a suggested payment: From pays AmountCents to To.
 type Transfer struct {
 	From        int64
 	To          int64
 	AmountCents int64
 }
 
-// Settle liefert einen Ausgleichsvorschlag (greedy): Es zahlt jeweils der
-// größte Schuldner an den größten Gläubiger, bis alles ausgeglichen ist.
-// Gleichstände werden nach kleinerer ID entschieden, das Ergebnis ist also
-// deterministisch. Die Eingabe wird nicht verändert.
+// Settle returns a settlement suggestion (greedy): the largest debtor pays
+// the largest creditor until everything is settled. Ties are broken by the
+// smaller ID, so the result is deterministic. The input is not modified.
 func Settle(balances map[int64]int64) []Transfer {
 	b := make(map[int64]int64, len(balances))
 	for id, v := range balances {

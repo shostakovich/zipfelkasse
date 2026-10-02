@@ -12,8 +12,8 @@ import (
 	"github.com/shostakovich/zipfelkasse/internal/domain"
 )
 
-// newFileFixture ist newFixture mit einer echten Datei (die Sandbox hängt die
-// Datei schreibgeschützt an, :memory: geht dafür nicht) und einem YNAB-Token.
+// newFileFixture is newFixture with a real file (the sandbox attaches the
+// file read-only, which does not work with :memory:) and a YNAB token.
 func newFileFixture(t *testing.T) fixture {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "zipfelkasse.db")
@@ -48,10 +48,10 @@ func TestCheckSelect(t *testing.T) {
 	ok := map[string]string{
 		"SELECT 1":       "SELECT 1",
 		"  select 1 ;  ": "  select 1 ",
-		"-- Kommentar\nWITH x AS (SELECT 1) SELECT * FROM x;; -- Ende": "-- Kommentar\nWITH x AS (SELECT 1) SELECT * FROM x",
-		"/* a; b */ SELECT ';' AS x":                                   "/* a; b */ SELECT ';' AS x",
-		`SELECT "a;b", [c;d], ` + "`e;f`":                              `SELECT "a;b", [c;d], ` + "`e;f`",
-		"SELECT 'it''s; fine'":                                         "SELECT 'it''s; fine'",
+		"-- comment\nWITH x AS (SELECT 1) SELECT * FROM x;; -- end": "-- comment\nWITH x AS (SELECT 1) SELECT * FROM x",
+		"/* a; b */ SELECT ';' AS x":                                "/* a; b */ SELECT ';' AS x",
+		`SELECT "a;b", [c;d], ` + "`e;f`":                           `SELECT "a;b", [c;d], ` + "`e;f`",
+		"SELECT 'it''s; fine'":                                      "SELECT 'it''s; fine'",
 	}
 	for in, want := range ok {
 		got, err := checkSelect(in)
@@ -60,7 +60,7 @@ func TestCheckSelect(t *testing.T) {
 		}
 	}
 	bad := []string{
-		"", "   ", "-- nur Kommentar",
+		"", "   ", "-- comment only",
 		"DELETE FROM expenses",
 		"PRAGMA query_only = OFF",
 		"ATTACH 'x.db' AS x",
@@ -92,33 +92,33 @@ func TestReadOnlyQuery(t *testing.T) {
 		t.Fatal(err)
 	}
 	if strings.Join(res.Columns, ",") != "titel,amount_cents,fx_rate,nix,b" {
-		t.Errorf("Spalten = %v", res.Columns)
+		t.Errorf("columns = %v", res.Columns)
 	}
 	want := fmt.Sprint([][]any{{"Kino", int64(2000), int64(1), nil, "[BLOB, 2 Bytes]"}, {"Rewe", int64(3000), int64(1), nil, "[BLOB, 2 Bytes]"}})
 	if got := fmt.Sprint(res.Rows); got != want || res.Truncated {
-		t.Errorf("Zeilen = %s (truncated %v), want %s", got, res.Truncated, want)
+		t.Errorf("rows = %s (truncated %v), want %s", got, res.Truncated, want)
 	}
 
-	// Leeres Ergebnis, WITH, Zeilenlimit, Reihenfolge.
+	// Empty result, WITH, row limit, ordering.
 	res, err = f.s.ReadOnlyQuery(ctx, "SELECT * FROM participants WHERE name = 'Niemand'")
 	if err != nil || len(res.Rows) != 0 || len(res.Columns) != 4 {
-		t.Errorf("leer: %+v, %v", res, err)
+		t.Errorf("empty: %+v, %v", res, err)
 	}
 	res, err = f.s.ReadOnlyQuery(ctx, "WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n LIMIT 1000) SELECT i FROM n ORDER BY i DESC")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(res.Rows) != SQLMaxRows || !res.Truncated || res.Rows[0][0] != int64(1000) || res.Rows[SQLMaxRows-1][0] != int64(1000-SQLMaxRows+1) {
-		t.Errorf("Limit: %d Zeilen, truncated %v, erste %v", len(res.Rows), res.Truncated, res.Rows[0])
+		t.Errorf("limit: %d rows, truncated %v, first %v", len(res.Rows), res.Truncated, res.Rows[0])
 	}
-	// Lange Texte werden gekürzt.
+	// Long texts are truncated.
 	res, err = f.s.ReadOnlyQuery(ctx, "SELECT length(x), x FROM (SELECT printf('%.5000c', 'a') AS x)")
 	if err != nil || res.Rows[0][0] != int64(5000) || len(res.Rows[0][1].(string)) != sqlMaxCellRunes {
-		t.Errorf("Kürzen: %v", err)
+		t.Errorf("truncation: %v", err)
 	}
-	// SQL-Fehler sind ValidationErrors mit SQLite-Meldung.
+	// SQL errors are ValidationErrors with the SQLite message.
 	if _, err := f.s.ReadOnlyQuery(ctx, "SELECT nix FROM gibtsnicht"); !isValidation(err) || !strings.Contains(err.Error(), "gibtsnicht") {
-		t.Errorf("unbekannte Tabelle: %v", err)
+		t.Errorf("unknown table: %v", err)
 	}
 }
 
@@ -129,7 +129,7 @@ func TestReadOnlyQueryHasFold(t *testing.T) {
 		t.Fatal(err)
 	}
 	if got := res.Rows[0]; got[0] != "bäcker strasse" || got[1] != nil || got[2] != int64(42) {
-		t.Errorf("fold in der Sandbox = %#v", got)
+		t.Errorf("fold in the sandbox = %#v", got)
 	}
 }
 
@@ -145,10 +145,10 @@ func TestReadOnlyQueryHidesYNAB(t *testing.T) {
 		"SELECT * FROM temp.ynab_config",
 	} {
 		if _, err := f.s.ReadOnlyQuery(ctx, q); !isValidation(err) {
-			t.Errorf("%s: err = %v, want Fehler", q, err)
+			t.Errorf("%s: err = %v, want error", q, err)
 		}
 	}
-	// Nichts in der Sandbox enthält das Token – auch nicht über Schema oder Settings.
+	// Nothing in the sandbox contains the token, not even via schema or settings.
 	for _, q := range []string{
 		"SELECT * FROM settings",
 		"SELECT name, sql FROM sqlite_schema",
@@ -160,14 +160,14 @@ func TestReadOnlyQueryHidesYNAB(t *testing.T) {
 			t.Fatalf("%s: %v", q, err)
 		}
 		if s := fmt.Sprint(res.Rows); strings.Contains(s, "GEHEIM") || strings.Contains(strings.ToLower(s), "ynab") {
-			t.Errorf("%s verrät YNAB: %s", q, s)
+			t.Errorf("%s leaks YNAB: %s", q, s)
 		}
 	}
 	res, _ := f.s.ReadOnlyQuery(ctx, "SELECT key FROM settings ORDER BY key")
 	if fmt.Sprint(res.Rows) != "[[default_currency] [group_name]]" {
 		t.Errorf("settings = %v", res.Rows)
 	}
-	// Schema über MCP zeigt keine YNAB-Tabellen.
+	// The schema via MCP shows no YNAB tables.
 	objs, err := f.s.MCPSchema(ctx)
 	if err != nil {
 		t.Fatal(err)
@@ -175,19 +175,19 @@ func TestReadOnlyQueryHidesYNAB(t *testing.T) {
 	tables := 0
 	for _, o := range objs {
 		if strings.Contains(o.Name, "ynab") || strings.Contains(o.SQL, "ynab") {
-			t.Errorf("MCPSchema enthält %s", o.Name)
+			t.Errorf("MCPSchema contains %s", o.Name)
 		}
 		if o.Type == "table" {
 			tables++
 		}
 	}
 	if tables != len(MCPTables) {
-		t.Errorf("%d Tabellen im Schema, want %d", tables, len(MCPTables))
+		t.Errorf("%d tables in schema, want %d", tables, len(MCPTables))
 	}
 }
 
-// TestSandboxLayers prüft die Schutzschichten unterhalb der lexikalischen
-// Prüfung direkt auf der Sandbox-Verbindung.
+// TestSandboxLayers checks the protection layers below the lexical check
+// directly on the sandbox connection.
 func TestSandboxLayers(t *testing.T) {
 	f := newFileFixture(t)
 	ctx := context.Background()
@@ -211,37 +211,37 @@ func TestSandboxLayers(t *testing.T) {
 		"VACUUM INTO '" + other + "'",
 	} {
 		if _, err := conn.ExecContext(ctx, q); err == nil {
-			t.Errorf("%s: kein Fehler", q)
+			t.Errorf("%s: no error", q)
 		}
 	}
 	if _, err := os.Stat(other); err == nil {
-		t.Error("VACUUM INTO hat eine Datei geschrieben")
+		t.Error("VACUUM INTO wrote a file")
 	}
-	// Selbst wenn jemand query_only abschaltet: die Datei ist nicht erreichbar.
+	// Even if someone turns off query_only, the file is not reachable.
 	if _, err := conn.ExecContext(ctx, "PRAGMA query_only = OFF"); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := conn.ExecContext(ctx, "ATTACH DATABASE '"+f.s.Path()+"' AS echt"); err == nil {
-		t.Error("ATTACH trotz Limit möglich")
+		t.Error("ATTACH possible despite limit")
 	}
 	if _, err := conn.ExecContext(ctx, "DELETE FROM expenses"); err != nil {
-		t.Fatalf("Löschen in der Kopie: %v", err)
+		t.Fatalf("delete in the copy: %v", err)
 	}
-	// Eingebettet in runWrapped sind nur SELECTs syntaktisch möglich.
+	// Wrapped by runWrapped, only SELECTs are syntactically possible.
 	for _, body := range []string{"DELETE FROM expenses", "PRAGMA query_only = OFF", "SELECT 1) SELECT 1; ATTACH 'x' AS y; SELECT (1"} {
 		if _, err := runWrapped(ctx, conn, body); err == nil {
-			t.Errorf("runWrapped(%q): kein Fehler", body)
+			t.Errorf("runWrapped(%q): no error", body)
 		}
 	}
 	closeFn()
 
 	after, _ := os.ReadFile(f.s.Path())
 	if string(before) != string(after) {
-		t.Error("Datenbankdatei wurde verändert")
+		t.Error("database file was modified")
 	}
 	es, _ := f.s.ListExpenses(ctx, ExpenseFilter{})
 	if len(es) != 1 {
-		t.Errorf("echte Ausgaben = %d, want 1", len(es))
+		t.Errorf("real expenses = %d, want 1", len(es))
 	}
 }
 
@@ -252,10 +252,10 @@ func TestReadOnlyQueryTimeout(t *testing.T) {
 	start := time.Now()
 	_, err := f.s.ReadOnlyQuery(ctx, "WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n) SELECT i FROM n WHERE i < 0")
 	if !isValidation(err) || !strings.Contains(err.Error(), "abgebrochen") {
-		t.Errorf("err = %v, want Abbruch", err)
+		t.Errorf("err = %v, want cancellation", err)
 	}
 	if d := time.Since(start); d > 3*time.Second {
-		t.Errorf("Abbruch dauerte %v", d)
+		t.Errorf("cancellation took %v", d)
 	}
 }
 
@@ -319,6 +319,6 @@ func TestStats(t *testing.T) {
 		}
 	}
 	if _, err := f.s.Stats(ctx, StatsFilter{GroupBy: "quatsch"}); !isValidation(err) {
-		t.Errorf("unbekannte Gruppierung: %v", err)
+		t.Errorf("unknown grouping: %v", err)
 	}
 }
