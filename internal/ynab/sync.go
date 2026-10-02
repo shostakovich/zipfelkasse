@@ -431,8 +431,7 @@ func (s *Service) create(ctx context.Context, c *client, cfg store.YNABConfig, w
 		case uncertain(err):
 			return err // stays "pending", the next run resolves it
 		case runLevel(err):
-			// certainly not created: undo the pending mark
-			s.markPending(ctx, cfg, chunk, "")
+			s.unmarkPending(ctx, cfg, chunk) // certainly not created
 			return err
 		default:
 			// Batch call rejected (400/409/…): try one by one to find the
@@ -452,6 +451,16 @@ func (s *Service) markPending(ctx context.Context, cfg store.YNABConfig, ws []wa
 		rows[i].Hash = hash
 	}
 	return s.d.Store.PutYNABSync(ctx, rows...)
+}
+
+// unmarkPending undoes the pending mark of transactions that were certainly
+// not created. A failure is only logged (the run already ends with an
+// error): rows left "pending" cost the next run one search request
+// (resolvePending), which does not find them and creates them normally.
+func (s *Service) unmarkPending(ctx context.Context, cfg store.YNABConfig, ws []want) {
+	if err := s.markPending(ctx, cfg, ws, ""); err != nil {
+		s.d.Log.Warn("ynab: undo pending mark", "person", cfg.ParticipantID, "err", err)
+	}
 }
 
 func (s *Service) applyCreated(ctx context.Context, cfg store.YNABConfig, ws []want, got []apiTxn, res *syncResult) error {
@@ -494,10 +503,10 @@ func (s *Service) createEach(ctx context.Context, c *client, cfg store.YNABConfi
 				return err
 			}
 		case uncertain(err):
-			s.markPending(ctx, cfg, ws[i+1:], "")
+			s.unmarkPending(ctx, cfg, ws[i+1:]) // not tried yet
 			return err
 		case runLevel(err):
-			s.markPending(ctx, cfg, ws[i:], "")
+			s.unmarkPending(ctx, cfg, ws[i:])
 			return err
 		default:
 			res.Failed++

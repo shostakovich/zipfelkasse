@@ -12,6 +12,7 @@ import (
 	"crypto/sha256"
 	"embed"
 	"encoding/hex"
+	"errors"
 	"net/http"
 	"sync"
 	"time"
@@ -158,16 +159,8 @@ func (s *Service) SyncAll(ctx context.Context, full bool) time.Duration {
 		if err == errNotReady {
 			continue // changed in the meantime
 		}
-		switch err.(type) {
-		case nil:
-			if res.Created+res.Updated+res.Deleted+res.Failed > 0 {
-				s.d.Log.Info("ynab: synced", "person", cfg.ParticipantID, "result", res.logValue())
-			}
-		case backoffError:
-		default:
-			if err != errTokenInvalid {
-				s.d.Log.Warn("ynab: sync failed", "person", cfg.ParticipantID, "err", redact(err.Error(), cfg.Token))
-			}
+		if err != nil || res.Created+res.Updated+res.Deleted+res.Failed > 0 {
+			s.logSync("", cfg, res, err)
 		}
 		if res.Again {
 			next = min(next, s.debounce)
@@ -179,10 +172,18 @@ func (s *Service) SyncAll(ctx context.Context, full bool) time.Duration {
 	return next
 }
 
-// SyncNow fully syncs one person right away ("Jetzt synchronisieren").
-func (s *Service) SyncNow(ctx context.Context, participantID int64) (syncResult, error) {
-	_, res, _, err := s.syncPerson(ctx, participantID, true)
-	return res, err
+// logSync logs the outcome of a person's run (how: "" or " (now)"), never
+// with the token. A pause after a rate limit and an invalid token are not
+// logged: the settings page shows them, and they recur on every run.
+func (s *Service) logSync(how string, cfg store.YNABConfig, res syncResult, err error) {
+	var be backoffError
+	switch {
+	case err == nil:
+		s.d.Log.Info("ynab: synced"+how, "person", cfg.ParticipantID, "result", res.logValue())
+	case errors.As(err, &be), err == errTokenInvalid:
+	default:
+		s.d.Log.Warn("ynab: sync"+how+" failed", "person", cfg.ParticipantID, "err", redact(err.Error(), cfg.Token))
+	}
 }
 
 // syncPerson syncs one person under syncMu with the connection as it is now.
@@ -212,10 +213,10 @@ func (s *Service) changeConnection(fn func() error) error {
 	return fn()
 }
 
-// syncInBackground starts SyncNow for participantID in its own goroutine so
-// that the request does not wait for YNAB. If one is already running for the
-// person or Run has ended, nothing happens. The result ends up in the
-// person's status.
+// syncInBackground fully syncs participantID right away ("Jetzt
+// synchronisieren") in its own goroutine so that the request does not wait
+// for YNAB. If one is already running for the person or Run has ended,
+// nothing happens. The result ends up in the person's status.
 func (s *Service) syncInBackground(participantID int64) {
 	s.bgMu.Lock()
 	defer s.bgMu.Unlock()
@@ -229,11 +230,9 @@ func (s *Service) syncInBackground(participantID int64) {
 			delete(s.bgBusy, participantID)
 			s.bgMu.Unlock()
 		}()
-		if res, err := s.SyncNow(s.bgCtx, participantID); err != nil {
-			s.d.Log.Warn("ynab: sync (now) failed", "person", participantID, "err", err.Error())
-		} else {
-			s.d.Log.Info("ynab: synced (now)", "person", participantID, "result", res.logValue())
-		}
+		cfg, res, _, err := s.syncPerson(s.bgCtx, participantID, true)
+		cfg.ParticipantID = participantID // also if it could not be read
+		s.logSync(" (now)", cfg, res, err)
 	})
 }
 

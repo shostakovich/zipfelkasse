@@ -1,6 +1,7 @@
 package ynab
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
 	"errors"
@@ -1024,6 +1025,35 @@ func TestSyncFailedDeleteRetriedOnlyInFullSync(t *testing.T) {
 		t.Errorf("full: %+v", res)
 	}
 	e.expectRequests(del)
+}
+
+// The log of "Jetzt synchronisieren" never contains the token; an invalid
+// token (already shown on the page) is not logged again on every click.
+func TestSyncNowLog(t *testing.T) {
+	e := newEnv(t)
+	var buf bytes.Buffer
+	e.svc.d.Log = slog.New(slog.NewTextHandler(&buf, nil))
+	e.connect("2026-09-01")
+	e.create(e.input("Kino", 2400, "2026-09-20", e.anna, e.anna, e.ben))
+	syncNow := func() string {
+		t.Helper()
+		buf.Reset()
+		if rec := e.post("/einstellungen/ynab/sync", nil); rec.Code != http.StatusSeeOther {
+			t.Fatalf("sync: %d", rec.Code)
+		}
+		e.svc.waitBackground()
+		return buf.String()
+	}
+	e.fake.fail(503) // the detail contains the token
+	if log := syncNow(); !strings.Contains(log, "sync (now) failed") || strings.Contains(log, testToken) || !strings.Contains(log, "•••") {
+		t.Errorf("log = %s", log)
+	}
+	e.now = e.now.Add(6 * time.Minute)
+	e.st.SetYNABToken(e.ctx, e.anna, "abgelaufen")
+	syncNow() // 401: the token is marked invalid
+	if log := syncNow(); strings.Contains(log, "failed") {
+		t.Errorf("invalid token logged again: %s", log)
+	}
 }
 
 // "Jetzt synchronisieren" does not wait for YNAB.
