@@ -89,13 +89,58 @@ func (e Expense) ShareOf(participantID int64) int64 {
 
 // ExpenseFilter narrows ListExpenses. Zero values mean "no filter".
 type ExpenseFilter struct {
-	Text       string // substring of title or notes, case-insensitive (including umlauts, ß = ss)
-	CategoryID int64  //
+	Text string // substring of title or notes, case-insensitive (including umlauts, ß = ss)
+	// AnyText: like Text, but one of the substrings suffices (together with
+	// Text: one of all of them).
+	AnyText    []string
+	CategoryID int64 //
 	// WithoutCategory: only expenses without a category (CategoryID is ignored).
 	WithoutCategory bool
 	ParticipantID   int64     // paid or is involved
+	PaidBy          int64     // paid
+	InvolvedID      int64     // has a share
+	MinCents        int64     // amount_cents >= MinCents (0 = open)
+	MaxCents        int64     // amount_cents <= MaxCents (0 = open)
 	From, To        time.Time // date, both inclusive
+	Sort            string    // Sort…, "" = SortDateDesc
 	Limit, Offset   int       // Limit 0 = all
+}
+
+// Sort orders of ListExpenses. Ties are broken newest first.
+const (
+	SortDateDesc   = "date_desc"
+	SortDateAsc    = "date_asc"
+	SortAmountDesc = "amount_desc"
+	SortAmountAsc  = "amount_asc"
+)
+
+var expenseOrder = map[string]string{
+	"":             "e.date DESC, e.id DESC",
+	SortDateDesc:   "e.date DESC, e.id DESC",
+	SortDateAsc:    "e.date, e.id",
+	SortAmountDesc: "e.amount_cents DESC, e.date DESC, e.id DESC",
+	SortAmountAsc:  "e.amount_cents, e.date DESC, e.id DESC",
+}
+
+// textCond is the condition "title or notes of e contain one of terms"
+// (folded, see fold); "" without terms.
+func textCond(terms ...string) (string, []any) {
+	var ors []string
+	var args []any
+	for _, t := range terms {
+		if t = strings.TrimSpace(t); t == "" {
+			continue
+		}
+		// Folded in Go (see fold): LIKE would only be case-insensitive for
+		// ASCII.
+		t = fold(t)
+		ors = append(ors, "instr("+foldFunc+"(e.title), ?) > 0 OR instr("+foldFunc+"(e.notes), ?) > 0")
+		args = append(args, t, t)
+	}
+	if len(ors) == 0 {
+		return "", nil
+	}
+	return "(" + strings.Join(ors, " OR ") + ")", args
 }
 
 // maxNotesLen is the maximum length of the notes in characters (as maxlength
@@ -358,16 +403,18 @@ func (s *Store) GetExpense(ctx context.Context, id int64) (Expense, error) {
 	return getExpense(ctx, s.db, id)
 }
 
-// ListExpenses returns non-deleted expenses, newest first (date, then ID).
+// ListExpenses returns non-deleted expenses, by default newest first (date,
+// then ID).
 func (s *Store) ListExpenses(ctx context.Context, f ExpenseFilter) ([]Expense, error) {
+	order, ok := expenseOrder[f.Sort]
+	if !ok {
+		return nil, fmt.Errorf("unknown sort order %q", f.Sort)
+	}
 	where := []string{"e.deleted_at IS NULL"}
 	var args []any
-	if t := strings.TrimSpace(f.Text); t != "" {
-		// Folded in Go (see fold): LIKE would only be case-insensitive for
-		// ASCII.
-		t = fold(t)
-		where = append(where, "(instr("+foldFunc+"(e.title), ?) > 0 OR instr("+foldFunc+"(e.notes), ?) > 0)")
-		args = append(args, t, t)
+	if c, a := textCond(append([]string{f.Text}, f.AnyText...)...); c != "" {
+		where = append(where, c)
+		args = append(args, a...)
 	}
 	switch {
 	case f.WithoutCategory:
@@ -380,6 +427,22 @@ func (s *Store) ListExpenses(ctx context.Context, f ExpenseFilter) ([]Expense, e
 		where = append(where, "(e.paid_by = ? OR EXISTS (SELECT 1 FROM expense_shares x WHERE x.expense_id = e.id AND x.participant_id = ?))")
 		args = append(args, f.ParticipantID, f.ParticipantID)
 	}
+	if f.PaidBy != 0 {
+		where = append(where, "e.paid_by = ?")
+		args = append(args, f.PaidBy)
+	}
+	if f.InvolvedID != 0 {
+		where = append(where, "EXISTS (SELECT 1 FROM expense_shares x WHERE x.expense_id = e.id AND x.participant_id = ?)")
+		args = append(args, f.InvolvedID)
+	}
+	if f.MinCents != 0 {
+		where = append(where, "e.amount_cents >= ?")
+		args = append(args, f.MinCents)
+	}
+	if f.MaxCents != 0 {
+		where = append(where, "e.amount_cents <= ?")
+		args = append(args, f.MaxCents)
+	}
 	if !f.From.IsZero() {
 		where = append(where, "e.date >= ?")
 		args = append(args, formatDate(f.From))
@@ -388,7 +451,7 @@ func (s *Store) ListExpenses(ctx context.Context, f ExpenseFilter) ([]Expense, e
 		where = append(where, "e.date <= ?")
 		args = append(args, formatDate(f.To))
 	}
-	q := expenseSelect + " WHERE " + strings.Join(where, " AND ") + " ORDER BY e.date DESC, e.id DESC"
+	q := expenseSelect + " WHERE " + strings.Join(where, " AND ") + " ORDER BY " + order
 	if f.Limit > 0 {
 		q += " LIMIT ? OFFSET ?"
 		args = append(args, f.Limit, f.Offset)

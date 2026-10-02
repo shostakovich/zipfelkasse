@@ -11,7 +11,7 @@ values from the database (names, titles, categories, notes) are returned as ente
 | Tool | Purpose |
 |---|---|
 | `balances` | balance per person and a settlement proposal |
-| `search_expenses` | individual expenses with shares, filtered by `from`/`to`, `category`, `person`, `text` and `reimbursements` (`exclude`/`include`/`only`), with `limit` |
+| `search_expenses` | individual expenses, filtered by date, category, people, text, amount and `reimbursements`, sortable, compact or with shares (`detail`) |
 | `statistics` | totals by `group_by` = `category`, `month`, `person` or `category_month`. Either total amounts or – with `share_of` – only one person's share. Reimbursements never count |
 | `schema` | explains tables and columns, lists people and categories, returns the CREATE statements |
 | `sql_query` | any `SELECT`/`WITH` (SQLite) as `query`, at most 500 rows, aborted after 5 s |
@@ -19,8 +19,10 @@ values from the database (names, titles, categories, notes) are returned as ente
 Parameters in detail:
 
 - `search_expenses`: `from`, `to` (dates, inclusive), `category`, `person` (expenses the person paid **or** takes
-  part in), `text` (substring of title or notes), `reimbursements` (`exclude` = default, `include`, `only`),
-  `limit` (1–500, default 50).
+  part in), `paid_by` (only paid by), `involved` (only with a share of), `text` (substring of title or notes; a list
+  matches if any term occurs), `min_amount`, `max_amount` (euros, inclusive), `reimbursements` (`exclude` = default,
+  `include`, `only`), `sort` (`date_desc` = default, `date_asc`, `amount_desc`, `amount_asc`), `detail` (`compact` =
+  default, `full` adds split, shares, notes and foreign currency), `limit` (1–500, default 50).
 - `statistics`: `group_by` (required), `from`, `to`, `share_of` (only this person's share counts; empty = total
   amounts), `category`.
 
@@ -38,8 +40,8 @@ Main output keys:
 - `balances`: `balances[]` (`person`, `balance`, `balance_cents`, `status`), `settlements[]` (`from`, `to`, `amount`,
   `amount_cents`), `note`.
 - `search_expenses`: `matches`, `shown`, `truncated`, `total`, `total_cents`, `expenses[]` (`id`, `date`, `title`,
-  `category`, `paid_by`, `amount`, `amount_cents`, `reimbursement`, `recipient`, `original`, `fx_rate`, `fx_source`,
-  `notes`, `split`, `shares[]`), with `person` also `person_share`.
+  `category`, `paid_by`, `amount`, `amount_cents`, `reimbursement`, `recipient`; with `detail=full` also `original`,
+  `fx_rate`, `fx_source`, `notes`, `split`, `shares[]`), with `person` or `involved` also `person_share`.
 - `statistics`: `group_by`, `perspective`, `period`, `rows[]` (`category`, `month`, `person`, `count`, `amount`,
   `amount_cents`, with `group_by=person` also `paid`, `paid_cents`), `total`, `total_cents`, `note`.
 - `sql_query`: `columns`, `rows`, `row_count`, `truncated`, and `note` when truncated.

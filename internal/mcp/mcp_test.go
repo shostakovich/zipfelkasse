@@ -545,7 +545,7 @@ func TestTools(t *testing.T) {
 	}
 
 	// search_expenses
-	sc, _, isErr = e.call("search_expenses", map[string]any{"person": "anna", "from": "2026-09-01"})
+	sc, _, isErr = e.call("search_expenses", map[string]any{"person": "anna", "from": "2026-09-01", "detail": "full"})
 	if isErr || sc["matches"].(float64) != 2 || sc["total_cents"].(float64) != 3000 || sc["total"] != "30.00" {
 		t.Errorf("search person: %v", sc)
 	}
@@ -579,6 +579,8 @@ func TestTools(t *testing.T) {
 	for _, args := range []map[string]any{
 		{"person": "Dora"}, {"category": "Yacht"}, {"from": "yesterday"}, {"from": "2026-09-02", "to": "2026-09-01"},
 		{"limit": 1000}, {"reimbursements": "whatever"}, {"unknown": 1}, {"limit": "ten"}, {"von": "2026-09-01"},
+		{"sort": "random"}, {"detail": "all"}, {"min_amount": -1}, {"max_amount": 0}, {"min_amount": 20, "max_amount": 10},
+		{"text": 5}, {"paid_by": "Dora"}, {"involved": "Dora"},
 	} {
 		if _, text, isErr := e.call("search_expenses", args); !isErr || text == "" || strings.Contains(text, "Internal error") {
 			t.Errorf("%v: isError=%v %q", args, isErr, text)
@@ -646,5 +648,61 @@ func TestTools(t *testing.T) {
 	}
 	if !strings.Contains(e.logs.String(), "tool=sql_query") {
 		t.Error("tool call not logged")
+	}
+}
+
+func TestSearchExpensesOptions(t *testing.T) {
+	e := newEnv(t)
+	e.expense("Rewe", 3000, "2026-08-15", "Anna", "Lebensmittel", "Anna", "Ben", "Cleo")
+	e.expense("Edeka", 1000, "2026-09-01", "Ben", "Lebensmittel", "Anna", "Ben")
+	e.expense("Kino", 2400, "2026-09-05", "Cleo", "", "Ben", "Cleo")
+	e.expense("Lidl", 1999, "2026-09-07", "Cleo", "Lebensmittel", "Cleo")
+	titles := func(args map[string]any) string {
+		t.Helper()
+		sc, text, isErr := e.call("search_expenses", args)
+		if isErr {
+			t.Fatalf("%v: %s", args, text)
+		}
+		var out []string
+		for _, x := range sc["expenses"].([]any) {
+			out = append(out, x.(map[string]any)["title"].(string))
+		}
+		return strings.Join(out, ",")
+	}
+	for _, c := range []struct {
+		args map[string]any
+		want string
+	}{
+		{map[string]any{}, "Lidl,Kino,Edeka,Rewe"},
+		{map[string]any{"sort": "date_asc"}, "Rewe,Edeka,Kino,Lidl"},
+		{map[string]any{"sort": "amount_desc"}, "Rewe,Kino,Lidl,Edeka"},
+		{map[string]any{"sort": "amount_asc"}, "Edeka,Lidl,Kino,Rewe"},
+		{map[string]any{"min_amount": 19.99, "max_amount": 24}, "Lidl,Kino"},
+		{map[string]any{"min_amount": 20}, "Kino,Rewe"},
+		{map[string]any{"text": []string{"rewe", "LIDL"}}, "Lidl,Rewe"},
+		{map[string]any{"text": "edeka"}, "Edeka"},
+		{map[string]any{"paid_by": "Cleo"}, "Lidl,Kino"},
+		{map[string]any{"involved": "Ben"}, "Kino,Edeka,Rewe"},
+		{map[string]any{"person": "Ben"}, "Kino,Edeka,Rewe"},
+		{map[string]any{"paid_by": "Cleo", "involved": "Ben"}, "Kino"},
+	} {
+		if got := titles(c.args); got != c.want {
+			t.Errorf("%v = %s, want %s", c.args, got, c.want)
+		}
+	}
+
+	// involved sums up the person's shares like person.
+	sc, _, _ := e.call("search_expenses", map[string]any{"involved": "Ben"})
+	if ps := sc["person_share"].(map[string]any); ps["person"] != "Ben" || ps["amount_cents"].(float64) != 1000+500+1200 {
+		t.Errorf("person_share involved = %v", ps)
+	}
+	// compact (default) leaves out split, shares and notes, full includes them.
+	_, text, _ := e.call("search_expenses", map[string]any{"text": "Kino"})
+	if strings.Contains(text, `"shares"`) || strings.Contains(text, `"split"`) || !strings.Contains(text, `"amount":"24.00"`) {
+		t.Errorf("compact: %s", text)
+	}
+	_, text, _ = e.call("search_expenses", map[string]any{"text": "Kino", "detail": "full"})
+	if !strings.Contains(text, `"shares"`) || !strings.Contains(text, `"split":"equal"`) {
+		t.Errorf("full: %s", text)
 	}
 }

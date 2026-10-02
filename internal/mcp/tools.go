@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"math"
 	"slices"
 	"strings"
 	"time"
@@ -93,6 +94,16 @@ const (
 
 var reimbursementModes = []string{reimbursementsExclude, reimbursementsInclude, reimbursementsOnly}
 
+var sortOrders = []string{store.SortDateDesc, store.SortDateAsc, store.SortAmountDesc, store.SortAmountAsc}
+
+// Values of the detail argument of search_expenses.
+const (
+	detailCompact = "compact"
+	detailFull    = "full"
+)
+
+var detailLevels = []string{detailCompact, detailFull}
+
 // groupings are the valid group_by values of statistics.
 var groupings = []string{store.StatsByCategory, store.StatsByMonth, store.StatsByPerson, store.StatsByCategoryMonth}
 
@@ -109,6 +120,13 @@ func newServer(d web.Deps) *server {
 	dateProp := func(desc string) map[string]any {
 		return map[string]any{"type": "string", "description": desc + " Format YYYY-MM-DD (DD.MM.YYYY is accepted too)."}
 	}
+	textProp := map[string]any{
+		"anyOf": []any{
+			map[string]any{"type": "string"},
+			map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
+		},
+		"description": `Substring of the title or notes (case-insensitive). A list matches if any of the terms occurs, e.g. ["Rewe", "Edeka", "Lidl"].`,
+	}
 
 	add("balances", "Balances and settlement",
 		"Current balance of each person in euros and a settlement proposal (who transfers how much to whom so that everyone ends at 0). "+
@@ -117,7 +135,7 @@ func newServer(d web.Deps) *server {
 		s.balances)
 
 	add("search_expenses", "Search expenses",
-		"Searches individual expenses (newest first) with amount, payer, category and split (each person's share). "+
+		"Searches individual expenses (newest first unless sort says otherwise) with amount, payer and category; with detail=full also split (each person's share), notes and foreign currency. "+
 			"All filters are optional and are combined. Also returns the total number of matches, their total and – with person – "+
 			"the total of that person's shares. For plain totals by category/month, statistics is the better choice.",
 		map[string]any{
@@ -125,11 +143,18 @@ func newServer(d web.Deps) *server {
 			"properties": map[string]any{
 				"from":     dateProp("First date (inclusive)."),
 				"to":       dateProp("Last date (inclusive)."),
-				"category": map[string]any{"type": "string", "description": `Category name, e.g. "Lebensmittel". ` + categoryHint},
-				"person":   map[string]any{"type": "string", "description": "Name of a person: finds expenses they paid OR take part in."},
-				"text":     map[string]any{"type": "string", "description": "Substring of the title or notes (case-insensitive)."},
+				"category":   map[string]any{"type": "string", "description": `Category name, e.g. "Lebensmittel". ` + categoryHint},
+				"person":     map[string]any{"type": "string", "description": "Name of a person: finds expenses they paid OR take part in."},
+				"paid_by":    map[string]any{"type": "string", "description": "Name of a person: only expenses this person paid."},
+				"involved":   map[string]any{"type": "string", "description": "Name of a person: only expenses this person has a share in."},
+				"text":       textProp,
+				"min_amount": map[string]any{"type": "number", "minimum": 0, "description": "Smallest amount in euros (inclusive), e.g. 50 or 12.5."},
+				"max_amount": map[string]any{"type": "number", "minimum": 0, "description": "Largest amount in euros (inclusive)."},
 				"reimbursements": map[string]any{"type": "string", "enum": reimbursementModes,
 					"description": "Reimbursements (settlement payments between people): hide them (exclude, default), include them (include) or return only them (only)."},
+				"sort": map[string]any{"type": "string", "enum": sortOrders, "description": "Order of the expenses: date_desc (newest first, default), date_asc, amount_desc (most expensive first), amount_asc."},
+				"detail": map[string]any{"type": "string", "enum": detailLevels,
+					"description": "compact (default): id, date, title, category, payer and amount per expense. full: additionally split, each person's share, notes and foreign currency."},
 				"limit": map[string]any{"type": "integer", "minimum": 1, "maximum": store.SQLMaxRows, "description": "Maximum number of expenses returned, default 50."},
 			},
 			"additionalProperties": false,
@@ -401,13 +426,19 @@ type expenseOut struct {
 
 func (s *server) searchExpenses(ctx context.Context, raw json.RawMessage) (toolResult, error) {
 	var args struct {
-		From           string `json:"from"`
-		To             string `json:"to"`
-		Category       string `json:"category"`
-		Person         string `json:"person"`
-		Text           string `json:"text"`
-		Reimbursements string `json:"reimbursements"`
-		Limit          int    `json:"limit"`
+		From           string     `json:"from"`
+		To             string     `json:"to"`
+		Category       string     `json:"category"`
+		Person         string     `json:"person"`
+		PaidBy         string     `json:"paid_by"`
+		Involved       string     `json:"involved"`
+		Text           stringList `json:"text"`
+		MinAmount      *float64   `json:"min_amount"`
+		MaxAmount      *float64   `json:"max_amount"`
+		Reimbursements string     `json:"reimbursements"`
+		Sort           string     `json:"sort"`
+		Detail         string     `json:"detail"`
+		Limit          int        `json:"limit"`
 	}
 	if err := decodeArgs(raw, &args); err != nil {
 		return toolResult{}, err
@@ -417,20 +448,51 @@ func (s *server) searchExpenses(ctx context.Context, raw json.RawMessage) (toolR
 	if f.From, f.To, err = parseRange(args.From, args.To); err != nil {
 		return toolResult{}, err
 	}
-	f.Text = strings.TrimSpace(args.Text)
+	f.AnyText = args.Text
 	if f.CategoryID, f.WithoutCategory, err = s.categoryArg(ctx, args.Category); err != nil {
 		return toolResult{}, err
 	}
-	var person store.Participant
-	if strings.TrimSpace(args.Person) != "" {
-		if person, err = s.findPerson(ctx, args.Person); err != nil {
+	var person, payer, involved store.Participant
+	for _, p := range []struct {
+		arg string
+		out *store.Participant
+		id  *int64
+	}{{args.Person, &person, &f.ParticipantID}, {args.PaidBy, &payer, &f.PaidBy}, {args.Involved, &involved, &f.InvolvedID}} {
+		if strings.TrimSpace(p.arg) == "" {
+			continue
+		}
+		if *p.out, err = s.findPerson(ctx, p.arg); err != nil {
 			return toolResult{}, err
 		}
-		f.ParticipantID = person.ID
+		*p.id = p.out.ID
+	}
+	if f.MinCents, err = amountArg("min_amount", args.MinAmount); err != nil {
+		return toolResult{}, err
+	}
+	if f.MaxCents, err = amountArg("max_amount", args.MaxAmount); err != nil {
+		return toolResult{}, err
+	}
+	if args.MaxAmount != nil && f.MaxCents == 0 {
+		return toolResult{}, invalid("max_amount must be greater than 0.")
+	}
+	if f.MaxCents != 0 && f.MinCents > f.MaxCents {
+		return toolResult{}, invalid("min_amount (%s) is greater than max_amount (%s).", eur(f.MinCents), eur(f.MaxCents))
 	}
 	mode := cmpOr(args.Reimbursements, reimbursementsExclude)
 	if !slices.Contains(reimbursementModes, mode) {
 		return toolResult{}, invalid(`reimbursements must be "exclude", "include" or "only".`)
+	}
+	if f.Sort = cmpOr(args.Sort, store.SortDateDesc); !slices.Contains(sortOrders, f.Sort) {
+		return toolResult{}, invalid("sort must be one of %s.", strings.Join(sortOrders, ", "))
+	}
+	detail := cmpOr(args.Detail, detailCompact)
+	if !slices.Contains(detailLevels, detail) {
+		return toolResult{}, invalid(`detail must be "compact" or "full".`)
+	}
+	// The person whose shares are summed up: person, otherwise involved.
+	sharer := person
+	if sharer.ID == 0 {
+		sharer = involved
 	}
 	limit := args.Limit
 	switch {
@@ -457,9 +519,9 @@ func (s *server) searchExpenses(ctx context.Context, raw json.RawMessage) (toolR
 		}
 		hits++
 		sum += e.AmountCents
-		share += e.ShareOf(person.ID)
+		share += e.ShareOf(sharer.ID)
 		if len(out) < limit {
-			out = append(out, expenseToOut(e, names))
+			out = append(out, expenseToOut(e, names, detail == detailFull))
 		}
 	}
 	data := map[string]any{
@@ -470,26 +532,34 @@ func (s *server) searchExpenses(ctx context.Context, raw json.RawMessage) (toolR
 		"total_cents": sum,
 		"expenses":    out,
 	}
-	if person.ID != 0 {
-		data["person_share"] = map[string]any{"person": person.Name, "amount": eur(share), "amount_cents": share}
+	if sharer.ID != 0 {
+		data["person_share"] = map[string]any{"person": sharer.Name, "amount": eur(share), "amount_cents": share}
 	}
 	return toolResult{data: data}, nil
 }
 
-func expenseToOut(e store.Expense, names map[int64]string) expenseOut {
+// expenseToOut converts an expense; without full only the compact fields
+// (no split, shares, notes and foreign currency).
+func expenseToOut(e store.Expense, names map[int64]string, full bool) expenseOut {
 	o := expenseOut{
 		ID: e.ID, Date: e.Date.Format(domain.DateLayout), Title: e.Title, Category: e.CategoryName,
-		PaidBy: e.PaidByName, Amount: eur(e.AmountCents), AmountCents: e.AmountCents, Notes: e.Notes,
-	}
-	if e.IsForeign() {
-		o.Original = money(e.OriginalAmountMinor, e.OriginalCurrency)
-		o.FXRate, o.FXSource = e.FXRate, e.FXSource
+		PaidBy: e.PaidByName, Amount: eur(e.AmountCents), AmountCents: e.AmountCents,
 	}
 	if e.IsReimbursement {
 		o.Reimbursement = true
 		if len(e.Shares) > 0 {
 			o.Recipient = names[e.Shares[0].ParticipantID]
 		}
+	}
+	if !full {
+		return o
+	}
+	o.Notes = e.Notes
+	if e.IsForeign() {
+		o.Original = money(e.OriginalAmountMinor, e.OriginalCurrency)
+		o.FXRate, o.FXSource = e.FXRate, e.FXSource
+	}
+	if e.IsReimbursement {
 		return o
 	}
 	o.Split = string(e.SplitMode)
@@ -497,6 +567,35 @@ func expenseToOut(e store.Expense, names map[int64]string) expenseOut {
 		o.Shares = append(o.Shares, shareOut{Person: names[sh.ParticipantID], Amount: eur(sh.AmountCents), AmountCents: sh.AmountCents})
 	}
 	return o
+}
+
+// stringList is a tool argument that is either a string or a list of
+// strings.
+type stringList []string
+
+func (l *stringList) UnmarshalJSON(b []byte) error {
+	var one string
+	if err := json.Unmarshal(b, &one); err == nil {
+		*l = stringList{one}
+		return nil
+	}
+	var many []string
+	if err := json.Unmarshal(b, &many); err != nil {
+		return errors.New("must be a string or a list of strings")
+	}
+	*l = many
+	return nil
+}
+
+// amountArg converts an amount argument in euros to cents (nil = 0).
+func amountArg(name string, v *float64) (int64, error) {
+	if v == nil {
+		return 0, nil
+	}
+	if *v < 0 || math.IsNaN(*v) || *v > 1e12 {
+		return 0, invalid("%s must be an amount in euros of at least 0.", name)
+	}
+	return int64(math.Round(*v * 100)), nil
 }
 
 func cmpOr(v, fallback string) string {
