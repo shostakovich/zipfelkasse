@@ -187,6 +187,10 @@ func (s *Store) notify(c ExpenseChange) {
 // Zeitformate in der Datenbank.
 const timeLayout = time.RFC3339
 
+// SetClock ersetzt die Uhr des Stores (Zeitstempel wie created_at); nur für
+// Tests, auch anderer Pakete. Nicht nebenläufig zu Schreibzugriffen aufrufen.
+func (s *Store) SetClock(now func() time.Time) { s.now = now }
+
 func (s *Store) nowString() string { return s.now().UTC().Format(timeLayout) }
 
 func formatDate(t time.Time) string { return t.Format(domain.DateLayout) }

@@ -107,3 +107,43 @@ func TestYNABCategoryMapAndSummary(t *testing.T) {
 		t.Errorf("rows = %+v", rows)
 	}
 }
+
+func TestYNABConnectedAt(t *testing.T) {
+	f := newFixture(t)
+	ctx := context.Background()
+	clock := time.Date(2026, 9, 1, 10, 0, 0, 0, time.UTC)
+	f.s.SetClock(func() time.Time { return clock })
+	f.s.SetYNABToken(ctx, f.anna, "tok")
+	if c, _ := f.s.GetYNABConfig(ctx, f.anna); !c.ConnectedAt.IsZero() {
+		t.Errorf("nur Token: ConnectedAt = %v", c.ConnectedAt)
+	}
+	f.s.SetYNABTarget(ctx, f.anna, "p", "a", date("2026-09-01"))
+	if c, _ := f.s.GetYNABConfig(ctx, f.anna); !c.ConnectedAt.Equal(clock) {
+		t.Errorf("nach Ziel: ConnectedAt = %v", c.ConnectedAt)
+	}
+	// Nur das Startdatum ändern: Zeitpunkt bleibt.
+	clock = clock.Add(time.Hour)
+	f.s.SetYNABTarget(ctx, f.anna, "p", "a", date("2026-08-01"))
+	if c, _ := f.s.GetYNABConfig(ctx, f.anna); !c.ConnectedAt.Equal(clock.Add(-time.Hour)) {
+		t.Errorf("Startdatum geändert: ConnectedAt = %v", c.ConnectedAt)
+	}
+	// Konto gewechselt: neu eingerichtet.
+	f.s.SetYNABTarget(ctx, f.anna, "p", "b", date("2026-08-01"))
+	c, _ := f.s.GetYNABConfig(ctx, f.anna)
+	if !c.ConnectedAt.Equal(clock) {
+		t.Errorf("Kontowechsel: ConnectedAt = %v", c.ConnectedAt)
+	}
+	if list, _ := f.s.ListYNABConfigs(ctx); len(list) != 1 || !list[0].ConnectedAt.Equal(clock) {
+		t.Errorf("ListYNABConfigs = %+v", list)
+	}
+	// Altbestand ohne gespeicherten Zeitpunkt: EnsureYNABConnectedAt setzt ihn einmalig.
+	f.s.SetYNABToken(ctx, f.ben, "tok-b")
+	got, err := f.s.EnsureYNABConnectedAt(ctx, f.ben)
+	if err != nil || !got.Equal(clock) {
+		t.Errorf("Ensure = %v, %v", got, err)
+	}
+	clock = clock.Add(time.Hour)
+	if got, _ := f.s.EnsureYNABConnectedAt(ctx, f.ben); !got.Equal(clock.Add(-time.Hour)) {
+		t.Errorf("Ensure überschreibt: %v", got)
+	}
+}

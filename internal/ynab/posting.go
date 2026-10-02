@@ -2,6 +2,8 @@ package ynab
 
 import (
 	"cmp"
+	"context"
+	"errors"
 	"regexp"
 	"slices"
 	"strconv"
@@ -44,18 +46,89 @@ func PostingFor(e store.Expense, participantID int64) (p Posting, ok bool) {
 	}, true
 }
 
-// Postings liefert die Buchungen von participantID zu es, nach Datum und ID
-// aufsteigend sortiert.
-func Postings(es []store.Expense, participantID int64) []Posting {
+func sortPostings(ps []Posting) {
+	slices.SortFunc(ps, func(a, b Posting) int {
+		return cmp.Or(a.Date.Compare(b.Date), cmp.Compare(a.ExpenseID, b.ExpenseID))
+	})
+}
+
+// Selection ist die Regel, welche Ausgaben einer Person nach YNAB gehören.
+// Sync und Export (ynab.ofx/ynab.csv) verwenden dieselbe Regel, damit beide
+// denselben Saldo „Geteilt“ ergeben. Eine Ausgabe gehört dazu, wenn es eine
+// Buchung gibt (PostingFor), ihr Datum nicht nach Today liegt (künftige
+// lehnt YNAB ab) und
+//   - ihr Datum ≥ Start ist oder
+//   - sie nach dem Einrichten erfasst wurde (created_at ≥ ConnectedAt): Der
+//     Startsaldo von „Geteilt“ kennt sie nicht, auch wenn sie rückdatiert ist, oder
+//   - sie schon in YNAB steht (InYNAB): Rückt ihr Datum später vor den Start,
+//     bleibt sie trotzdem; entfernt wird sie nur bei Löschung oder Anteil 0.
+//
+// Ohne Start (YNAB nicht eingerichtet) zählen alle vergangenen Ausgaben.
+type Selection struct {
+	Start       time.Time
+	ConnectedAt time.Time
+	Today       time.Time
+	InYNAB      map[int64]bool // Ausgaben-ID → Buchung in YNAB vorhanden (oder Anlage unklar)
+}
+
+// NewSelection liest die Regel für die Verbindung cfg. Fehlt ConnectedAt
+// (Verbindungen von vor seiner Einführung), gilt ab jetzt.
+func NewSelection(ctx context.Context, st *store.Store, cfg store.YNABConfig, today time.Time) (Selection, error) {
+	sel := Selection{Today: today}
+	if cfg.StartDate.IsZero() || cfg.AccountID == "" {
+		return sel, nil
+	}
+	sel.Start, sel.ConnectedAt = cfg.StartDate, cfg.ConnectedAt
+	if sel.ConnectedAt.IsZero() {
+		at, err := st.EnsureYNABConnectedAt(ctx, cfg.ParticipantID)
+		if err != nil {
+			return sel, err
+		}
+		sel.ConnectedAt = at
+	}
+	rows, err := st.ListYNABSync(ctx, cfg.ParticipantID)
+	if err != nil {
+		return sel, err
+	}
+	sel.InYNAB = make(map[int64]bool, len(rows))
+	for _, r := range rows {
+		if r.TxnID != "" || r.Hash == pendingHash {
+			sel.InYNAB[r.ExpenseID] = true
+		}
+	}
+	return sel, nil
+}
+
+// SelectionFor ist NewSelection für participantID (ohne Verbindung: alle
+// vergangenen Ausgaben).
+func SelectionFor(ctx context.Context, st *store.Store, participantID int64, today time.Time) (Selection, error) {
+	cfg, err := st.GetYNABConfig(ctx, participantID)
+	if err != nil && !errors.Is(err, store.ErrNotFound) {
+		return Selection{}, err
+	}
+	cfg.ParticipantID = participantID
+	return NewSelection(ctx, st, cfg, today)
+}
+
+// Includes meldet, ob die Ausgabe e mit Buchung p dazugehört.
+func (sel Selection) Includes(e store.Expense, p Posting) bool {
+	if p.Date.After(sel.Today) {
+		return false
+	}
+	return sel.Start.IsZero() || !p.Date.Before(sel.Start) ||
+		(!sel.ConnectedAt.IsZero() && !e.CreatedAt.Before(sel.ConnectedAt)) || sel.InYNAB[e.ID]
+}
+
+// Postings liefert die ausgewählten Buchungen von participantID zu es, nach
+// Datum und ID aufsteigend sortiert.
+func (sel Selection) Postings(es []store.Expense, participantID int64) []Posting {
 	var out []Posting
 	for _, e := range es {
-		if p, ok := PostingFor(e, participantID); ok {
+		if p, ok := PostingFor(e, participantID); ok && sel.Includes(e, p) {
 			out = append(out, p)
 		}
 	}
-	slices.SortFunc(out, func(a, b Posting) int {
-		return cmp.Or(a.Date.Compare(b.Date), cmp.Compare(a.ExpenseID, b.ExpenseID))
-	})
+	sortPostings(out)
 	return out
 }
 

@@ -312,7 +312,7 @@ func writeYNABCSV(w io.Writer, ps []ynab.Posting) error {
 		return err
 	}
 	for _, p := range ps {
-		if err := cw.Write([]string{p.Date.Format(domain.DateLayout), p.Payee, p.Memo, decimal(p.AmountCents, 2, '.'), ""}); err != nil {
+		if err := cw.Write([]string{p.Date.Format(domain.DateLayout), cell(p.Payee), cell(p.Memo), decimal(p.AmountCents, 2, '.'), ""}); err != nil {
 			return err
 		}
 	}

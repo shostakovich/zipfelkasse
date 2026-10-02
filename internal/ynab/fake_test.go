@@ -28,7 +28,9 @@ type fakeYNAB struct {
 	failNext []int
 	// lostPost: der nächste POST wird ausgeführt, die Antwort geht aber verloren (500).
 	lostPost bool
-	mux      *http.ServeMux
+	// hold: ist er gesetzt, wartet jede Anfrage, bis der Kanal geschlossen ist.
+	hold chan struct{}
+	mux  *http.ServeMux
 }
 
 func newFake() *fakeYNAB {
@@ -51,7 +53,11 @@ func (f *fakeYNAB) RoundTrip(req *http.Request) (*http.Response, error) {
 	if len(f.failNext) > 0 {
 		fail, f.failNext = f.failNext[0], f.failNext[1:]
 	}
+	hold := f.hold
 	f.mu.Unlock()
+	if hold != nil {
+		<-hold
+	}
 	rec := httptest.NewRecorder()
 	switch {
 	case req.Header.Get("Authorization") != "Bearer "+testToken:

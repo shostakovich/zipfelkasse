@@ -2,7 +2,7 @@
 // OFX/CSV für YNAB zum Herunterladen an.
 //
 // Die YNAB-Dateien enthalten genau die Buchungen, die auch der YNAB-Sync
-// schreibt (ynab.Postings) – als Fallback für den Dateiimport ins Konto „Geteilt“.
+// schreibt (ynab.Selection) – als Fallback für den Dateiimport ins Konto „Geteilt“.
 package export
 
 import (
@@ -183,14 +183,21 @@ func (h handlers) expensesJSON(w http.ResponseWriter, r *http.Request) {
 	send(w, "application/json; charset=utf-8", "teilen-ausgaben-"+p.suffix(h.d.Today())+".json", buf.Bytes())
 }
 
-// postings liefert meine Buchungen (aktuelle Person) im Zeitraum.
+// postings liefert meine Buchungen (aktuelle Person) im Zeitraum – mit
+// derselben Auswahl wie der YNAB-Sync (ynab.Selection: Startdatum,
+// nachträglich erfasste, schon übertragene, keine künftigen).
 func (h handlers) postings(w http.ResponseWriter, r *http.Request) (store.Participant, period, []ynab.Posting, bool) {
 	me, _ := web.Me(r.Context())
 	p, es, ok := h.load(w, r, me.ID)
 	if !ok {
 		return me, p, nil, false
 	}
-	return me, p, ynab.Postings(es, me.ID), true
+	sel, err := ynab.SelectionFor(r.Context(), h.d.Store, me.ID, ynab.Today(h.now(), h.d.Config.Location))
+	if err != nil {
+		h.serverError(w, r, err)
+		return me, p, nil, false
+	}
+	return me, p, sel.Postings(es, me.ID), true
 }
 
 func (h handlers) ynabOFX(w http.ResponseWriter, r *http.Request) {

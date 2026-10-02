@@ -80,7 +80,7 @@
         <div class="field">
           <label for="start">Startdatum</label>
           <input id="start" name="start" type="date" value="{{isoDate $d.StartDate}}" required>
-          <p class="help">Übertragen werden Ausgaben ab diesem Datum (bis heute).</p>
+          <p class="help">Übertragen werden Ausgaben ab diesem Datum (bis heute). Ältere Ausgaben, die du erst nach dem Einrichten nachträglich erfasst, werden auch übertragen – der Startsaldo kennt sie ja nicht. Schon übertragene Ausgaben bleiben in YNAB, auch wenn ihr Datum oder das Startdatum später verschoben wird.</p>
         </div>
         <div class="row">
           <button class="btn btn-primary" type="submit">Speichern</button>

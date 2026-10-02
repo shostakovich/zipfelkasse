@@ -383,17 +383,19 @@ func (s *Service) saveCategories(w http.ResponseWriter, r *http.Request) {
 	s.done(w, r, "Kategorie-Zuordnung gespeichert.")
 }
 
+// syncNow stößt einen vollständigen Abgleich im Hintergrund an und leitet
+// sofort zurück; das Ergebnis zeigt der Status nach dem Neuladen.
 func (s *Service) syncNow(w http.ResponseWriter, r *http.Request) {
 	me, _ := web.Me(r.Context())
-	res, err := s.SyncNow(r.Context(), me.ID)
-	if err != nil {
-		cfg, _ := s.d.Store.GetYNABConfig(r.Context(), me.ID)
-		msg := redact(err.Error(), cfg.Token)
-		if st := s.loadStatus(r.Context(), me.ID); st.Error != "" && !errors.Is(err, errNotReady) {
-			msg = st.Error
-		}
-		s.render(w, r, http.StatusBadGateway, "Synchronisieren fehlgeschlagen: "+msg, false)
+	cfg, err := s.d.Store.GetYNABConfig(r.Context(), me.ID)
+	if err != nil && !errors.Is(err, store.ErrNotFound) {
+		s.serverError(w, r, err)
 		return
 	}
-	s.done(w, r, "Synchronisiert: "+res.String()+".")
+	if !cfg.Ready() {
+		s.render(w, r, http.StatusUnprocessableEntity, errNotReady.Error(), false)
+		return
+	}
+	s.syncInBackground(me.ID)
+	s.done(w, r, "Synchronisierung gestartet – Status unten aktualisiert sich nach dem Neuladen.")
 }

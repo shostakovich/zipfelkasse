@@ -46,6 +46,14 @@ type Service struct {
 
 	syncMu sync.Mutex // höchstens ein Abgleich gleichzeitig (Worker oder Knopf)
 
+	// Hintergrund-Abgleiche über „Jetzt synchronisieren“ (siehe
+	// syncInBackground). Run bricht sie beim Beenden ab und wartet auf sie.
+	bgMu     sync.Mutex
+	bgCtx    context.Context
+	bgCancel context.CancelFunc
+	bgBusy   map[int64]bool // Person → Abgleich läuft schon
+	bgWG     sync.WaitGroup
+
 	cacheMu sync.Mutex
 	cache   map[string]cacheEntry
 }
@@ -68,8 +76,10 @@ func New(d web.Deps) (*Service, error) {
 		now:      time.Now,
 		wake:     make(chan struct{}, 1),
 		debounce: defaultDebounce, startDelay: defaultStartDelay,
-		cache: map[string]cacheEntry{},
+		cache:  map[string]cacheEntry{},
+		bgBusy: map[int64]bool{},
 	}
+	s.bgCtx, s.bgCancel = context.WithCancel(context.Background())
 	d.Store.OnExpenseChange(func(c store.ExpenseChange) { s.Trigger(c.ExpenseID) })
 	return s, nil
 }
@@ -103,6 +113,7 @@ func (s *Service) Run(ctx context.Context) {
 	defer timer.Stop()
 	deadline := time.Now().Add(s.startDelay)
 	var lastFull time.Time
+	defer s.stopBackground()
 	for {
 		select {
 		case <-ctx.Done():
@@ -178,6 +189,43 @@ func (s *Service) SyncNow(ctx context.Context, participantID int64) (syncResult,
 	res, _, err := s.syncOne(ctx, cfg, true)
 	return res, err
 }
+
+// syncInBackground startet SyncNow für participantID in einer eigenen
+// Goroutine, damit der Request nicht auf YNAB wartet. Läuft für die Person
+// schon einer oder ist Run beendet, passiert nichts. Das Ergebnis steht
+// danach im Status der Person.
+func (s *Service) syncInBackground(participantID int64) {
+	s.bgMu.Lock()
+	defer s.bgMu.Unlock()
+	if s.bgCtx.Err() != nil || s.bgBusy[participantID] {
+		return
+	}
+	s.bgBusy[participantID] = true
+	s.bgWG.Go(func() {
+		defer func() {
+			s.bgMu.Lock()
+			delete(s.bgBusy, participantID)
+			s.bgMu.Unlock()
+		}()
+		if res, err := s.SyncNow(s.bgCtx, participantID); err != nil {
+			s.d.Log.Warn("ynab: abgleich (jetzt) fehlgeschlagen", "person", participantID, "err", err.Error())
+		} else {
+			s.d.Log.Info("ynab: abgeglichen (jetzt)", "person", participantID, "ergebnis", res.String())
+		}
+	})
+}
+
+// stopBackground bricht laufende Hintergrund-Abgleiche ab und wartet auf sie
+// (damit main den Store erst danach schließt).
+func (s *Service) stopBackground() {
+	s.bgMu.Lock()
+	s.bgCancel()
+	s.bgMu.Unlock()
+	s.bgWG.Wait()
+}
+
+// waitBackground wartet auf laufende Hintergrund-Abgleiche (Tests).
+func (s *Service) waitBackground() { s.bgWG.Wait() }
 
 // --- Cache für die Einstellungsseite ----------------------------------------
 

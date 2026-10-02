@@ -2,6 +2,7 @@ package ynab
 
 import (
 	"context"
+	"encoding/base64"
 	"errors"
 	"io"
 	"log/slog"
@@ -287,7 +288,11 @@ func TestSyncUncategorizedKeepsManualCategory(t *testing.T) {
 
 func TestSyncFilters(t *testing.T) {
 	e := newEnv(t)
+	clock := time.Date(2026, 9, 20, 10, 0, 0, 0, time.UTC)
+	e.st.SetClock(func() time.Time { return clock })
 	e.connect("2026-09-10")
+	// Alle Ausgaben gab es schon vor dem Einrichten (sonst zählte created_at).
+	e.st.SetSetting(e.ctx, "ynab.connected."+strconv.FormatInt(e.anna, 10), "2026-09-21T10:00:00Z")
 	early := e.create(e.input("Vor dem Start", 1000, "2026-09-01", e.anna, e.anna, e.ben))
 	ok := e.create(e.input("Passt", 2000, "2026-09-15", e.ben, e.anna, e.ben))
 	e.create(e.input("Ohne Anna", 3000, "2026-09-15", e.anna, e.ben, e.cleo)) // Anna zahlt, ist aber nicht beteiligt
@@ -315,29 +320,30 @@ func TestSyncFilters(t *testing.T) {
 	if res := e.mustSync(false); res.Created != 1 || len(e.fake.live()) != 2 {
 		t.Errorf("vorgezogen: %+v, live %d", res, len(e.fake.live()))
 	}
-	// Startdatum nach hinten → beide fallen wieder raus.
+	// Startdatum nach hinten → schon übertragene Buchungen bleiben (gelöscht
+	// wird nur bei Löschung der Ausgabe oder Anteil 0).
 	if err := e.st.SetYNABTarget(e.ctx, e.anna, testPlan, testAccount, day("2026-09-16")); err != nil {
 		t.Fatal(err)
 	}
-	if res := e.mustSync(false); res.Deleted != 2 || len(e.fake.live()) != 0 {
+	if res := e.mustSync(false); res.Deleted != 0 || len(e.fake.live()) != 2 {
 		t.Errorf("später: %+v, live %d", res, len(e.fake.live()))
 	}
-	if _, has := e.syncRows()[early]; has {
-		t.Error("Zeile für frühe Ausgabe nicht entfernt")
+	if _, has := e.syncRows()[early]; !has {
+		t.Error("Zeile für frühe Ausgabe entfernt")
 	}
 	// Zukünftige Ausgabe kommt, sobald sie fällig ist.
 	e.now = time.Date(2026, 10, 5, 8, 0, 0, 0, time.UTC)
 	if res := e.mustSync(true); res.Created != 1 {
 		t.Errorf("fällig: %+v", res)
 	}
-	if live := e.fake.live(); len(live) != 1 || live[0].Date != "2026-10-05" {
+	if live := e.fake.live(); len(live) != 3 || live[2].Date != "2026-10-05" {
 		t.Errorf("live = %+v (future %d)", live, future)
 	}
 	// Anteil auf 0: Anna nicht mehr beteiligt → DELETE.
 	if err := e.st.UpdateExpense(e.ctx, e.anna, future, e.input("Zukunft", 4000, "2026-10-05", e.anna, e.ben)); err != nil {
 		t.Fatal(err)
 	}
-	if res := e.mustSync(false); res.Deleted != 1 || len(e.fake.live()) != 0 {
+	if res := e.mustSync(false); res.Deleted != 1 || len(e.fake.live()) != 2 {
 		t.Errorf("Anteil 0: %+v", res)
 	}
 }
@@ -688,6 +694,7 @@ func TestSettingsPageFlow(t *testing.T) {
 
 	e.create(e.input("Kino", 2400, "2026-09-20", e.anna, e.anna, e.ben))
 	rec = e.post("/einstellungen/ynab/sync", nil)
+	e.svc.waitBackground()
 	if rec.Code != http.StatusSeeOther || len(e.fake.live()) != 1 {
 		t.Fatalf("sync: %d, live %d", rec.Code, len(e.fake.live()))
 	}
@@ -703,8 +710,12 @@ func TestSettingsPageFlow(t *testing.T) {
 	e.fake.fail(503)
 	e.st.CreateExpense(e.ctx, e.anna, e.input("Bar", 1000, "2026-09-21", e.anna, e.anna, e.ben))
 	rec = e.post("/einstellungen/ynab/sync", nil)
-	if rec.Code != http.StatusBadGateway || strings.Contains(rec.Body.String(), testToken) {
+	e.svc.waitBackground()
+	if rec.Code != http.StatusSeeOther {
 		t.Errorf("sync-Fehler: %d", rec.Code)
+	}
+	if _, body := e.get("/einstellungen/ynab"); !strings.Contains(body, "Fehler 503") || strings.Contains(body, testToken) {
+		t.Errorf("Status zeigt den Fehler nicht (oder den Token)")
 	}
 
 	rec = e.post("/einstellungen/ynab/trennen", nil)
@@ -736,4 +747,123 @@ func TestSettingsChangeAccountResetsSync(t *testing.T) {
 	if res := e.mustSync(false); res.Created != 1 {
 		t.Errorf("res = %+v", res)
 	}
+}
+
+// Rückdatiert erfasst: Eine nach dem Einrichten erfasste Ausgabe mit Datum vor
+// dem Startdatum kennt der Startsaldo von „Geteilt“ nicht – sie muss nach YNAB.
+func TestSyncBackdatedExpenseAfterConnect(t *testing.T) {
+	e := newEnv(t)
+	clock := time.Date(2026, 9, 20, 10, 0, 0, 0, time.UTC)
+	e.st.SetClock(func() time.Time { return clock })
+	e.create(e.input("Vor dem Verbinden", 1000, "2026-09-01", e.anna, e.anna, e.ben))
+	clock = clock.Add(time.Hour)
+	e.connect("2026-09-10")
+	clock = clock.Add(time.Hour)
+	late := e.create(e.input("Nachgetragen", 2000, "2026-09-05", e.ben, e.anna, e.ben))
+
+	if res := e.mustSync(false); res.Created != 1 {
+		t.Errorf("res = %+v", res)
+	}
+	live := e.fake.live()
+	if len(live) != 1 || live[0].Date != "2026-09-05" || !strings.HasSuffix(str(live[0].Memo), "#"+strconv.FormatInt(late, 10)) {
+		t.Errorf("live = %+v", live)
+	}
+	// Kontowechsel = neu eingerichtet: Jetzt zählt wieder nur das Startdatum.
+	clock = clock.Add(time.Hour)
+	if err := e.st.SetYNABTarget(e.ctx, e.anna, testPlan, "acc-giro", day("2026-09-10")); err != nil {
+		t.Fatal(err)
+	}
+	if res := e.mustSync(false); res.Created != 0 {
+		t.Errorf("nach Kontowechsel: %+v", res)
+	}
+}
+
+// Datum vor den Start verschoben: Eine schon übertragene Ausgabe bleibt in
+// YNAB (der Startsaldo enthält sie nicht) und wird nur geändert.
+func TestSyncKeepsExpenseMovedBeforeStart(t *testing.T) {
+	e := newEnv(t)
+	clock := time.Date(2026, 9, 20, 10, 0, 0, 0, time.UTC)
+	e.st.SetClock(func() time.Time { return clock })
+	id := e.create(e.input("Kino", 2400, "2026-09-15", e.anna, e.anna, e.ben))
+	clock = clock.Add(time.Hour)
+	e.connect("2026-09-10")
+	if res := e.mustSync(false); res.Created != 1 {
+		t.Fatalf("res = %+v", res)
+	}
+	e.fake.takeRequests()
+	if err := e.st.UpdateExpense(e.ctx, e.anna, id, e.input("Kino", 2400, "2026-09-01", e.anna, e.anna, e.ben)); err != nil {
+		t.Fatal(err)
+	}
+	if res := e.mustSync(true); res.Updated != 1 || res.Deleted != 0 {
+		t.Errorf("res = %+v", res)
+	}
+	e.expectRequests(patch)
+	if live := e.fake.live(); len(live) != 1 || live[0].Date != "2026-09-01" {
+		t.Errorf("live = %+v", live)
+	}
+	// Gelöscht wird erst bei Löschung der Ausgabe.
+	e.st.DeleteExpense(e.ctx, e.anna, id)
+	if res := e.mustSync(false); res.Deleted != 1 || len(e.fake.live()) != 0 {
+		t.Errorf("Löschen: %+v", res)
+	}
+}
+
+// Eine Ausgabe, deren PATCH fehlschlug, wird nach dem Löschen sofort aus
+// YNAB entfernt – nicht erst beim stündlichen Vollabgleich.
+func TestSyncDeletesAfterFailedPatch(t *testing.T) {
+	e := newEnv(t)
+	e.connect("2026-09-01")
+	id := e.create(e.input("Kino", 2400, "2026-09-20", e.anna, e.anna, e.ben))
+	e.mustSync(false)
+	e.st.UpdateExpense(e.ctx, e.anna, id, e.input("Kino 2", 2400, "2026-09-20", e.anna, e.anna, e.ben))
+	e.fake.fail(400, 400) // Sammel-PATCH und Einzelversuch abgelehnt
+	if res := e.mustSync(false); res.Failed != 1 {
+		t.Fatalf("res = %+v", res)
+	}
+	if r := e.syncRows()[id]; r.TxnID == "" || r.LastError == "" {
+		t.Fatalf("row = %+v", r)
+	}
+	e.fake.takeRequests()
+	e.st.DeleteExpense(e.ctx, e.anna, id)
+	if res := e.mustSync(false); res.Deleted != 1 || len(e.fake.live()) != 0 {
+		t.Errorf("Löschen nach Fehler: %+v, live %d", res, len(e.fake.live()))
+	}
+}
+
+// „Jetzt synchronisieren“ wartet nicht auf YNAB.
+func TestSyncNowDoesNotBlock(t *testing.T) {
+	e := newEnv(t)
+	e.connect("2026-09-01")
+	e.create(e.input("Kino", 2400, "2026-09-20", e.anna, e.anna, e.ben))
+	hold := make(chan struct{})
+	e.fake.hold = hold
+	done := make(chan *httptest.ResponseRecorder)
+	go func() { done <- e.post("/einstellungen/ynab/sync", nil) }()
+	select {
+	case rec := <-done:
+		if rec.Code != http.StatusSeeOther {
+			t.Errorf("sync: %d", rec.Code)
+		}
+		if msg := flashOf(rec); !strings.Contains(msg, "Synchronisierung gestartet") {
+			t.Errorf("Flash = %q", msg)
+		}
+	case <-time.After(2 * time.Second):
+		close(hold)
+		t.Fatal("POST /einstellungen/ynab/sync blockiert")
+	}
+	close(hold)
+	e.svc.waitBackground()
+	if len(e.fake.live()) != 1 {
+		t.Errorf("live = %+v", e.fake.live())
+	}
+}
+
+func flashOf(rec *httptest.ResponseRecorder) string {
+	for _, c := range rec.Result().Cookies() {
+		if c.Name == "flash" {
+			b, _ := base64.RawURLEncoding.DecodeString(c.Value)
+			return string(b)
+		}
+	}
+	return ""
 }

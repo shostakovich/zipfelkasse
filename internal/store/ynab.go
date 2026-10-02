@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"strconv"
 	"time"
 )
 
@@ -21,6 +22,17 @@ type YNABConfig struct {
 	StartDate     time.Time // Ausgaben ab diesem Datum; Nullwert = nicht gesetzt
 	Enabled       bool
 	UpdatedAt     time.Time
+	// ConnectedAt: seit wann Plan und Konto gewählt sind (settings-Schlüssel
+	// "ynab.connected.<id>"). Danach erfasste Ausgaben gehen auch dann nach
+	// YNAB, wenn ihr Datum vor dem Startdatum liegt. Nullwert = unbekannt
+	// (Altbestand, siehe EnsureYNABConnectedAt).
+	ConnectedAt time.Time
+}
+
+// ynabConnectedKey ist der settings-Schlüssel für YNABConfig.ConnectedAt
+// (wie alle ynab.…-Schlüssel für MCP unsichtbar).
+func ynabConnectedKey(participantID int64) string {
+	return "ynab.connected." + strconv.FormatInt(participantID, 10)
 }
 
 // Ready meldet, ob alles für einen Sync gesetzt ist.
@@ -28,12 +40,13 @@ func (c YNABConfig) Ready() bool {
 	return c.Enabled && c.Token != "" && c.PlanID != "" && c.AccountID != "" && !c.StartDate.IsZero()
 }
 
-const ynabConfigCols = "participant_id, token, budget_id, account_id, start_date, enabled, updated_at"
+const ynabConfigCols = "participant_id, token, budget_id, account_id, start_date, enabled, updated_at, " +
+	"(SELECT value FROM settings WHERE key = 'ynab.connected.' || participant_id)"
 
 func scanYNABConfig(row interface{ Scan(...any) error }) (YNABConfig, error) {
 	var c YNABConfig
-	var start, updated sql.NullString
-	if err := row.Scan(&c.ParticipantID, &c.Token, &c.PlanID, &c.AccountID, &start, &c.Enabled, &updated); err != nil {
+	var start, updated, connected sql.NullString
+	if err := row.Scan(&c.ParticipantID, &c.Token, &c.PlanID, &c.AccountID, &start, &c.Enabled, &updated, &connected); err != nil {
 		return c, err
 	}
 	if start.Valid && start.String != "" {
@@ -44,6 +57,7 @@ func scanYNABConfig(row interface{ Scan(...any) error }) (YNABConfig, error) {
 		c.StartDate = t
 	}
 	c.UpdatedAt = parseTime(updated)
+	c.ConnectedAt = parseTime(connected)
 	return c, nil
 }
 
@@ -94,8 +108,8 @@ func (s *Store) SetYNABToken(ctx context.Context, participantID int64, token str
 
 // SetYNABTarget setzt Plan, Konto und Startdatum. Die Verbindung muss
 // existieren (sonst ErrNotFound). Wechseln Plan oder Konto, wird der
-// Abgleichsstand der Person verworfen: Die Buchungen im alten Konto bleiben
-// dort, im neuen Konto wird alles neu angelegt.
+// Abgleichsstand der Person verworfen (die Buchungen im alten Konto bleiben
+// dort, im neuen Konto wird alles neu angelegt) und ConnectedAt neu gesetzt.
 func (s *Store) SetYNABTarget(ctx context.Context, participantID int64, planID, accountID string, start time.Time) error {
 	var startVal any
 	if !start.IsZero() {
@@ -115,11 +129,30 @@ func (s *Store) SetYNABTarget(ctx context.Context, participantID int64, planID, 
 			if _, err := tx.ExecContext(ctx, "DELETE FROM ynab_sync WHERE participant_id = ?", participantID); err != nil {
 				return err
 			}
+			if _, err := tx.ExecContext(ctx, `INSERT INTO settings (key, value) VALUES (?, ?)
+				ON CONFLICT (key) DO UPDATE SET value = excluded.value`, ynabConnectedKey(participantID), s.nowString()); err != nil {
+				return err
+			}
 		}
 		_, err = tx.ExecContext(ctx, `UPDATE ynab_config SET budget_id = ?, account_id = ?, start_date = ?, updated_at = ?
 			WHERE participant_id = ?`, planID, accountID, startVal, s.nowString(), participantID)
 		return err
 	})
+}
+
+// EnsureYNABConnectedAt liefert ConnectedAt der Person und setzt es auf
+// jetzt, falls es noch fehlt (Verbindungen von vor Einführung des Werts).
+func (s *Store) EnsureYNABConnectedAt(ctx context.Context, participantID int64) (time.Time, error) {
+	key := ynabConnectedKey(participantID)
+	if _, err := s.db.ExecContext(ctx, "INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT (key) DO NOTHING",
+		key, s.nowString()); err != nil {
+		return time.Time{}, err
+	}
+	v, err := s.GetSetting(ctx, key)
+	if err != nil {
+		return time.Time{}, err
+	}
+	return parseTime(sql.NullString{String: v, Valid: true}), nil
 }
 
 // YNABCategoryMap liefert die Zuordnung App-Kategorie → YNAB-Kategorie-ID.

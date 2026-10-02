@@ -148,11 +148,12 @@ func hashOf(w want) string {
 	return hex.EncodeToString(h.Sum(nil)[:16])
 }
 
-// today ist der letzte Tag, den YNAB sicher nicht als Zukunft ablehnt:
-// heute in der App-Zeitzone, höchstens aber heute in UTC.
-func (s *Service) today() time.Time {
-	now := s.now()
-	loc := s.d.Config.Location
+// today ist der letzte Tag, den YNAB sicher nicht als Zukunft ablehnt.
+func (s *Service) today() time.Time { return Today(s.now(), s.d.Config.Location) }
+
+// Today ist der letzte Tag, den YNAB sicher nicht als Zukunft ablehnt:
+// heute in der App-Zeitzone loc, höchstens aber heute in UTC.
+func Today(now time.Time, loc *time.Location) time.Time {
 	if loc == nil {
 		loc = time.Local
 	}
@@ -163,9 +164,16 @@ func (s *Service) today() time.Time {
 	return local
 }
 
-// desired berechnet den Soll-Zustand einer Person, nach Ausgaben-ID.
+// desired berechnet den Soll-Zustand einer Person (siehe Selection), nach
+// Ausgaben-ID.
 func (s *Service) desired(ctx context.Context, cfg store.YNABConfig) (map[int64]want, error) {
-	es, err := s.d.Store.ListExpenses(ctx, store.ExpenseFilter{ParticipantID: cfg.ParticipantID, From: cfg.StartDate})
+	sel, err := NewSelection(ctx, s.d.Store, cfg, s.today())
+	if err != nil {
+		return nil, err
+	}
+	// Alle Ausgaben der Person, nicht erst ab Startdatum: auch frühere können
+	// dazugehören (nachträglich erfasst oder schon in YNAB).
+	es, err := s.d.Store.ListExpenses(ctx, store.ExpenseFilter{ParticipantID: cfg.ParticipantID})
 	if err != nil {
 		return nil, err
 	}
@@ -173,20 +181,14 @@ func (s *Service) desired(ctx context.Context, cfg store.YNABConfig) (map[int64]
 	if err != nil {
 		return nil, err
 	}
-	today := s.today()
 	out := map[int64]want{}
-	for _, e := range es {
-		p, ok := PostingFor(e, cfg.ParticipantID)
-		// Zukünftige Daten lehnt YNAB ab; sie kommen, sobald sie fällig sind.
-		if !ok || p.Date.Before(cfg.StartDate) || p.Date.After(today) {
-			continue
-		}
+	for _, p := range sel.Postings(es, cfg.ParticipantID) {
 		w := want{Posting: p}
 		if p.CategoryID != 0 {
 			w.category = cats[p.CategoryID]
 		}
 		w.hash = hashOf(w)
-		out[e.ID] = w
+		out[p.ExpenseID] = w
 	}
 	return out, nil
 }
@@ -292,10 +294,11 @@ func (s *Service) syncParticipant(ctx context.Context, cfg store.YNABConfig, ful
 		if _, ok := wants[id]; ok {
 			continue
 		}
-		switch {
-		case r.TxnID == "":
+		// Entfallen (gelöscht oder Anteil 0): immer löschen, auch wenn der
+		// letzte Versuch (z. B. ein PATCH) fehlschlug.
+		if r.TxnID == "" {
 			forget = append(forget, id)
-		case full || r.LastError == "":
+		} else {
 			deletes = append(deletes, r)
 		}
 	}

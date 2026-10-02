@@ -146,7 +146,7 @@ func TestExpensesJSONGolden(t *testing.T) {
 }
 
 func TestYNABPostingsMatchSync(t *testing.T) {
-	ps := ynab.Postings(sample(), anna.ID)
+	ps := ynab.Selection{Today: day("2026-10-02")}.Postings(sample(), anna.ID)
 	// Rückzahlung fehlt, Ausgabe 4 hat keinen Anteil von Anna.
 	if len(ps) != 2 || ps[0].ExpenseID != 1 || ps[1].ExpenseID != 2 {
 		t.Fatalf("postings = %+v", ps)
@@ -154,7 +154,7 @@ func TestYNABPostingsMatchSync(t *testing.T) {
 }
 
 func TestOFXGolden(t *testing.T) {
-	ps := ynab.Postings(sample(), anna.ID)
+	ps := ynab.Selection{Today: day("2026-10-02")}.Postings(sample(), anna.ID)
 	var buf bytes.Buffer
 	now := time.Date(2026, 10, 2, 12, 30, 0, 0, time.UTC)
 	if err := writeOFX(&buf, ps, "TEILEN-1", time.Time{}, time.Time{}, now); err != nil {
@@ -247,7 +247,7 @@ func TestOFXLimitsAndPeriod(t *testing.T) {
 
 func TestYNABCSVGolden(t *testing.T) {
 	var buf bytes.Buffer
-	if err := writeYNABCSV(&buf, ynab.Postings(sample(), anna.ID)); err != nil {
+	if err := writeYNABCSV(&buf, ynab.Selection{Today: day("2026-10-02")}.Postings(sample(), anna.ID)); err != nil {
 		t.Fatal(err)
 	}
 	want := "Date,Payee,Memo,Outflow,Inflow\n" +
@@ -388,5 +388,59 @@ func TestYNABDownloads(t *testing.T) {
 		"2026-09-02,Käse,\"Gesamt 10,00 € · bezahlt von Jürgen · teilen #2\",5.00,\n"
 	if rec.Code != 200 || rec.Body.String() != want {
 		t.Errorf("YNAB-CSV: %d\n%s", rec.Code, rec.Body)
+	}
+}
+
+// Die YNAB-Dateien enthalten genau das, was auch der Sync überträgt.
+func TestYNABDownloadsFollowSync(t *testing.T) {
+	f := newFixture(t)
+	ctx := context.Background()
+	// ohne YNAB: alle vergangenen Ausgaben, keine künftigen
+	future := store.ExpenseInput{Title: "Zukunft", Date: time.Now().AddDate(0, 0, 3), PaidBy: f.juer, SplitMode: domain.SplitEqual,
+		AmountCents: 800, Parts: []domain.Part{{ParticipantID: f.anna}, {ParticipantID: f.juer}}}
+	if _, err := f.st.CreateExpense(ctx, f.juer, future); err != nil {
+		t.Fatal(err)
+	}
+	if body := f.get("/export/ynab.csv").Body.String(); strings.Contains(body, "Zukunft") || !strings.Contains(body, "Brötchen") {
+		t.Errorf("ohne YNAB:\n%s", body)
+	}
+
+	// mit YNAB ab 01.09.: Brötchen (30.08., vor dem Einrichten erfasst) fehlt,
+	// eine danach rückdatiert erfasste Ausgabe ist dabei.
+	clock := time.Now().Add(time.Hour)
+	f.st.SetClock(func() time.Time { return clock })
+	f.st.SetYNABToken(ctx, f.anna, "tok")
+	if err := f.st.SetYNABTarget(ctx, f.anna, "p", "a", day("2026-09-01")); err != nil {
+		t.Fatal(err)
+	}
+	clock = clock.Add(time.Minute)
+	late := store.ExpenseInput{Title: "Nachgetragen", Date: day("2026-08-15"), PaidBy: f.juer, SplitMode: domain.SplitEqual,
+		AmountCents: 600, Parts: []domain.Part{{ParticipantID: f.anna}, {ParticipantID: f.juer}}}
+	if _, err := f.st.CreateExpense(ctx, f.juer, late); err != nil {
+		t.Fatal(err)
+	}
+	rec := f.get("/export/ynab.csv")
+	body := rec.Body.String()
+	if !strings.Contains(body, "Nachgetragen") || !strings.Contains(body, "Käse") || strings.Contains(body, "Brötchen") || strings.Contains(body, "Zukunft") {
+		t.Errorf("mit YNAB:\n%s", body)
+	}
+	// Schon in YNAB vorhanden → bleibt dabei; der Zeitraum filtert zusätzlich.
+	f.st.PutYNABSync(ctx, store.YNABSync{ExpenseID: 1, ParticipantID: f.anna, TxnID: "t1", Hash: "h"})
+	if body := f.get("/export/ynab.csv").Body.String(); !strings.Contains(body, "Brötchen") {
+		t.Errorf("in YNAB vorhanden:\n%s", body)
+	}
+	if body := f.get("/export/ynab.ofx?von=2026-09-01").Body.String(); strings.Count(body, "<STMTTRN>") != 1 || !strings.Contains(body, "<NAME>Käse") {
+		t.Errorf("OFX mit Zeitraum:\n%s", body)
+	}
+}
+
+func TestYNABCSVInjection(t *testing.T) {
+	var buf bytes.Buffer
+	ps := []ynab.Posting{{ExpenseID: 1, Date: day("2026-09-01"), AmountCents: 100, Payee: "=HYPERLINK(\"x\")", Memo: "+1 · teilen #1"}}
+	if err := writeYNABCSV(&buf, ps); err != nil {
+		t.Fatal(err)
+	}
+	if got := buf.String(); !strings.Contains(got, `"'=HYPERLINK(""x"")"`) || !strings.Contains(got, "'+1 · teilen #1") {
+		t.Errorf("YNAB-CSV:\n%s", got)
 	}
 }
