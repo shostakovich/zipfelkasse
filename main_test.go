@@ -53,7 +53,8 @@ func TestAppWiring(t *testing.T) {
 		{"GET", "/einstellungen/ynab", true, 200},
 		{"GET", "/export", true, 200},
 		{"GET", "/api/kurs?waehrung=EUR", true, 200},
-		{"GET", "/api/kurs?waehrung=USD", true, http.StatusNotImplemented},
+		{"GET", "/api/kurs?waehrung=", true, http.StatusBadRequest}, // ohne Netz; USD würde die EZB abfragen
+		{"GET", "/einstellungen/wiederkehrend/neu", true, 200},
 		{"POST", "/mcp/falsch", false, http.StatusForbidden},
 		{"POST", "/mcp/geheim", false, http.StatusNotImplemented},
 		{"GET", "/gibtsnicht", true, 404},
