@@ -204,11 +204,19 @@ func (s *Store) ExpenseDatesLike(ctx context.Context, in ExpenseInput, from, to 
 	return out, rows.Err()
 }
 
-// SetRecurringNextDate advances the next due occurrence.
-func (s *Store) SetRecurringNextDate(ctx context.Context, id int64, next time.Time) error {
-	res, err := s.db.ExecContext(ctx, "UPDATE recurring SET next_date = ?, updated_at = ? WHERE id = ?",
-		formatDate(next), s.nowString(), id)
-	return checkAffected(res, err)
+// SetRecurringNextDate advances the next due occurrence from `from` to next,
+// but only if the rule is still active and its next_date is still from
+// (optimistic locking: a catch-up works on a snapshot of the rule). Otherwise
+// the rule was paused, resumed, deleted or advanced meanwhile:
+// ErrRecurringChanged.
+func (s *Store) SetRecurringNextDate(ctx context.Context, id int64, from, next time.Time) error {
+	res, err := s.db.ExecContext(ctx,
+		"UPDATE recurring SET next_date = ?, updated_at = ? WHERE id = ? AND active = 1 AND next_date = ?",
+		formatDate(next), s.nowString(), id, formatDate(from))
+	if err = checkAffected(res, err); errors.Is(err, ErrNotFound) {
+		return ErrRecurringChanged
+	}
+	return err
 }
 
 // SetRecurringActive pauses or resumes a recurrence. On resume, occurrences

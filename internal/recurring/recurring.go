@@ -103,17 +103,23 @@ func (s *Service) materializeRule(ctx context.Context, r store.Recurring, today 
 			break
 		}
 		created, err := s.createOccurrence(ctx, r, d, existing[d])
-		if err != nil {
-			return n, err // next_date stays: the next run retries this occurrence
-		}
 		if created {
 			n++
 		}
-		next := domain.NextDate(r.Frequency, r.StartDate, d)
-		if err := s.d.Store.SetRecurringNextDate(ctx, r.ID, next); err != nil {
-			return n, err
+		if err == nil {
+			next := domain.NextDate(r.Frequency, r.StartDate, d)
+			err = s.d.Store.SetRecurringNextDate(ctx, r.ID, d, next)
+			d = next
 		}
-		d = next
+		if errors.Is(err, store.ErrRecurringChanged) {
+			// Paused, deleted or resumed meanwhile (r is a snapshot): that
+			// change wins, nothing more to do for this rule.
+			s.d.Log.Info("recurring expenses: rule changed meanwhile, stopping its catch-up", "rule", r.ID)
+			return n, nil
+		}
+		if err != nil {
+			return n, err // next_date stays: the next run retries this occurrence
+		}
 	}
 	return n, nil
 }

@@ -30,13 +30,17 @@ func day(s string) time.Time {
 // fakeFX returns fixed rates; err if set (ECB not reachable), otherwise a
 // domain.ValidationError if there is no entry (no rate exists).
 type fakeFX struct {
-	rates map[string]float64 // currency → rate
-	err   error
-	calls []time.Time
+	rates  map[string]float64 // currency → rate
+	err    error
+	calls  []time.Time
+	onRate func() // called on every request, e.g. to change a rule meanwhile
 }
 
 func (f *fakeFX) Rate(_ context.Context, cur string, date time.Time) (domain.FXRate, error) {
 	f.calls = append(f.calls, date)
+	if f.onRate != nil {
+		f.onRate()
+	}
 	if f.err != nil {
 		return domain.FXRate{}, f.err
 	}
@@ -226,7 +230,7 @@ func TestMaterializeIdempotentAfterCrash(t *testing.T) {
 		t.Errorf("after restart = %d, %v", n, err)
 	}
 	// A reset next_date creates no duplicates.
-	if err := e.st.SetRecurringNextDate(e.ctx, rid, day("2026-01-15")); err != nil {
+	if err := e.st.SetRecurringNextDate(e.ctx, rid, day("2026-04-15"), day("2026-01-15")); err != nil {
 		t.Fatal(err)
 	}
 	e.materialize("2026-03-20", 0)
@@ -457,6 +461,65 @@ func TestMaterializeCapPerRun(t *testing.T) {
 	e.materialize("2026-10-02", 400)
 	if n := len(e.instances(rid)); n != 801 {
 		t.Errorf("%d instances", n)
+	}
+}
+
+// Pausing, deleting or resuming a rule while Materialize catches it up stops
+// the catch-up of that rule without an error; the run works on a snapshot of
+// the rule and must not override the change.
+func TestMaterializeRuleChangedMeanwhile(t *testing.T) {
+	for _, tt := range []struct {
+		name   string
+		change func(e *env, rid int64) error
+		dates  string // occurrences afterwards
+		next   string // next_date afterwards; "" = rule deleted
+	}{
+		{"paused", func(e *env, rid int64) error {
+			return e.st.SetRecurringActive(e.ctx, rid, false, day("2026-05-10"))
+		}, "2026-01-05 2026-02-05", "2026-03-05"},
+		{"deleted", func(e *env, rid int64) error {
+			return e.st.DeleteRecurring(e.ctx, e.anna.ID, rid)
+		}, "", ""},
+		{"paused and resumed", func(e *env, rid int64) error {
+			if err := e.st.SetRecurringActive(e.ctx, rid, false, day("2026-05-10")); err != nil {
+				return err
+			}
+			return e.st.SetRecurringActive(e.ctx, rid, true, day("2026-05-10"))
+		}, "2026-01-05 2026-02-05 2026-03-05", "2026-06-05"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			e := newEnv(t)
+			e.fx.rates["USD"] = 1.25
+			in := e.expense("Cloud", "2026-01-05", 9091)
+			in.OriginalCurrency, in.OriginalAmountMinor, in.FXRate, in.FXSource = "USD", 10000, 1.1, domain.FXSourceECB
+			rid, _ := e.rule(in, domain.FreqMonthly)
+			e.fx.onRate = func() {
+				if len(e.fx.calls) == 2 { // while building the occurrence of 5 Mar
+					if err := tt.change(e, rid); err != nil {
+						t.Fatal(err)
+					}
+				}
+			}
+			n, err := e.svc.Materialize(e.ctx, day("2026-05-10"))
+			if err != nil {
+				t.Errorf("Materialize: %v", err)
+			}
+			if tt.next == "" {
+				if n != 1 {
+					t.Errorf("created %d", n)
+				}
+				if got := e.titled("Cloud"); got != "2026-01-05 2026-02-05" {
+					t.Errorf("expenses = %s", got)
+				}
+				return
+			}
+			if got := e.dates(rid); got != tt.dates {
+				t.Errorf("occurrences = %s, want %s", got, tt.dates)
+			}
+			if got := e.next(rid); got != tt.next {
+				t.Errorf("next_date = %s, want %s", got, tt.next)
+			}
+		})
 	}
 }
 
