@@ -14,60 +14,60 @@ import (
 	"github.com/shostakovich/zipfelkasse/internal/domain"
 )
 
-// ErrRecurringExists: Für diese Wiederholung gibt es an diesem Datum schon
-// eine Ausgabe (Unique-Index auf recurring_id, date). Nur CreateExpense
-// liefert ihn (recurring.Materialize überspringt den Termin dann);
-// UpdateExpense meldet denselben Fall als domain.ValidationError.
-var ErrRecurringExists = errors.New("ausgabe für diesen termin existiert bereits")
+// ErrRecurringExists: this recurrence already has an expense on this date
+// (unique index on recurring_id, date). Only CreateExpense returns it
+// (recurring.Materialize then skips the occurrence); UpdateExpense reports
+// the same case as a domain.ValidationError.
+var ErrRecurringExists = errors.New("expense for this occurrence already exists")
 
-// ExpenseInput sind die vom Nutzer (oder einer Wiederholung) gelieferten
-// Daten einer Ausgabe. Die Anteile in Cent berechnet der Store selbst per
-// domain.Split aus SplitMode, AmountCents und Parts.
+// ExpenseInput is the data of an expense as supplied by the user (or by a
+// recurrence). The store computes the shares in cents itself via
+// domain.Split from SplitMode, AmountCents and Parts.
 type ExpenseInput struct {
 	Title           string           `json:"title"`
-	Date            time.Time        `json:"date"`        // Kalenderdatum, siehe domain.DateOf
-	CategoryID      int64            `json:"category_id"` // 0 = keine Kategorie
+	Date            time.Time        `json:"date"`        // calendar date, see domain.DateOf
+	CategoryID      int64            `json:"category_id"` // 0 = no category
 	PaidBy          int64            `json:"paid_by"`
 	Notes           string           `json:"notes"`
-	IsReimbursement bool             `json:"is_reimbursement"` // Rückzahlung: PaidBy zahlt an Parts[0]
+	IsReimbursement bool             `json:"is_reimbursement"` // reimbursement: PaidBy pays Parts[0]
 	SplitMode       domain.SplitMode `json:"split_mode"`
-	AmountCents     int64            `json:"amount_cents"` // immer EUR, > 0
+	AmountCents     int64            `json:"amount_cents"` // always EUR, > 0
 	Parts           []domain.Part    `json:"parts"`
 
-	// Fremdwährung. OriginalCurrency "" oder "EUR" = keine Fremdwährung; dann
-	// setzt der Store OriginalAmountMinor = AmountCents, FXRate = 1, FXSource = "".
-	// Sonst müssen OriginalAmountMinor > 0 und FXRate > 0 sein; AmountCents
-	// rechnet der Aufrufer per domain.ToEURCents aus.
+	// Foreign currency. OriginalCurrency "" or "EUR" = no foreign currency; the
+	// store then sets OriginalAmountMinor = AmountCents, FXRate = 1, FXSource = "".
+	// Otherwise OriginalAmountMinor > 0 and FXRate > 0 are required; the caller
+	// computes AmountCents via domain.ToEURCents.
 	OriginalAmountMinor int64   `json:"original_amount_minor"`
 	OriginalCurrency    string  `json:"original_currency"`
 	FXRate              float64 `json:"fx_rate"`
 	FXSource            string  `json:"fx_source"`
 
-	// RecurringID verknüpft eine automatisch erzeugte Instanz mit ihrer Regel.
-	// Wird nur beim Anlegen gesetzt; UpdateExpense behält den alten Wert.
+	// RecurringID links an automatically created instance to its rule.
+	// Only set on creation; UpdateExpense keeps the old value.
 	RecurringID int64 `json:"recurring_id"`
 }
 
-// Expense ist eine gespeicherte Ausgabe. Das eingebettete ExpenseInput ist so
-// befüllt (inkl. Parts aus den gespeicherten Gewichten), dass es direkt an
-// UpdateExpense zurückgegeben werden kann.
+// Expense is a stored expense. The embedded ExpenseInput is filled in
+// (including Parts from the stored weights) so that it can be passed straight
+// back to UpdateExpense.
 type Expense struct {
 	ID int64
 	ExpenseInput
-	Shares       []domain.Share // nach ParticipantID sortiert
-	CategoryName string         // "" ohne Kategorie
+	Shares       []domain.Share // sorted by ParticipantID
+	CategoryName string         // "" without category
 	PaidByName   string
 	CreatedAt    time.Time
 	UpdatedAt    time.Time
-	DeletedAt    time.Time // Nullwert = nicht gelöscht
+	DeletedAt    time.Time // zero value = not deleted
 }
 
 func (e Expense) Deleted() bool { return !e.DeletedAt.IsZero() }
 
-// IsForeign meldet, ob die Ausgabe in Fremdwährung erfasst wurde.
+// IsForeign reports whether the expense was entered in a foreign currency.
 func (e Expense) IsForeign() bool { return e.OriginalCurrency != "EUR" }
 
-// ShareOf liefert den Anteil (Cent) von participantID, 0 wenn nicht beteiligt.
+// ShareOf returns participantID's share (cents), 0 if not involved.
 func (e Expense) ShareOf(participantID int64) int64 {
 	for _, s := range e.Shares {
 		if s.ParticipantID == participantID {
@@ -77,19 +77,19 @@ func (e Expense) ShareOf(participantID int64) int64 {
 	return 0
 }
 
-// ExpenseFilter schränkt ListExpenses ein. Nullwerte bedeuten „kein Filter“.
+// ExpenseFilter narrows ListExpenses. Zero values mean "no filter".
 type ExpenseFilter struct {
-	Text       string // Teilstring in Titel oder Notiz, Groß-/Kleinschreibung egal (auch Umlaute, ß = ss)
+	Text       string // substring of title or notes, case-insensitive (including umlauts, ß = ss)
 	CategoryID int64  //
 	// WithoutCategory: only expenses without a category (CategoryID is ignored).
 	WithoutCategory bool
-	ParticipantID   int64     // hat bezahlt oder ist beteiligt
-	From, To        time.Time // Datum, jeweils inklusive
-	Limit, Offset   int       // Limit 0 = alle
+	ParticipantID   int64     // paid or is involved
+	From, To        time.Time // date, both inclusive
+	Limit, Offset   int       // Limit 0 = all
 }
 
-// normalize prüft die Eingabe (auch die Aufteilung). Die Cent-Anteile
-// berechnet danach splitShares, wenn die Ausgaben-ID feststeht.
+// normalize validates the input (including the split). The cent shares are
+// computed afterwards by splitShares, once the expense ID is known.
 func normalize(in ExpenseInput) (ExpenseInput, error) {
 	in.Title = strings.Join(strings.Fields(in.Title), " ")
 	in.Notes = strings.TrimSpace(in.Notes)
@@ -138,13 +138,13 @@ func normalize(in ExpenseInput) (ExpenseInput, error) {
 	return in, nil
 }
 
-// splitShares berechnet die Cent-Anteile einer geprüften Eingabe (normalize).
-// Die Ausgaben-ID bestimmt, wer bei Gleichstand den Extra-Cent bekommt.
+// splitShares computes the cent shares of a validated input (normalize).
+// The expense ID determines who gets the extra cent on ties.
 func splitShares(in ExpenseInput, expenseID int64) ([]domain.Share, error) {
 	return domain.Split(in.SplitMode, in.AmountCents, in.Parts, expenseID)
 }
 
-// checkRefs prüft, ob Zahler, Beteiligte und Kategorie existieren.
+// checkRefs checks that payer, participants and category exist.
 func checkRefs(ctx context.Context, tx *sql.Tx, in ExpenseInput) error {
 	ids := []int64{in.PaidBy}
 	for _, p := range in.Parts {
@@ -182,8 +182,8 @@ func insertShares(ctx context.Context, tx *sql.Tx, expenseID int64, shares []dom
 	return nil
 }
 
-// CreateExpense legt eine Ausgabe an, schreibt den Activity-Eintrag (actorID 0 =
-// System) und ruft danach die Change-Hooks auf. Eingabefehler sind
+// CreateExpense creates an expense, writes the activity entry (actorID 0 =
+// system) and then calls the change hooks. Input errors are
 // domain.ValidationError.
 func (s *Store) CreateExpense(ctx context.Context, actorID int64, in ExpenseInput) (int64, error) {
 	in, err := normalize(in)
@@ -229,8 +229,8 @@ func (s *Store) CreateExpense(ctx context.Context, actorID int64, in ExpenseInpu
 	return id, nil
 }
 
-// UpdateExpense ändert eine (nicht gelöschte) Ausgabe. Der Activity-Eintrag
-// enthält die geänderten Felder; ohne Änderung wird nichts protokolliert.
+// UpdateExpense updates a (non-deleted) expense. The activity entry contains
+// the changed fields; if nothing changed, nothing is logged.
 func (s *Store) UpdateExpense(ctx context.Context, actorID, id int64, in ExpenseInput) error {
 	in, err := normalize(in)
 	if err != nil {
@@ -270,7 +270,7 @@ func (s *Store) UpdateExpense(ctx context.Context, actorID, id int64, in Expense
 			string(in.SplitMode), in.AmountCents, in.OriginalAmountMinor, in.OriginalCurrency, in.FXRate,
 			in.FXSource, s.nowString(), id)
 		if isUniqueViolation(err) {
-			// Unique-Index (recurring_id, date): Hier ist das ein Eingabefehler.
+			// Unique index (recurring_id, date): here this is an input error.
 			return invalid("Für diesen Termin gibt es schon eine Ausgabe dieser Wiederholung.")
 		}
 		if err != nil {
@@ -294,8 +294,8 @@ func (s *Store) UpdateExpense(ctx context.Context, actorID, id int64, in Expense
 	return nil
 }
 
-// DeleteExpense löscht eine Ausgabe weich (deleted_at). Bereits gelöschte oder
-// unbekannte Ausgaben ergeben ErrNotFound.
+// DeleteExpense soft-deletes an expense (deleted_at). Already deleted or
+// unknown expenses yield ErrNotFound.
 func (s *Store) DeleteExpense(ctx context.Context, actorID, id int64) error {
 	err := s.inTx(ctx, func(tx *sql.Tx) error {
 		old, err := getExpense(ctx, tx, id)
@@ -319,19 +319,19 @@ func (s *Store) DeleteExpense(ctx context.Context, actorID, id int64) error {
 	return nil
 }
 
-// GetExpense liefert eine Ausgabe inkl. Anteilen – auch gelöschte (siehe
-// Deleted()), damit z. B. der YNAB-Sync Löschungen verarbeiten kann.
+// GetExpense returns an expense including shares, also deleted ones (see
+// Deleted()), so that e.g. the YNAB sync can process deletions.
 func (s *Store) GetExpense(ctx context.Context, id int64) (Expense, error) {
 	return getExpense(ctx, s.db, id)
 }
 
-// ListExpenses liefert nicht gelöschte Ausgaben, neueste zuerst (Datum, dann ID).
+// ListExpenses returns non-deleted expenses, newest first (date, then ID).
 func (s *Store) ListExpenses(ctx context.Context, f ExpenseFilter) ([]Expense, error) {
 	where := []string{"e.deleted_at IS NULL"}
 	var args []any
 	if t := strings.TrimSpace(f.Text); t != "" {
-		// Gefaltet in Go (siehe fold): LIKE wäre nur bei ASCII unabhängig von
-		// Groß-/Kleinschreibung.
+		// Folded in Go (see fold): LIKE would only be case-insensitive for
+		// ASCII.
 		t = fold(t)
 		where = append(where, "(instr("+foldFunc+"(e.title), ?) > 0 OR instr("+foldFunc+"(e.notes), ?) > 0)")
 		args = append(args, t, t)
@@ -363,19 +363,19 @@ func (s *Store) ListExpenses(ctx context.Context, f ExpenseFilter) ([]Expense, e
 	return queryExpenses(ctx, s.db, q, args...)
 }
 
-// NextExpenseID ist die ID, die die nächste neue Ausgabe voraussichtlich
-// bekommt (SQLite vergibt max(id) + 1; gelöscht wird nur weich). Die
-// Formular-Vorschau braucht sie, um Rest-Cents wie domain.Split zu verteilen;
-// legt jemand gleichzeitig eine Ausgabe an, weicht die Vorschau höchstens um
-// einen Cent ab – gespeichert wird immer die Rechnung des Stores.
+// NextExpenseID is the ID the next new expense will most likely get (SQLite
+// assigns max(id) + 1; deletes are soft only). The form preview needs it to
+// distribute leftover cents like domain.Split; if someone creates an expense
+// at the same time, the preview is off by at most one cent. What gets stored
+// is always the store's calculation.
 func (s *Store) NextExpenseID(ctx context.Context) (int64, error) {
 	var n int64
 	err := s.db.QueryRowContext(ctx, "SELECT coalesce(max(id), 0) + 1 FROM expenses").Scan(&n)
 	return n, err
 }
 
-// BalanceEntries liefert alle nicht gelöschten Ausgaben in der Form, die
-// domain.Balances braucht.
+// BalanceEntries returns all non-deleted expenses in the form that
+// domain.Balances needs.
 func (s *Store) BalanceEntries(ctx context.Context) ([]domain.Entry, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT e.id, e.paid_by, e.amount_cents, x.participant_id, x.amount_cents
 		FROM expenses e JOIN expense_shares x ON x.expense_id = e.id
@@ -401,8 +401,8 @@ func (s *Store) BalanceEntries(ctx context.Context) ([]domain.Entry, error) {
 	return out, rows.Err()
 }
 
-// Balances liefert den Saldo pro Person (Cent; positiv = bekommt Geld).
-// Personen ohne Buchungen fehlen in der Map (Saldo 0).
+// Balances returns the balance per person (cents; positive = is owed money).
+// People without entries are missing from the map (balance 0).
 func (s *Store) Balances(ctx context.Context) (map[int64]int64, error) {
 	entries, err := s.BalanceEntries(ctx)
 	if err != nil {
@@ -411,7 +411,7 @@ func (s *Store) Balances(ctx context.Context) (map[int64]int64, error) {
 	return domain.Balances(entries), nil
 }
 
-// --- Lesen ---------------------------------------------------------------
+// --- Reading -------------------------------------------------------------
 
 type queryer interface {
 	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
@@ -454,7 +454,7 @@ func queryExpenses(ctx context.Context, q queryer, query string, args ...any) ([
 		}
 		if e.Date, err = parseDate(date); err != nil {
 			rows.Close()
-			return nil, fmt.Errorf("ausgabe %d: datum %q: %w", e.ID, date, err)
+			return nil, fmt.Errorf("expense %d: date %q: %w", e.ID, date, err)
 		}
 		e.SplitMode = domain.SplitMode(mode)
 		e.CategoryID, e.RecurringID = category.Int64, recurring.Int64
@@ -471,7 +471,7 @@ func queryExpenses(ctx context.Context, q queryer, query string, args ...any) ([
 	return out, nil
 }
 
-// loadShares füllt Shares und Parts der Ausgaben (in Blöcken zu 500 IDs).
+// loadShares fills in the expenses' Shares and Parts (in chunks of 500 IDs).
 func loadShares(ctx context.Context, q queryer, es []Expense) error {
 	idx := make(map[int64]int, len(es))
 	for i, e := range es {
@@ -507,7 +507,7 @@ func loadShares(ctx context.Context, q queryer, es []Expense) error {
 	return nil
 }
 
-// --- Änderungsprotokoll ----------------------------------------------------
+// --- Change log ----------------------------------------------------------
 
 func diffExpense(ctx context.Context, tx *sql.Tx, old Expense, in ExpenseInput, shares []domain.Share) ([]FieldChange, error) {
 	names, err := participantNames(ctx, tx)
@@ -547,7 +547,7 @@ func diffExpense(ctx context.Context, tx *sql.Tx, old Expense, in ExpenseInput, 
 	oldSplit, newSplit := splitSummary(old.SplitMode, old.Shares, names), splitSummary(in.SplitMode, shares, names)
 	add("Aufteilung", oldSplit, newSplit)
 	if oldSplit == newSplit {
-		// gleiche Cent, aber andere Gewichte (z. B. Anteile 1:1 → 2:2)
+		// same cents but different weights (e.g. shares 1:1 → 2:2)
 		label := map[domain.SplitMode]string{domain.SplitShares: "Anteile", domain.SplitPercent: "Prozente",
 			domain.SplitAmount: "Beträge"}[in.SplitMode]
 		add(cmp.Or(label, "Gewichte"), weightSummary(old.SplitMode, old.Shares, names), weightSummary(in.SplitMode, shares, names))
@@ -555,8 +555,8 @@ func diffExpense(ctx context.Context, tx *sql.Tx, old Expense, in ExpenseInput, 
 	return changes, nil
 }
 
-// rateSummary beschreibt den Wechselkurs: „1 € = 1,0857 USD (EZB)“, ohne
-// Fremdwährung „–“.
+// rateSummary describes the exchange rate: "1 € = 1,0857 USD (EZB)", or "–"
+// without foreign currency.
 func rateSummary(in ExpenseInput) string {
 	cur := strings.ToUpper(in.OriginalCurrency)
 	if cur == "" || cur == "EUR" {
@@ -573,7 +573,7 @@ func rateSummary(in ExpenseInput) string {
 	return s
 }
 
-// weightSummary listet die Gewichte je Person im Format des Modus.
+// weightSummary lists the weights per person in the mode's format.
 func weightSummary(mode domain.SplitMode, shares []domain.Share, names map[int64]string) string {
 	parts := make([]string, len(shares))
 	for i, sh := range shares {
@@ -617,7 +617,7 @@ func participantNames(ctx context.Context, tx *sql.Tx) (map[int64]string, error)
 	return m, rows.Err()
 }
 
-// --- Hilfsfunktionen -------------------------------------------------------
+// --- Helpers -------------------------------------------------------------
 
 func placeholders(n int) string {
 	return strings.TrimSuffix(strings.Repeat("?,", n), ",")

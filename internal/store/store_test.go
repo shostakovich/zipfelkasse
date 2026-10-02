@@ -54,14 +54,14 @@ func TestOpenMigratesAndSeeds(t *testing.T) {
 		t.Fatalf("SchemaVersion = %d, %v; want 2", v, err)
 	}
 	if acts, _ := s.ListActivity(ctx, ActivityFilter{}); len(acts) != 0 {
-		t.Errorf("leere Datenbank: Aktivität %+v", acts)
+		t.Errorf("empty database: activity %+v", acts)
 	}
 	cats, err := s.ListCategories(ctx, false)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(cats) != 10 || cats[0].Name != "Lebensmittel" || cats[len(cats)-1].Name != "Sonstiges" {
-		t.Errorf("Seed-Kategorien falsch: %+v", cats)
+		t.Errorf("wrong seed categories: %+v", cats)
 	}
 	if got := s.GroupName(ctx); got != "Zipfelkasse" {
 		t.Errorf("GroupName = %q", got)
@@ -90,12 +90,12 @@ func TestOpenFileTwiceIsIdempotent(t *testing.T) {
 
 	s, err = Open(path)
 	if err != nil {
-		t.Fatalf("zweites Open: %v", err)
+		t.Fatalf("second Open: %v", err)
 	}
 	defer s.Close()
 	ps, err := s.ListParticipants(context.Background(), false)
 	if err != nil || len(ps) != 1 {
-		t.Errorf("Participants nach Neuöffnen = %v, %v", ps, err)
+		t.Errorf("participants after reopening = %v, %v", ps, err)
 	}
 }
 
@@ -106,10 +106,10 @@ func TestParticipants(t *testing.T) {
 	ben := mustParticipant(t, s, "Ben")
 
 	if _, err := s.CreateParticipant(ctx, "anna"); !isValidation(err) {
-		t.Errorf("doppelter Name: err = %v, want ValidationError", err)
+		t.Errorf("duplicate name: err = %v, want ValidationError", err)
 	}
 	if _, err := s.CreateParticipant(ctx, "   "); !isValidation(err) {
-		t.Errorf("leerer Name: err = %v", err)
+		t.Errorf("empty name: err = %v", err)
 	}
 	p, err := s.GetParticipant(ctx, anna)
 	if err != nil || p.Name != "Anna" || p.Archived() || p.CreatedAt.IsZero() {
@@ -119,7 +119,7 @@ func TestParticipants(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := s.RenameParticipant(ctx, ben, "ANNA"); !isValidation(err) {
-		t.Errorf("Umbenennen auf vergebenen Namen: %v", err)
+		t.Errorf("rename to a taken name: %v", err)
 	}
 	if err := s.SetParticipantArchived(ctx, ben, true); err != nil {
 		t.Fatal(err)
@@ -133,10 +133,10 @@ func TestParticipants(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, err := s.GetParticipant(ctx, 999); !errors.Is(err, ErrNotFound) {
-		t.Errorf("unbekannte ID: %v", err)
+		t.Errorf("unknown ID: %v", err)
 	}
 	if err := s.RenameParticipant(ctx, 999, "X"); !errors.Is(err, ErrNotFound) {
-		t.Errorf("unbekannte ID umbenennen: %v", err)
+		t.Errorf("rename unknown ID: %v", err)
 	}
 }
 
@@ -149,10 +149,10 @@ func TestCategories(t *testing.T) {
 	}
 	cats, _ := s.ListCategories(ctx, false)
 	if cats[len(cats)-1].Name != "Sonstiges" || cats[len(cats)-2].ID != id {
-		t.Errorf("neue Kategorie nicht vor Sonstiges: %+v", cats)
+		t.Errorf("new category not before Sonstiges: %+v", cats)
 	}
 	if _, err := s.CreateCategory(ctx, "lebensmittel"); !isValidation(err) {
-		t.Errorf("doppelte Kategorie: %v", err)
+		t.Errorf("duplicate category: %v", err)
 	}
 	if err := s.RenameCategory(ctx, id, "Tiere"); err != nil {
 		t.Fatal(err)
@@ -223,9 +223,9 @@ func TestCreateGetExpense(t *testing.T) {
 		t.Errorf("Expense = %+v", e)
 	}
 	if e.OriginalCurrency != "EUR" || e.OriginalAmountMinor != 1000 || e.FXRate != 1 || e.IsForeign() {
-		t.Errorf("Währungsfelder = %+v", e)
+		t.Errorf("currency fields = %+v", e)
 	}
-	// Ausgabe 1: Der Extra-Cent geht an Index 1 mod 3 der Gleichrangigen (Ben).
+	// Expense 1: the extra cent goes to index 1 mod 3 of the tied people (Ben).
 	if len(e.Shares) != 3 || e.ShareOf(f.anna) != 333 || e.ShareOf(f.ben) != 334 || e.ShareOf(f.cleo) != 333 {
 		t.Errorf("Shares = %+v", e.Shares)
 	}
@@ -233,7 +233,7 @@ func TestCreateGetExpense(t *testing.T) {
 		t.Errorf("Parts = %+v", e.Parts)
 	}
 	if len(events) != 1 || events[0] != (ExpenseChange{id, ActionExpenseCreated}) {
-		t.Errorf("Hook-Events = %+v", events)
+		t.Errorf("hook events = %+v", events)
 	}
 	acts, err := f.s.ListActivity(ctx, ActivityFilter{})
 	if err != nil || len(acts) != 1 {
@@ -256,22 +256,22 @@ func TestCreateExpenseValidation(t *testing.T) {
 		name string
 		mod  func(*ExpenseInput)
 	}{
-		{"ohne Titel", func(in *ExpenseInput) { in.Title = " " }},
-		{"ohne Datum", func(in *ExpenseInput) { in.Date = time.Time{} }},
-		{"ohne Zahler", func(in *ExpenseInput) { in.PaidBy = 0 }},
-		{"Betrag 0", func(in *ExpenseInput) { in.AmountCents = 0 }},
-		{"keine Beteiligten", func(in *ExpenseInput) { in.Parts = nil }},
-		{"unbekannter Zahler", func(in *ExpenseInput) { in.PaidBy = 999 }},
-		{"unbekannte Person", func(in *ExpenseInput) { in.Parts = append(in.Parts, domain.Part{ParticipantID: 999}) }},
-		{"unbekannte Kategorie", func(in *ExpenseInput) { in.CategoryID = 999 }},
-		{"Prozent falsch", func(in *ExpenseInput) {
+		{"without title", func(in *ExpenseInput) { in.Title = " " }},
+		{"without date", func(in *ExpenseInput) { in.Date = time.Time{} }},
+		{"without payer", func(in *ExpenseInput) { in.PaidBy = 0 }},
+		{"amount 0", func(in *ExpenseInput) { in.AmountCents = 0 }},
+		{"no participants", func(in *ExpenseInput) { in.Parts = nil }},
+		{"unknown payer", func(in *ExpenseInput) { in.PaidBy = 999 }},
+		{"unknown person", func(in *ExpenseInput) { in.Parts = append(in.Parts, domain.Part{ParticipantID: 999}) }},
+		{"unknown category", func(in *ExpenseInput) { in.CategoryID = 999 }},
+		{"wrong percent", func(in *ExpenseInput) {
 			in.SplitMode = domain.SplitPercent
 			in.Parts = []domain.Part{{ParticipantID: f.anna, Weight: 5000}}
 		}},
-		{"Fremdwährung ohne Kurs", func(in *ExpenseInput) { in.OriginalCurrency = "USD"; in.OriginalAmountMinor = 2200 }},
-		{"Fremdwährung ohne Betrag", func(in *ExpenseInput) { in.OriginalCurrency = "USD"; in.FXRate = 1.1 }},
-		{"Rückzahlung an zwei", func(in *ExpenseInput) { in.IsReimbursement = true }},
-		{"Rückzahlung an sich selbst", func(in *ExpenseInput) {
+		{"foreign currency without rate", func(in *ExpenseInput) { in.OriginalCurrency = "USD"; in.OriginalAmountMinor = 2200 }},
+		{"foreign currency without amount", func(in *ExpenseInput) { in.OriginalCurrency = "USD"; in.FXRate = 1.1 }},
+		{"reimbursement to two", func(in *ExpenseInput) { in.IsReimbursement = true }},
+		{"reimbursement to oneself", func(in *ExpenseInput) {
 			in.IsReimbursement = true
 			in.Parts = []domain.Part{{ParticipantID: f.anna}}
 		}},
@@ -287,7 +287,7 @@ func TestCreateExpenseValidation(t *testing.T) {
 		})
 	}
 	if es, _ := f.s.ListExpenses(ctx, ExpenseFilter{}); len(es) != 0 {
-		t.Errorf("ungültige Ausgaben wurden gespeichert: %d", len(es))
+		t.Errorf("invalid expenses were stored: %d", len(es))
 	}
 }
 
@@ -317,12 +317,12 @@ func TestUpdateExpense(t *testing.T) {
 	f.s.OnExpenseChange(func(c ExpenseChange) { events = append(events, c) })
 
 	e, _ := f.s.GetExpense(ctx, id)
-	// Unverändert speichern: kein Protokoll, kein Hook.
+	// Saving unchanged: no log entry, no hook.
 	if err := f.s.UpdateExpense(ctx, f.ben, id, e.ExpenseInput); err != nil {
 		t.Fatal(err)
 	}
 	if len(events) != 0 {
-		t.Errorf("Hook bei unveränderter Ausgabe: %v", events)
+		t.Errorf("hook for unchanged expense: %v", events)
 	}
 
 	in := e.ExpenseInput
@@ -336,10 +336,10 @@ func TestUpdateExpense(t *testing.T) {
 	}
 	e, _ = f.s.GetExpense(ctx, id)
 	if e.Title != "Pizza & Wein" || e.AmountCents != 4500 || e.ShareOf(f.anna) != 3000 || e.ShareOf(f.ben) != 1500 || e.CategoryID != 0 || e.CategoryName != "" {
-		t.Errorf("nach Update: %+v", e)
+		t.Errorf("after update: %+v", e)
 	}
 	if len(events) != 1 || events[0].Action != ActionExpenseUpdated {
-		t.Errorf("Hook-Events = %v", events)
+		t.Errorf("hook events = %v", events)
 	}
 	acts, _ := f.s.ListActivity(ctx, ActivityFilter{ExpenseID: id})
 	if len(acts) != 2 || acts[0].Action != ActionExpenseUpdated || acts[0].ActorName != "Ben" {
@@ -350,25 +350,25 @@ func TestUpdateExpense(t *testing.T) {
 		fields[c.Field] = c
 	}
 	if c := fields["Betrag"]; c.Old != "30,00 €" || c.New != "45,00 €" {
-		t.Errorf("Betrag-Änderung = %+v", c)
+		t.Errorf("Betrag change = %+v", c)
 	}
 	if c := fields["Kategorie"]; c.Old != "Lebensmittel" || c.New != "–" {
-		t.Errorf("Kategorie-Änderung = %+v", c)
+		t.Errorf("Kategorie change = %+v", c)
 	}
 	if c := fields["Aufteilung"]; !strings.HasPrefix(c.New, "Nach Anteilen: Anna 30,00 €") {
-		t.Errorf("Aufteilung-Änderung = %+v", c)
+		t.Errorf("Aufteilung change = %+v", c)
 	}
 	if _, ok := fields["Datum"]; ok {
-		t.Error("Datum als geändert protokolliert")
+		t.Error("Datum logged as changed")
 	}
 
 	if err := f.s.UpdateExpense(ctx, f.ben, 999, in); !errors.Is(err, ErrNotFound) {
-		t.Errorf("Update unbekannt = %v", err)
+		t.Errorf("update unknown = %v", err)
 	}
 }
 
-// Änderungen nur an Kurs, Kursquelle oder Gewichten (bei gleichen Cent)
-// werden gespeichert und protokolliert.
+// Changes only to rate, rate source or weights (with the same cents) are
+// stored and logged.
 func TestUpdateExpenseRateAndWeights(t *testing.T) {
 	f := newFixture(t)
 	ctx := context.Background()
@@ -392,15 +392,15 @@ func TestUpdateExpenseRateAndWeights(t *testing.T) {
 		return m
 	}
 
-	in.FXRate = 1.2501 // gleiche Euro-Cent
+	in.FXRate = 1.2501 // same euro cents
 	if err := f.s.UpdateExpense(ctx, f.anna, id, in); err != nil {
 		t.Fatal(err)
 	}
 	if e, _ := f.s.GetExpense(ctx, id); e.FXRate != 1.2501 {
-		t.Errorf("Kurs nicht gespeichert: %v", e.FXRate)
+		t.Errorf("rate not stored: %v", e.FXRate)
 	}
 	if c := changes()["Kurs"]; c.Old != "1 € = 1,25 USD (EZB)" || c.New != "1 € = 1,2501 USD (EZB)" {
-		t.Errorf("Kurs-Änderung = %+v", changes())
+		t.Errorf("Kurs change = %+v", changes())
 	}
 
 	in.FXSource = domain.FXSourceManual
@@ -408,10 +408,10 @@ func TestUpdateExpenseRateAndWeights(t *testing.T) {
 		t.Fatal(err)
 	}
 	if e, _ := f.s.GetExpense(ctx, id); e.FXSource != domain.FXSourceManual {
-		t.Errorf("Quelle nicht gespeichert: %v", e.FXSource)
+		t.Errorf("source not stored: %v", e.FXSource)
 	}
 	if c := changes()["Kurs"]; c.New != "1 € = 1,2501 USD (manuell)" {
-		t.Errorf("Quellen-Änderung = %+v", changes())
+		t.Errorf("source change = %+v", changes())
 	}
 
 	in.Parts = []domain.Part{{ParticipantID: f.anna, Weight: 2}, {ParticipantID: f.ben, Weight: 2}}
@@ -419,10 +419,10 @@ func TestUpdateExpenseRateAndWeights(t *testing.T) {
 		t.Fatal(err)
 	}
 	if e, _ := f.s.GetExpense(ctx, id); e.Parts[0].Weight != 2 {
-		t.Errorf("Gewichte nicht gespeichert: %+v", e.Parts)
+		t.Errorf("weights not stored: %+v", e.Parts)
 	}
 	if c := changes()["Anteile"]; c.Old != "Anna 1, Ben 1" || c.New != "Anna 2, Ben 2" {
-		t.Errorf("Anteile-Änderung = %+v", changes())
+		t.Errorf("Anteile change = %+v", changes())
 	}
 }
 
@@ -437,23 +437,23 @@ func TestDeleteExpense(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := f.s.DeleteExpense(ctx, f.ben, id); !errors.Is(err, ErrNotFound) {
-		t.Errorf("zweites Löschen = %v", err)
+		t.Errorf("second delete = %v", err)
 	}
 	e, err := f.s.GetExpense(ctx, id)
 	if err != nil || !e.Deleted() {
-		t.Errorf("gelöschte Ausgabe: %+v, %v", e, err)
+		t.Errorf("deleted expense: %+v, %v", e, err)
 	}
 	if err := f.s.UpdateExpense(ctx, f.ben, id, e.ExpenseInput); !errors.Is(err, ErrNotFound) {
-		t.Errorf("Update gelöschter Ausgabe = %v", err)
+		t.Errorf("update of deleted expense = %v", err)
 	}
 	if es, _ := f.s.ListExpenses(ctx, ExpenseFilter{}); len(es) != 0 {
-		t.Errorf("gelöschte Ausgabe in Liste")
+		t.Errorf("deleted expense in list")
 	}
 	if b, _ := f.s.Balances(ctx); len(b) != 0 {
-		t.Errorf("gelöschte Ausgabe im Saldo: %v", b)
+		t.Errorf("deleted expense in balance: %v", b)
 	}
 	if len(events) != 1 || events[0] != (ExpenseChange{id, ActionExpenseDeleted}) {
-		t.Errorf("Hook-Events = %v", events)
+		t.Errorf("hook events = %v", events)
 	}
 	acts, _ := f.s.ListActivity(ctx, ActivityFilter{Limit: 1})
 	if acts[0].Action != ActionExpenseDeleted || acts[0].Details.Title != "Bahn" {
@@ -490,13 +490,13 @@ func TestListExpensesFilter(t *testing.T) {
 		f    ExpenseFilter
 		want []int64
 	}{
-		{"alle, neueste zuerst", ExpenseFilter{}, []int64{c, b, a}},
-		{"Text in Titel/Notiz", ExpenseFilter{Text: "rewe"}, []int64{c, a}},
-		{"LIKE-Zeichen escaped", ExpenseFilter{Text: "100%"}, []int64{b}},
-		{"Kategorie", ExpenseFilter{CategoryID: f.food}, []int64{b, a}},
-		{"ohne Kategorie", ExpenseFilter{WithoutCategory: true}, []int64{c}},
-		{"Person zahlt oder beteiligt", ExpenseFilter{ParticipantID: f.cleo}, []int64{c, b}},
-		{"Zeitraum", ExpenseFilter{From: date("2026-09-01"), To: date("2026-09-15")}, []int64{b, a}},
+		{"all, newest first", ExpenseFilter{}, []int64{c, b, a}},
+		{"text in title/notes", ExpenseFilter{Text: "rewe"}, []int64{c, a}},
+		{"LIKE characters escaped", ExpenseFilter{Text: "100%"}, []int64{b}},
+		{"category", ExpenseFilter{CategoryID: f.food}, []int64{b, a}},
+		{"without category", ExpenseFilter{WithoutCategory: true}, []int64{c}},
+		{"person pays or is involved", ExpenseFilter{ParticipantID: f.cleo}, []int64{c, b}},
+		{"date range", ExpenseFilter{From: date("2026-09-01"), To: date("2026-09-15")}, []int64{b, a}},
 		{"Limit/Offset", ExpenseFilter{Limit: 1, Offset: 1}, []int64{b}},
 	}
 	for _, tt := range tests {
@@ -516,15 +516,15 @@ func TestListExpensesFilter(t *testing.T) {
 			}
 			for _, e := range es {
 				if len(e.Shares) == 0 {
-					t.Errorf("Ausgabe %d ohne Shares", e.ID)
+					t.Errorf("expense %d without shares", e.ID)
 				}
 			}
 		})
 	}
 }
 
-// Der Extra-Cent ungerader Beträge rotiert mit der Ausgaben-ID, auch nach
-// einer Änderung.
+// The extra cent of odd amounts rotates with the expense ID, also after an
+// update.
 func TestExpenseSharesRotateRemainder(t *testing.T) {
 	f := newFixture(t)
 	ctx := context.Background()
@@ -538,7 +538,7 @@ func TestExpenseSharesRotateRemainder(t *testing.T) {
 		e, _ := f.s.GetExpense(ctx, id)
 		want := people[id%2]
 		if e.ShareOf(want) != 151 {
-			t.Errorf("Ausgabe %d: Extra-Cent bei %v, want Person %d", id, e.Shares, want)
+			t.Errorf("expense %d: extra cent at %v, want person %d", id, e.Shares, want)
 		}
 		extra[want]++
 
@@ -548,16 +548,16 @@ func TestExpenseSharesRotateRemainder(t *testing.T) {
 			t.Fatal(err)
 		}
 		if e, _ = f.s.GetExpense(ctx, id); e.ShareOf(want) != 251 {
-			t.Errorf("Ausgabe %d nach Änderung: %v, want Extra-Cent bei %d", id, e.Shares, want)
+			t.Errorf("expense %d after update: %v, want extra cent at %d", id, e.Shares, want)
 		}
 	}
 	if extra[f.anna] != 2 || extra[f.ben] != 2 {
-		t.Errorf("Extra-Cents ungleich verteilt: %v", extra)
+		t.Errorf("extra cents unevenly distributed: %v", extra)
 	}
 }
 
-// Migration 2 verteilt die Rest-Cents bestehender Ausgaben nach der neuen
-// Regel (domain.Split mit Ausgaben-ID), genau einmal.
+// Migration 2 redistributes the leftover cents of existing expenses using the
+// new rule (domain.Split with expense ID), exactly once.
 func TestMigrationResplitsShares(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "zipfelkasse.db")
 	s, err := Open(path)
@@ -577,8 +577,8 @@ func TestMigrationResplitsShares(t *testing.T) {
 	if err := s.DeleteExpense(ctx, f.anna, gone); err != nil {
 		t.Fatal(err)
 	}
-	// Alter Stand: Extra-Cent an die kleinste ID (bei der gelöschten Ausgabe 6
-	// an Ben, neu gehört er Index 6 mod 3 = Anna), Schema-Version 1.
+	// Old state: extra cent to the smallest ID (for deleted expense 6 to Ben;
+	// under the new rule it belongs to index 6 mod 3 = Anna), schema version 1.
 	for _, q := range []string{
 		"UPDATE expense_shares SET amount_cents = 151 WHERE participant_id = 1 AND expense_id <= 4",
 		"UPDATE expense_shares SET amount_cents = 150 WHERE participant_id = 2 AND expense_id <= 4",
@@ -597,24 +597,24 @@ func TestMigrationResplitsShares(t *testing.T) {
 			t.Fatal(err)
 		}
 		if v, _ := s.SchemaVersion(ctx); v != 2 {
-			t.Errorf("Runde %d: SchemaVersion = %d", round, v)
+			t.Errorf("round %d: SchemaVersion = %d", round, v)
 		}
 		for _, id := range ids {
 			e, _ := s.GetExpense(ctx, id)
 			if want := []int64{f.anna, f.ben}[id%2]; e.ShareOf(want) != 151 {
-				t.Errorf("Runde %d, Ausgabe %d: %v, Extra-Cent gehört %d", round, id, e.Shares, want)
+				t.Errorf("round %d, expense %d: %v, extra cent belongs to %d", round, id, e.Shares, want)
 			}
 		}
 		if e, _ := s.GetExpense(ctx, fixedID); e.ShareOf(f.anna) != 151 || e.ShareOf(f.ben) != 150 {
-			t.Errorf("feste Beträge verändert: %v", e.Shares)
+			t.Errorf("fixed amounts changed: %v", e.Shares)
 		}
 		if e, _ := s.GetExpense(ctx, gone); e.ShareOf(f.cleo) != 333 || e.ShareOf(f.anna) != 334 || e.ShareOf(f.ben) != 333 {
-			t.Errorf("gelöschte Ausgabe 6: %v", e.Shares)
+			t.Errorf("deleted expense 6: %v", e.Shares)
 		}
 		acts, _ := s.ListActivity(ctx, ActivityFilter{})
 		if len(acts) != len(before)+1 || acts[0].Action != ActionSharesRecalculated || acts[0].ActorID != 0 ||
 			!strings.Contains(acts[0].Details.Text, "3 Ausgaben") {
-			t.Errorf("Runde %d: Aktivität %+v", round, acts[0])
+			t.Errorf("round %d: activity %+v", round, acts[0])
 		}
 		s.Close()
 	}
@@ -624,7 +624,7 @@ func TestNextExpenseID(t *testing.T) {
 	f := newFixture(t)
 	ctx := context.Background()
 	if n, err := f.s.NextExpenseID(ctx); err != nil || n != 1 {
-		t.Fatalf("leer: %d, %v", n, err)
+		t.Fatalf("empty: %d, %v", n, err)
 	}
 	id := f.mustCreate(t, f.equal("Kaffee", 300, "2026-09-01", f.anna, f.anna))
 	if err := f.s.DeleteExpense(ctx, f.anna, id); err != nil {
@@ -634,7 +634,7 @@ func TestNextExpenseID(t *testing.T) {
 		t.Errorf("NextExpenseID = %d, want %d", n, id+1)
 	}
 	if got := f.mustCreate(t, f.equal("Tee", 300, "2026-09-01", f.anna, f.anna)); got != id+1 {
-		t.Errorf("neue ID %d, erwartet %d", got, id+1)
+		t.Errorf("new ID %d, want %d", got, id+1)
 	}
 }
 
@@ -691,7 +691,7 @@ func TestBalancesWithReimbursement(t *testing.T) {
 	if _, err := f.s.CreateExpense(ctx, f.anna, f.equal("Essen", 3000, "2026-09-01", f.anna, f.anna, f.ben, f.cleo)); err != nil {
 		t.Fatal(err)
 	}
-	// Ben zahlt Anna 10 € zurück.
+	// Ben pays Anna back 10 €.
 	r := ExpenseInput{Title: "Rückzahlung", Date: date("2026-09-02"), PaidBy: f.ben, IsReimbursement: true,
 		AmountCents: 1000, Parts: []domain.Part{{ParticipantID: f.anna}}}
 	id, err := f.s.CreateExpense(ctx, f.ben, r)
@@ -700,7 +700,7 @@ func TestBalancesWithReimbursement(t *testing.T) {
 	}
 	e, _ := f.s.GetExpense(ctx, id)
 	if !e.IsReimbursement || e.SplitMode != domain.SplitEqual || e.ShareOf(f.anna) != 1000 {
-		t.Errorf("Rückzahlung = %+v", e)
+		t.Errorf("reimbursement = %+v", e)
 	}
 	b, err := f.s.Balances(ctx)
 	if err != nil {
@@ -726,16 +726,16 @@ func TestRecurringDuplicate(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, err := f.s.CreateExpense(ctx, 0, in); !errors.Is(err, ErrRecurringExists) {
-		t.Errorf("zweite Instanz = %v, want ErrRecurringExists", err)
+		t.Errorf("second instance = %v, want ErrRecurringExists", err)
 	}
 	acts, _ := f.s.ListActivity(ctx, ActivityFilter{})
 	if len(acts) != 1 || acts[0].ActorID != 0 || acts[0].ActorName != "" {
-		t.Errorf("System-Activity = %+v", acts)
+		t.Errorf("system activity = %+v", acts)
 	}
 }
 
-// Verschiebt man eine Instanz auf den Termin einer anderen Instanz derselben
-// Wiederholung, ist das ein Eingabefehler (kein 500).
+// Moving an instance onto the date of another instance of the same
+// recurrence is an input error (not a 500).
 func TestUpdateRecurringDateCollision(t *testing.T) {
 	f := newFixture(t)
 	ctx := context.Background()
@@ -779,7 +779,7 @@ func TestBackupAndRotate(t *testing.T) {
 	f := newFixture(t)
 	ctx := context.Background()
 	dir := t.TempDir()
-	// Fremde Dateien bleiben unangetastet.
+	// Unrelated files are left untouched.
 	os.WriteFile(filepath.Join(dir, "notiz.txt"), []byte("x"), 0o644)
 	base := time.Date(2026, 10, 1, 3, 0, 0, 0, time.UTC)
 	var paths []string
@@ -793,10 +793,10 @@ func TestBackupAndRotate(t *testing.T) {
 	}
 	entries, _ := os.ReadDir(dir)
 	if len(entries) != 8 {
-		t.Errorf("%d Dateien im Backup-Verzeichnis, want 7 Backups + notiz.txt", len(entries))
+		t.Errorf("%d files in backup directory, want 7 backups + notiz.txt", len(entries))
 	}
 	if _, err := os.Stat(paths[0]); !os.IsNotExist(err) {
-		t.Errorf("ältestes Backup nicht rotiert")
+		t.Errorf("oldest backup not rotated")
 	}
 	b, err := Open(paths[8])
 	if err != nil {
@@ -805,7 +805,7 @@ func TestBackupAndRotate(t *testing.T) {
 	defer b.Close()
 	ps, err := b.ListParticipants(ctx, false)
 	if err != nil || len(ps) != 3 {
-		t.Errorf("Backup-Inhalt: %v, %v", ps, err)
+		t.Errorf("backup contents: %v, %v", ps, err)
 	}
 }
 
@@ -831,6 +831,6 @@ func TestConcurrentWritesFile(t *testing.T) {
 	wg.Wait()
 	close(errs)
 	for err := range errs {
-		t.Errorf("paralleles Schreiben: %v", err)
+		t.Errorf("concurrent write: %v", err)
 	}
 }

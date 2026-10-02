@@ -11,17 +11,17 @@ import (
 
 const backupPrefix, backupSuffix = "zipfelkasse-", ".db"
 
-// Backup schreibt per VACUUM INTO eine konsistente Kopie der Datenbank nach
-// dir/zipfelkasse-YYYYMMDD-HHMMSS.db und löscht danach alle bis auf die neuesten
-// keep Backups in dir. Liefert den Pfad der neuen Datei.
+// Backup writes a consistent copy of the database to
+// dir/zipfelkasse-YYYYMMDD-HHMMSS.db via VACUUM INTO and then deletes all but
+// the newest keep backups in dir. Returns the path of the new file.
 func (s *Store) Backup(ctx context.Context, dir string, keep int) (string, error) {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return "", fmt.Errorf("backup-verzeichnis anlegen: %w", err)
+		return "", fmt.Errorf("create backup directory: %w", err)
 	}
 	name := backupPrefix + s.now().UTC().Format("20060102-150405") + backupSuffix
 	path := filepath.Join(dir, name)
 	if _, err := os.Stat(path); err == nil {
-		return "", fmt.Errorf("backup %s existiert bereits", path)
+		return "", fmt.Errorf("backup %s already exists", path)
 	}
 	if _, err := s.db.ExecContext(ctx, "VACUUM INTO ?", path); err != nil {
 		return "", fmt.Errorf("vacuum into: %w", err)
@@ -29,7 +29,7 @@ func (s *Store) Backup(ctx context.Context, dir string, keep int) (string, error
 	return path, RotateBackups(dir, keep)
 }
 
-// RotateBackups löscht in dir alle Backup-Dateien bis auf die neuesten keep.
+// RotateBackups deletes all backup files in dir except the newest keep.
 func RotateBackups(dir string, keep int) error {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
@@ -42,7 +42,7 @@ func RotateBackups(dir string, keep int) error {
 			names = append(names, n)
 		}
 	}
-	// Der Zeitstempel im Namen sortiert lexikografisch richtig.
+	// The timestamp in the name sorts correctly lexicographically.
 	slices.Sort(names)
 	for len(names) > max(keep, 0) {
 		if err := os.Remove(filepath.Join(dir, names[0])); err != nil {

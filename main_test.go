@@ -16,8 +16,8 @@ import (
 	"github.com/shostakovich/zipfelkasse/internal/web"
 )
 
-// TestAppWiring baut die komplette App wie serve() und prüft, dass alle
-// Register-Aufrufe ohne Muster-Konflikt durchlaufen und die Routen antworten.
+// TestAppWiring builds the complete app like serve() and checks that all
+// Register calls succeed without pattern conflicts and the routes respond.
 func TestAppWiring(t *testing.T) {
 	cfg, err := config.FromEnv(func(k string) string {
 		return map[string]string{"MCP_SECRET": "geheim"}[k]
@@ -54,10 +54,10 @@ func TestAppWiring(t *testing.T) {
 		{"GET", "/einstellungen/ynab", true, 200},
 		{"GET", "/export", true, 200},
 		{"GET", "/api/kurs?waehrung=EUR", true, 200},
-		{"GET", "/api/kurs?waehrung=", true, http.StatusBadRequest}, // ohne Netz; USD würde die EZB abfragen
+		{"GET", "/api/kurs?waehrung=", true, http.StatusBadRequest}, // no network; USD would query the ECB
 		{"GET", "/einstellungen/wiederkehrend/neu", true, 200},
-		{"POST", "/mcp/falsch", false, http.StatusNotFound},  // falsches Secret verrät nichts
-		{"POST", "/mcp/geheim", false, http.StatusForbidden}, // Test-IP 192.0.2.1 nicht erlaubt
+		{"POST", "/mcp/falsch", false, http.StatusNotFound},  // wrong secret reveals nothing
+		{"POST", "/mcp/geheim", false, http.StatusForbidden}, // test IP 192.0.2.1 not allowed
 		{"GET", "/gibtsnicht", true, 404},
 	}
 	for _, tt := range tests {
@@ -73,8 +73,8 @@ func TestAppWiring(t *testing.T) {
 	}
 }
 
-// TestMCPThroughWrap: Der CSRF-Schutz in web.Wrap lässt MCP-Clients (POST
-// ohne Browser-Header) durch.
+// TestMCPThroughWrap: the CSRF protection in web.Wrap lets MCP clients (POST
+// without browser headers) through.
 func TestMCPThroughWrap(t *testing.T) {
 	cfg, err := config.FromEnv(func(k string) string {
 		return map[string]string{"MCP_SECRET": "geheim", "MCP_ALLOWED_CIDRS": "192.0.2.0/24"}[k]
@@ -130,7 +130,7 @@ func TestHealthURL(t *testing.T) {
 			t.Errorf("healthURL(%q) = %q, %v; want %q", in, got, err, want)
 		}
 	}
-	if _, err := healthURL("kaputt"); err == nil {
-		t.Error("healthURL(kaputt) ohne Fehler")
+	if _, err := healthURL("broken"); err == nil {
+		t.Error("healthURL(broken) returned no error")
 	}
 }

@@ -27,13 +27,13 @@ func TestFXRatesECBAndManual(t *testing.T) {
 		t.Errorf("Lookup = %+v, %v", r, err)
 	}
 	if _, err := s.LookupFXRate(ctx, "USD", domain.FXSourceECB, date("2026-10-20"), date("2026-10-10")); !errors.Is(err, ErrNotFound) {
-		t.Errorf("außerhalb des Fensters: %v", err)
+		t.Errorf("outside the window: %v", err)
 	}
 	if _, err := s.LookupFXRate(ctx, "JPY", domain.FXSourceECB, date("2026-10-02"), date("2026-09-01")); !errors.Is(err, ErrNotFound) {
-		t.Errorf("ungültiger Kurs gespeichert: %v", err)
+		t.Errorf("invalid rate stored: %v", err)
 	}
 
-	// Manuell ersetzt den EZB-Kurs desselben Tages, EZB überschreibt manuell nicht.
+	// Manual replaces the ECB rate of the same day; ECB does not overwrite manual.
 	if err := s.SetManualFXRate(ctx, " usd ", date("2026-09-30"), 1.2); err != nil {
 		t.Fatal(err)
 	}
@@ -42,11 +42,11 @@ func TestFXRatesECBAndManual(t *testing.T) {
 	}
 	r, err = s.LookupFXRate(ctx, "USD", domain.FXSourceManual, date("2026-12-01"), time.Time{})
 	if err != nil || r.Rate != 1.2 || r.Source != "manuell" {
-		t.Errorf("manuell = %+v, %v", r, err)
+		t.Errorf("manual = %+v, %v", r, err)
 	}
 	r, _ = s.LookupFXRate(ctx, "USD", domain.FXSourceECB, date("2026-09-30"), time.Time{})
 	if r.Date != date("2026-09-29") {
-		t.Errorf("EZB-Kurs vom 30.09. sollte durch manuellen ersetzt sein: %+v", r)
+		t.Errorf("ECB rate of Sep 30 should be replaced by the manual one: %+v", r)
 	}
 
 	for _, bad := range []struct {
@@ -79,10 +79,10 @@ func TestFXRatesECBAndManual(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := s.DeleteManualFXRate(ctx, "USD", date("2026-09-30")); !errors.Is(err, ErrNotFound) {
-		t.Errorf("zweites Löschen = %v", err)
+		t.Errorf("second delete = %v", err)
 	}
 	if err := s.DeleteManualFXRate(ctx, "GBP", date("2026-09-30")); !errors.Is(err, ErrNotFound) {
-		t.Errorf("EZB-Kurs darf nicht als manuell gelöscht werden: %v", err)
+		t.Errorf("ECB rate must not be deleted as manual: %v", err)
 	}
 }
 

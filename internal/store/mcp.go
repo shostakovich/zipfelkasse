@@ -1,7 +1,7 @@
 package store
 
-// Queries für den MCP-Server (internal/mcp): Statistik, Schema und die
-// schreibgeschützte SQL-Sandbox für das Tool sql_abfrage.
+// Queries for the MCP server (internal/mcp): statistics, schema and the
+// read-only SQL sandbox for the sql_abfrage tool.
 
 import (
 	"context"
@@ -21,44 +21,44 @@ import (
 	"github.com/shostakovich/zipfelkasse/internal/domain"
 )
 
-// MCPTables sind die Tabellen, die über MCP (schema, sql_abfrage) sichtbar
-// sind. Bewusst eine Positivliste: Neue Tabellen sind erst sichtbar, wenn sie
-// hier stehen. Die YNAB-Tabellen (Token!) fehlen absichtlich.
+// MCPTables are the tables visible via MCP (schema, sql_abfrage).
+// Deliberately an allowlist: new tables only become visible once they are
+// listed here. The YNAB tables (token!) are left out on purpose.
 var MCPTables = []string{
 	"participants", "categories", "expenses", "expense_shares",
 	"recurring", "activity", "fx_rates", "settings",
 }
 
-// mcpRowFilter schränkt einzelne Tabellen beim Kopieren in die Sandbox ein.
+// mcpRowFilter restricts individual tables when copying into the sandbox.
 var mcpRowFilter = map[string]string{
-	"settings": `key NOT LIKE 'ynab%'`, // eigene Schlüssel von YNAB (ynab.…) nie zeigen
+	"settings": `key NOT LIKE 'ynab%'`, // never show YNAB's own keys (ynab.…)
 }
 
-// Grenzen der SQL-Sandbox.
+// Limits of the SQL sandbox.
 const (
-	SQLMaxRows      = 500             // so viele Zeilen liefert ReadOnlyQuery höchstens
-	SQLTimeout      = 5 * time.Second // Gesamtdauer inkl. Kopie
-	sqlMaxCellRunes = 2000            // längere Texte werden gekürzt
+	SQLMaxRows      = 500             // maximum number of rows ReadOnlyQuery returns
+	SQLTimeout      = 5 * time.Second // total duration including the copy
+	sqlMaxCellRunes = 2000            // longer texts are truncated
 	sqlMaxResult    = 8 << 20         // Bytes, sqlite3_limit(SQLITE_LIMIT_LENGTH)
 )
 
-// QueryResult ist das Ergebnis von ReadOnlyQuery. Rows enthält int64,
-// float64, string oder nil.
+// QueryResult is the result of ReadOnlyQuery. Rows contains int64,
+// float64, string or nil.
 type QueryResult struct {
 	Columns   []string
 	Rows      [][]any
-	Truncated bool // es gab mehr als SQLMaxRows Zeilen
+	Truncated bool // there were more than SQLMaxRows rows
 }
 
-// SchemaObject ist eine Tabelle oder ein Index samt CREATE-Statement.
+// SchemaObject is a table or an index together with its CREATE statement.
 type SchemaObject struct {
 	Type string // "table" | "index"
 	Name string
 	SQL  string
 }
 
-// MCPSchema liefert die CREATE-Statements der über MCP sichtbaren Tabellen
-// (MCPTables) und ihrer Indizes.
+// MCPSchema returns the CREATE statements of the tables visible via MCP
+// (MCPTables) and their indexes.
 func (s *Store) MCPSchema(ctx context.Context) ([]SchemaObject, error) {
 	return schemaObjects(ctx, s.db, "main")
 }
@@ -84,18 +84,18 @@ func schemaObjects(ctx context.Context, q queryer, schema string) ([]SchemaObjec
 	return out, rows.Err()
 }
 
-// ReadOnlyQuery führt eine einzelne SELECT-/WITH-Abfrage in einer Sandbox aus
-// und liefert höchstens SQLMaxRows Zeilen.
+// ReadOnlyQuery runs a single SELECT/WITH query in a sandbox and returns at
+// most SQLMaxRows rows.
 //
-// Die Sandbox ist eine frische In-Memory-Datenbank: Die Tabellen aus
-// MCPTables werden über eine schreibgeschützte Verbindung (ATTACH
-// 'file:<pfad>?mode=ro') in einer Lese-Transaktion hineinkopiert, danach wird
-// die Datei wieder abgehängt. Die Abfrage sieht also nur diese Kopie – die
-// YNAB-Tabellen samt Token existieren dort gar nicht. Zusätzlich: ATTACH ist
-// per sqlite3_limit verboten, PRAGMA query_only ist an, die Abfrage muss
-// lexikalisch genau ein SELECT/WITH sein und wird als Unterabfrage in eine
-// Aggregation eingebettet (dadurch läuft sie in einem einzigen, per Context
-// abbrechbaren Schritt). Eingabefehler sind domain.ValidationError.
+// The sandbox is a fresh in-memory database: the tables from MCPTables are
+// copied in through a read-only connection (ATTACH 'file:<path>?mode=ro')
+// within a read transaction, after which the file is detached again. So the
+// query only sees this copy; the YNAB tables including the token do not exist
+// there at all. In addition: ATTACH is forbidden via sqlite3_limit, PRAGMA
+// query_only is on, the query must lexically be exactly one SELECT/WITH and
+// is embedded as a subquery in an aggregation (so it runs in a single step
+// that can be cancelled via the context). Input errors are
+// domain.ValidationError.
 func (s *Store) ReadOnlyQuery(ctx context.Context, query string) (QueryResult, error) {
 	body, err := checkSelect(query)
 	if err != nil {
@@ -115,8 +115,8 @@ func (s *Store) ReadOnlyQuery(ctx context.Context, query string) (QueryResult, e
 	return res, nil
 }
 
-// sandboxErr übersetzt Fehler in verständliche Meldungen. SQLite-Fehler
-// (Syntax, unbekannte Tabelle …) gehen als ValidationError an den Aufrufer.
+// sandboxErr translates errors into understandable messages. SQLite errors
+// (syntax, unknown table …) are passed to the caller as ValidationError.
 func sandboxErr(ctx context.Context, err error) error {
 	if errors.Is(ctx.Err(), context.DeadlineExceeded) || errors.Is(err, context.DeadlineExceeded) {
 		return invalid("Die Abfrage wurde nach %d s abgebrochen. Bitte einschränken (WHERE, LIMIT) oder vereinfachen.", int(SQLTimeout/time.Second))
@@ -135,7 +135,7 @@ func sandboxErr(ctx context.Context, err error) error {
 	return err
 }
 
-// sandbox baut die In-Memory-Kopie und liefert die (abgesicherte) Verbindung.
+// sandbox builds the in-memory copy and returns the (locked-down) connection.
 func (s *Store) sandbox(ctx context.Context) (*sql.Conn, func(), error) {
 	if s.path == ":memory:" || s.path == "" {
 		return nil, nil, invalid("sql_abfrage braucht eine Datenbankdatei (nicht verfügbar bei :memory:).")
@@ -165,9 +165,9 @@ func (s *Store) sandbox(ctx context.Context) (*sql.Conn, func(), error) {
 func fillSandbox(ctx context.Context, conn *sql.Conn, path string) error {
 	src := (&url.URL{Scheme: "file", Path: filepath.ToSlash(path), RawQuery: "mode=ro"}).String()
 	if _, err := conn.ExecContext(ctx, "ATTACH DATABASE ? AS src", src); err != nil {
-		return fmt.Errorf("datenbank schreibgeschützt öffnen: %w", err)
+		return fmt.Errorf("open database read-only: %w", err)
 	}
-	// Lese-Transaktion: alle Tabellen aus demselben Stand.
+	// Read transaction: all tables from the same snapshot.
 	err := func() error {
 		if _, err := conn.ExecContext(ctx, "BEGIN"); err != nil {
 			return err
@@ -176,7 +176,7 @@ func fillSandbox(ctx context.Context, conn *sql.Conn, path string) error {
 		if err != nil {
 			return err
 		}
-		// Erst Tabellen, dann Indizes (schemaObjects sortiert so).
+		// Tables first, then indexes (schemaObjects sorts that way).
 		for _, o := range objs {
 			if _, err := conn.ExecContext(ctx, o.SQL); err != nil {
 				return fmt.Errorf("sandbox %s: %w", o.Name, err)
@@ -202,7 +202,7 @@ func fillSandbox(ctx context.Context, conn *sql.Conn, path string) error {
 	if _, err := conn.ExecContext(ctx, "DETACH DATABASE src"); err != nil {
 		return err
 	}
-	// Ab hier: keine weiteren Datenbanken, keine Schreibzugriffe, begrenzte Größe.
+	// From here on: no further databases, no writes, limited size.
 	if _, err := sqlite.Limit(conn, sqlite3.SQLITE_LIMIT_ATTACHED, 0); err != nil {
 		return err
 	}
@@ -213,14 +213,14 @@ func fillSandbox(ctx context.Context, conn *sql.Conn, path string) error {
 	return err
 }
 
-// runWrapped bettet die Abfrage ein:
+// runWrapped wraps the query:
 //
-//	WITH mcp_u(c0, c1, …) AS (<abfrage>)
+//	WITH mcp_u(c0, c1, …) AS (<query>)
 //	SELECT count(*), json_group_array(json_array(…)) FROM (SELECT * FROM mcp_u LIMIT n+1)
 //
-// So entsteht das ganze Ergebnis in einem einzigen sqlite3_step, den der
-// Treiber bei Ablauf des Contexts unterbricht, und die Abfrage kann
-// syntaktisch nur ein SELECT sein.
+// That way the whole result is produced in a single sqlite3_step, which the
+// driver interrupts when the context expires, and the query can syntactically
+// only be a SELECT.
 func runWrapped(ctx context.Context, conn *sql.Conn, body string) (QueryResult, error) {
 	var cols []sqlite.ColumnInfo
 	err := conn.Raw(func(dc any) error {
@@ -228,7 +228,7 @@ func runWrapped(ctx context.Context, conn *sql.Conn, body string) (QueryResult, 
 			ColumnInfo(string) ([]sqlite.ColumnInfo, error)
 		})
 		if !ok {
-			return fmt.Errorf("sqlite-treiber ohne ColumnInfo (%T)", dc)
+			return fmt.Errorf("sqlite driver without ColumnInfo (%T)", dc)
 		}
 		var err error
 		cols, err = ci.ColumnInfo(body)
@@ -261,7 +261,7 @@ func runWrapped(ctx context.Context, conn *sql.Conn, body string) (QueryResult, 
 	dec.UseNumber()
 	var rows [][]any
 	if err := dec.Decode(&rows); err != nil {
-		return QueryResult{}, fmt.Errorf("ergebnis lesen: %w", err)
+		return QueryResult{}, fmt.Errorf("read result: %w", err)
 	}
 	if len(rows) > SQLMaxRows {
 		rows, res.Truncated = rows[:SQLMaxRows], true
@@ -284,10 +284,10 @@ func runWrapped(ctx context.Context, conn *sql.Conn, body string) (QueryResult, 
 	return res, nil
 }
 
-// checkSelect prüft lexikalisch, dass query genau eine Anweisung ist, die mit
-// SELECT oder WITH beginnt, und liefert sie ohne abschließendes Semikolon.
-// Die Regeln entsprechen SQLites Tokenizer: '…', "…", `…` (Verdopplung als
-// Escape), […], Kommentare mit -- und /* */.
+// checkSelect checks lexically that query is exactly one statement starting
+// with SELECT or WITH, and returns it without the trailing semicolon.
+// The rules match SQLite's tokenizer: '…', "…", `…` (doubling as escape),
+// […], comments with -- and /* */.
 func checkSelect(query string) (string, error) {
 	if strings.IndexByte(query, 0) >= 0 {
 		return "", invalid("Die Abfrage enthält ein NUL-Zeichen.")
@@ -347,14 +347,14 @@ func checkSelect(query string) (string, error) {
 
 func isLetter(c byte) bool { return c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' }
 
-// skipQuoted liefert die Position hinter dem Literal, das bei i beginnt.
+// skipQuoted returns the position after the literal starting at i.
 func skipQuoted(s string, i int, open, close byte) int {
 	for j := i + 1; j < len(s); j++ {
 		if s[j] != close {
 			continue
 		}
 		if open == close && j+1 < len(s) && s[j+1] == close {
-			j++ // verdoppeltes Anführungszeichen
+			j++ // doubled quote character
 			continue
 		}
 		return j + 1
@@ -362,9 +362,9 @@ func skipQuoted(s string, i int, open, close byte) int {
 	return len(s)
 }
 
-// --- Statistik ----------------------------------------------------------------
+// --- Statistics ---------------------------------------------------------------
 
-// Gruppierungen für Stats.
+// Groupings for Stats.
 const (
 	StatsByCategory      = "kategorie"
 	StatsByMonth         = "monat"
@@ -372,32 +372,32 @@ const (
 	StatsByCategoryMonth = "kategorie_monat"
 )
 
-// StatsFilter steuert Stats. Rückzahlungen und gelöschte Ausgaben zählen nie.
+// StatsFilter controls Stats. Reimbursements and deleted expenses never count.
 type StatsFilter struct {
 	GroupBy       string    // StatsBy…
-	From, To      time.Time // Datum inklusive, Nullwert = offen
-	ParticipantID int64     // 0 = Gesamtbeträge, sonst nur der Anteil dieser Person
+	From, To      time.Time // dates inclusive, zero value = open
+	ParticipantID int64     // 0 = total amounts, otherwise only this person's share
 	// CategoryID limits the statistics to one category (0 = all);
 	// WithoutCategory to expenses without a category (label NoCategory).
 	CategoryID      int64
 	WithoutCategory bool
 }
 
-// StatRow ist eine Zeile der Statistik. Je nach Gruppierung sind Category,
-// Month ("YYYY-MM") und/oder Person gesetzt.
+// StatRow is a row of the statistics. Depending on the grouping, Category,
+// Month ("YYYY-MM") and/or Person are set.
 type StatRow struct {
 	Category    string
 	Month       string
 	Person      string
-	Count       int64 // Zahl der Ausgaben
-	AmountCents int64 // Summe (Gesamtbetrag bzw. Anteil; bei person: Anteil der Person)
-	PaidCents   int64 // nur bei person: von der Person bezahlt
+	Count       int64 // number of expenses
+	AmountCents int64 // sum (total amount or share; for person: the person's share)
+	PaidCents   int64 // only for person: paid by the person
 }
 
-// NoCategory ist der Gruppenname für Ausgaben ohne Kategorie.
+// NoCategory is the group name for expenses without a category.
 const NoCategory = "Ohne Kategorie"
 
-// Stats summiert Ausgaben (ohne Rückzahlungen und gelöschte) nach f.GroupBy.
+// Stats sums expenses (excluding reimbursements and deleted ones) by f.GroupBy.
 func (s *Store) Stats(ctx context.Context, f StatsFilter) ([]StatRow, error) {
 	where := []string{"e.deleted_at IS NULL", "e.is_reimbursement = 0"}
 	var args []any
@@ -470,7 +470,7 @@ func (s *Store) statsByPerson(ctx context.Context, where []string, args []any, p
 		(SELECT coalesce(sum(x.amount_cents), 0) FROM expense_shares x JOIN expenses e ON e.id = x.expense_id WHERE x.participant_id = p.id AND %[1]s),
 		(SELECT coalesce(sum(e.amount_cents), 0) FROM expenses e WHERE e.paid_by = p.id AND %[1]s)
 		FROM participants p WHERE 1 = 1%[2]s`, cond, pidCond)
-	// Die Bedingungen kommen dreimal vor, die Parameter also auch.
+	// The conditions appear three times, so the parameters do too.
 	n := len(args)
 	if participantID != 0 {
 		n--

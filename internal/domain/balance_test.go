@@ -7,11 +7,11 @@ import (
 
 func TestBalances(t *testing.T) {
 	entries := []Entry{
-		// A (1) zahlt 30 € für alle drei
+		// A (1) pays 30 € for all three
 		{PaidBy: 1, AmountCents: 3000, Shares: []Share{{ParticipantID: 1, AmountCents: 1000}, {ParticipantID: 2, AmountCents: 1000}, {ParticipantID: 3, AmountCents: 1000}}},
-		// B (2) zahlt 10 € nur für C
+		// B (2) pays 10 € for C only
 		{PaidBy: 2, AmountCents: 1000, Shares: []Share{{ParticipantID: 3, AmountCents: 1000}}},
-		// Rückzahlung: C zahlt 5 € an A (A hat 100 % Anteil)
+		// Reimbursement: C pays 5 € to A (A has a 100 % share)
 		{PaidBy: 3, AmountCents: 500, Shares: []Share{{ParticipantID: 1, AmountCents: 500}}},
 	}
 	got := Balances(entries)
@@ -24,7 +24,7 @@ func TestBalances(t *testing.T) {
 		sum += v
 	}
 	if sum != 0 {
-		t.Errorf("Summe der Salden = %d, want 0", sum)
+		t.Errorf("sum of balances = %d, want 0", sum)
 	}
 }
 
@@ -40,21 +40,21 @@ func TestSettle(t *testing.T) {
 		balances map[int64]int64
 		want     []Transfer
 	}{
-		{"leer", map[int64]int64{}, nil},
-		{"ausgeglichen", map[int64]int64{1: 0, 2: 0}, nil},
-		{"einfach", map[int64]int64{1: 1500, 2: -1500}, []Transfer{{From: 2, To: 1, AmountCents: 1500}}},
+		{"empty", map[int64]int64{}, nil},
+		{"settled", map[int64]int64{1: 0, 2: 0}, nil},
+		{"simple", map[int64]int64{1: 1500, 2: -1500}, []Transfer{{From: 2, To: 1, AmountCents: 1500}}},
 		{
 			"greedy",
 			map[int64]int64{1: 5000, 2: -3000, 3: -1500, 4: -500},
 			[]Transfer{{From: 2, To: 1, AmountCents: 3000}, {From: 3, To: 1, AmountCents: 1500}, {From: 4, To: 1, AmountCents: 500}},
 		},
 		{
-			"mehrere Gläubiger",
+			"multiple creditors",
 			map[int64]int64{1: 2000, 2: 1000, 3: -2500, 4: -500},
 			[]Transfer{{From: 3, To: 1, AmountCents: 2000}, {From: 3, To: 2, AmountCents: 500}, {From: 4, To: 2, AmountCents: 500}},
 		},
 		{
-			"Gleichstand nach ID",
+			"tie broken by ID",
 			map[int64]int64{5: 100, 2: 100, 9: -100, 3: -100},
 			[]Transfer{{From: 3, To: 2, AmountCents: 100}, {From: 9, To: 5, AmountCents: 100}},
 		},
@@ -73,6 +73,6 @@ func TestSettleDoesNotModifyInput(t *testing.T) {
 	b := map[int64]int64{1: 100, 2: -100}
 	Settle(b)
 	if b[1] != 100 || b[2] != -100 {
-		t.Errorf("Eingabe verändert: %v", b)
+		t.Errorf("input modified: %v", b)
 	}
 }

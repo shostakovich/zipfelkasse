@@ -7,9 +7,9 @@ import (
 	"modernc.org/sqlite"
 )
 
-// foldFunc ist der Name der SQL-Funktion für die Textsuche. Sie ist beim
-// Treiber registriert und steht damit jeder Verbindung zur Verfügung (auch der
-// Sandbox von sql_abfrage).
+// foldFunc is the name of the SQL function for text search. It is registered
+// with the driver and is therefore available on every connection (including
+// the sql_abfrage sandbox).
 const foldFunc = "zipfelkasse_fold"
 
 func init() {
@@ -27,9 +27,9 @@ func init() {
 	})
 }
 
-// fold bereitet Text für die Suche ohne Rücksicht auf Groß-/Kleinschreibung
-// auf: Unicode-Kleinschreibung (auch Umlaute), ß und ẞ werden zu „ss“.
-// Umlaute bleiben Umlaute: „bäcker“ findet „BÄCKER“, nicht „baecker“.
+// fold prepares text for case-insensitive search: Unicode lower-casing
+// (including umlauts), ß and ẞ become "ss". Umlauts stay umlauts: "bäcker"
+// finds "BÄCKER", not "baecker".
 func fold(s string) string {
 	return strings.ReplaceAll(strings.ToLower(s), "ß", "ss")
 }

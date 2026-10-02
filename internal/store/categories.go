@@ -7,7 +7,7 @@ import (
 	"time"
 )
 
-// Category ist eine Ausgabenkategorie. Kategorien werden nur archiviert.
+// Category is an expense category. Categories are only ever archived.
 type Category struct {
 	ID         int64
 	Name       string
@@ -29,7 +29,7 @@ func scanCategory(row interface{ Scan(...any) error }) (Category, error) {
 	return c, nil
 }
 
-// ListCategories liefert Kategorien in Anzeigereihenfolge.
+// ListCategories returns categories in display order.
 func (s *Store) ListCategories(ctx context.Context, includeArchived bool) ([]Category, error) {
 	q := "SELECT " + categoryCols + " FROM categories"
 	if !includeArchived {
@@ -52,7 +52,7 @@ func (s *Store) ListCategories(ctx context.Context, includeArchived bool) ([]Cat
 	return out, rows.Err()
 }
 
-// GetCategory liefert eine Kategorie (auch archiviert) oder ErrNotFound.
+// GetCategory returns a category (archived ones too) or ErrNotFound.
 func (s *Store) GetCategory(ctx context.Context, id int64) (Category, error) {
 	c, err := scanCategory(s.db.QueryRowContext(ctx, "SELECT "+categoryCols+" FROM categories WHERE id = ?", id))
 	if errors.Is(err, sql.ErrNoRows) {
@@ -61,7 +61,7 @@ func (s *Store) GetCategory(ctx context.Context, id int64) (Category, error) {
 	return c, err
 }
 
-// CreateCategory legt eine Kategorie an (vor „Sonstiges“ einsortiert).
+// CreateCategory creates a category (sorted before "Sonstiges").
 func (s *Store) CreateCategory(ctx context.Context, name string) (int64, error) {
 	name, err := cleanName(name, "die Kategorie")
 	if err != nil {
@@ -78,7 +78,7 @@ func (s *Store) CreateCategory(ctx context.Context, name string) (int64, error) 
 	return res.LastInsertId()
 }
 
-// RenameCategory benennt eine Kategorie um.
+// RenameCategory renames a category.
 func (s *Store) RenameCategory(ctx context.Context, id int64, name string) error {
 	name, err := cleanName(name, "die Kategorie")
 	if err != nil {
@@ -91,7 +91,7 @@ func (s *Store) RenameCategory(ctx context.Context, id int64, name string) error
 	return checkAffected(res, err)
 }
 
-// SetCategoryArchived archiviert eine Kategorie bzw. holt sie zurück.
+// SetCategoryArchived archives or restores a category.
 func (s *Store) SetCategoryArchived(ctx context.Context, id int64, archived bool) error {
 	var v any
 	if archived {

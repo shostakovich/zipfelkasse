@@ -2,18 +2,18 @@ package domain
 
 import "time"
 
-// FXRate ist ein Wechselkurs im EZB-Format: Rate Einheiten der Währung
-// entsprechen 1 EUR. Date ist der Tag, für den der Kurs gilt (bei EZB-Kursen
-// ggf. der letzte Bankarbeitstag vor dem gewünschten Datum).
+// FXRate is an exchange rate in ECB format: Rate units of the currency
+// equal 1 EUR. Date is the day the rate applies to (for ECB rates possibly
+// the last banking day before the requested date).
 type FXRate struct {
-	Currency string    // ISO 4217, Großbuchstaben
-	Date     time.Time // Kalenderdatum (00:00 UTC)
-	Rate     float64   // Fremdwährung pro 1 EUR
+	Currency string    // ISO 4217, upper case
+	Date     time.Time // calendar date (00:00 UTC)
+	Rate     float64   // foreign currency per 1 EUR
 	Source   string    // FXSourceECB, FXSourceManual, FXSourceFixed
 }
 
 const (
-	FXSourceECB    = "ezb"     // EZB-Referenzkurs
-	FXSourceManual = "manuell" // von Hand eingetragen/überschrieben
-	FXSourceFixed  = "fest"    // EUR selbst, Kurs 1
+	FXSourceECB    = "ezb"     // ECB reference rate
+	FXSourceManual = "manuell" // entered/overridden by hand
+	FXSourceFixed  = "fest"    // EUR itself, rate 1
 )

@@ -8,14 +8,14 @@ import (
 	"github.com/shostakovich/zipfelkasse/internal/domain"
 )
 
-// resplitShares (Migration 2) berechnet expense_shares.amount_cents aller
-// Ausgaben – auch gelöschter – mit der aktuellen Regel von domain.Split neu:
-// Bei Gleichstand im Rest rotiert der Extra-Cent mit der Ausgaben-ID, statt
-// immer an die kleinste Personen-ID zu gehen. Gewichte bleiben, wie sie sind.
-// Ausgaben, deren gespeicherte Gewichte domain.Split ablehnt (z. B. alte
-// Importe), bleiben unverändert. Ein System-Eintrag im Aktivitätsprotokoll
-// nennt die Zahl der geänderten Ausgaben; der YNAB-Sync bemerkt die neuen
-// Anteile über seinen Fingerabdruck und überträgt sie beim nächsten Lauf.
+// resplitShares (migration 2) recomputes expense_shares.amount_cents of all
+// expenses (including deleted ones) using the current domain.Split rule: on
+// tied remainders the extra cent rotates with the expense ID instead of always
+// going to the smallest participant ID. Weights stay as they are. Expenses
+// whose stored weights domain.Split rejects (e.g. old imports) are left
+// unchanged. A system entry in the activity log states the number of changed
+// expenses; the YNAB sync notices the new shares via its fingerprint and
+// transfers them on the next run.
 func (s *Store) resplitShares(ctx context.Context, tx *sql.Tx) error {
 	type expense struct {
 		id     int64
@@ -58,7 +58,7 @@ func (s *Store) resplitShares(ctx context.Context, tx *sql.Tx) error {
 			continue
 		}
 		diff := false
-		for i, sh := range fresh { // beide nach ParticipantID sortiert
+		for i, sh := range fresh { // both sorted by ParticipantID
 			if sh.AmountCents == e.shares[i].AmountCents {
 				continue
 			}

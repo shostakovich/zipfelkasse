@@ -23,18 +23,18 @@ func TestSplit(t *testing.T) {
 		parts []Part
 		want  map[int64]int64
 	}{
-		{"gleichmäßig glatt", SplitEqual, 900, []Part{{1, 1}, {2, 1}, {3, 1}}, map[int64]int64{1: 300, 2: 300, 3: 300}},
-		{"gleichmäßig Rest an kleinste ID", SplitEqual, 1000, []Part{{3, 1}, {1, 1}, {2, 1}}, map[int64]int64{1: 334, 2: 333, 3: 333}},
-		{"gleichmäßig zwei Cent Rest", SplitEqual, 1001, []Part{{1, 0}, {2, 0}, {3, 0}}, map[int64]int64{1: 334, 2: 334, 3: 333}},
-		{"gleichmäßig eine Person", SplitEqual, 1234, []Part{{7, 1}}, map[int64]int64{7: 1234}},
-		{"gleichmäßig 1 Cent auf 3", SplitEqual, 1, []Part{{1, 1}, {2, 1}, {3, 1}}, map[int64]int64{1: 1, 2: 0, 3: 0}},
-		{"Anteile 2:1", SplitShares, 900, []Part{{1, 2}, {2, 1}}, map[int64]int64{1: 600, 2: 300}},
-		{"Anteile größter Rest", SplitShares, 1000, []Part{{1, 1}, {2, 2}}, map[int64]int64{1: 333, 2: 667}},
-		{"Anteile mit Null", SplitShares, 1000, []Part{{1, 1}, {2, 0}}, map[int64]int64{1: 1000, 2: 0}},
-		{"Prozent", SplitPercent, 1000, []Part{{1, 3333}, {2, 3333}, {3, 3334}}, map[int64]int64{1: 333, 2: 333, 3: 334}},
-		{"Prozent Rest nach größtem Rest", SplitPercent, 101, []Part{{1, 5000}, {2, 5000}}, map[int64]int64{1: 51, 2: 50}},
-		{"Prozent 70/30", SplitPercent, 1999, []Part{{1, 7000}, {2, 3000}}, map[int64]int64{1: 1399, 2: 600}},
-		{"Beträge", SplitAmount, 1000, []Part{{1, 250}, {2, 750}}, map[int64]int64{1: 250, 2: 750}},
+		{"equal even", SplitEqual, 900, []Part{{1, 1}, {2, 1}, {3, 1}}, map[int64]int64{1: 300, 2: 300, 3: 300}},
+		{"equal remainder to smallest ID", SplitEqual, 1000, []Part{{3, 1}, {1, 1}, {2, 1}}, map[int64]int64{1: 334, 2: 333, 3: 333}},
+		{"equal two cents remainder", SplitEqual, 1001, []Part{{1, 0}, {2, 0}, {3, 0}}, map[int64]int64{1: 334, 2: 334, 3: 333}},
+		{"equal one person", SplitEqual, 1234, []Part{{7, 1}}, map[int64]int64{7: 1234}},
+		{"equal 1 cent among 3", SplitEqual, 1, []Part{{1, 1}, {2, 1}, {3, 1}}, map[int64]int64{1: 1, 2: 0, 3: 0}},
+		{"shares 2:1", SplitShares, 900, []Part{{1, 2}, {2, 1}}, map[int64]int64{1: 600, 2: 300}},
+		{"shares largest remainder", SplitShares, 1000, []Part{{1, 1}, {2, 2}}, map[int64]int64{1: 333, 2: 667}},
+		{"shares with zero", SplitShares, 1000, []Part{{1, 1}, {2, 0}}, map[int64]int64{1: 1000, 2: 0}},
+		{"percent", SplitPercent, 1000, []Part{{1, 3333}, {2, 3333}, {3, 3334}}, map[int64]int64{1: 333, 2: 333, 3: 334}},
+		{"percent remainder by largest remainder", SplitPercent, 101, []Part{{1, 5000}, {2, 5000}}, map[int64]int64{1: 51, 2: 50}},
+		{"percent 70/30", SplitPercent, 1999, []Part{{1, 7000}, {2, 3000}}, map[int64]int64{1: 1399, 2: 600}},
+		{"amounts", SplitAmount, 1000, []Part{{1, 250}, {2, 750}}, map[int64]int64{1: 250, 2: 750}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -49,18 +49,18 @@ func TestSplit(t *testing.T) {
 			for i, s := range got {
 				sum += s.AmountCents
 				if i > 0 && got[i-1].ParticipantID >= s.ParticipantID {
-					t.Errorf("Ergebnis nicht nach ParticipantID sortiert: %v", got)
+					t.Errorf("result not sorted by ParticipantID: %v", got)
 				}
 			}
 			if sum != tt.total {
-				t.Errorf("Summe %d != %d", sum, tt.total)
+				t.Errorf("sum %d != %d", sum, tt.total)
 			}
 		})
 	}
 }
 
-// Bei Gleichstand im Rest rotiert der Extra-Cent mit dem Startwert
-// (Ausgaben-ID) reihum über die gleichrangigen Personen (nach ID sortiert).
+// On tied remainders the extra cent rotates with the start value (expense
+// ID) round-robin over the tied people (sorted by ID).
 func TestSplitRotatesTies(t *testing.T) {
 	three := []Part{{3, 1}, {1, 1}, {2, 1}}
 	tests := []struct {
@@ -71,20 +71,20 @@ func TestSplitRotatesTies(t *testing.T) {
 		rotation int64
 		want     map[int64]int64
 	}{
-		{"zwei Personen, gerade ID", SplitEqual, 1001, []Part{{1, 1}, {2, 1}}, 10, map[int64]int64{1: 501, 2: 500}},
-		{"zwei Personen, ungerade ID", SplitEqual, 1001, []Part{{1, 1}, {2, 1}}, 11, map[int64]int64{1: 500, 2: 501}},
-		{"drei, Start 0", SplitEqual, 1000, three, 0, map[int64]int64{1: 334, 2: 333, 3: 333}},
-		{"drei, Start 1", SplitEqual, 1000, three, 1, map[int64]int64{1: 333, 2: 334, 3: 333}},
-		{"drei, Start 2", SplitEqual, 1000, three, 2, map[int64]int64{1: 333, 2: 333, 3: 334}},
-		{"drei, Start 3 = 0", SplitEqual, 1000, three, 3, map[int64]int64{1: 334, 2: 333, 3: 333}},
-		{"zwei Cent, Start 1", SplitEqual, 1001, three, 1, map[int64]int64{1: 333, 2: 334, 3: 334}},
-		{"zwei Cent, Start 2 (reihum)", SplitEqual, 1001, three, 2, map[int64]int64{1: 334, 2: 333, 3: 334}},
-		{"negativer Startwert", SplitEqual, 1000, three, -1, map[int64]int64{1: 333, 2: 333, 3: 334}},
-		{"größter Rest geht vor", SplitShares, 5, []Part{{1, 2}, {2, 1}, {3, 1}}, 1, map[int64]int64{1: 3, 2: 1, 3: 1}},
-		{"nur die Gleichrangigen rotieren, Start 0", SplitShares, 6, []Part{{1, 2}, {2, 1}, {3, 1}}, 0, map[int64]int64{1: 3, 2: 2, 3: 1}},
-		{"nur die Gleichrangigen rotieren, Start 1", SplitShares, 6, []Part{{1, 2}, {2, 1}, {3, 1}}, 1, map[int64]int64{1: 3, 2: 1, 3: 2}},
-		{"Prozent 50/50", SplitPercent, 101, []Part{{1, 5000}, {2, 5000}}, 7, map[int64]int64{1: 50, 2: 51}},
-		{"Beträge unberührt", SplitAmount, 1000, []Part{{1, 250}, {2, 750}}, 1, map[int64]int64{1: 250, 2: 750}},
+		{"two people, even ID", SplitEqual, 1001, []Part{{1, 1}, {2, 1}}, 10, map[int64]int64{1: 501, 2: 500}},
+		{"two people, odd ID", SplitEqual, 1001, []Part{{1, 1}, {2, 1}}, 11, map[int64]int64{1: 500, 2: 501}},
+		{"three, start 0", SplitEqual, 1000, three, 0, map[int64]int64{1: 334, 2: 333, 3: 333}},
+		{"three, start 1", SplitEqual, 1000, three, 1, map[int64]int64{1: 333, 2: 334, 3: 333}},
+		{"three, start 2", SplitEqual, 1000, three, 2, map[int64]int64{1: 333, 2: 333, 3: 334}},
+		{"three, start 3 = 0", SplitEqual, 1000, three, 3, map[int64]int64{1: 334, 2: 333, 3: 333}},
+		{"two cents, start 1", SplitEqual, 1001, three, 1, map[int64]int64{1: 333, 2: 334, 3: 334}},
+		{"two cents, start 2 (round-robin)", SplitEqual, 1001, three, 2, map[int64]int64{1: 334, 2: 333, 3: 334}},
+		{"negative start value", SplitEqual, 1000, three, -1, map[int64]int64{1: 333, 2: 333, 3: 334}},
+		{"largest remainder takes precedence", SplitShares, 5, []Part{{1, 2}, {2, 1}, {3, 1}}, 1, map[int64]int64{1: 3, 2: 1, 3: 1}},
+		{"only the tied rotate, start 0", SplitShares, 6, []Part{{1, 2}, {2, 1}, {3, 1}}, 0, map[int64]int64{1: 3, 2: 2, 3: 1}},
+		{"only the tied rotate, start 1", SplitShares, 6, []Part{{1, 2}, {2, 1}, {3, 1}}, 1, map[int64]int64{1: 3, 2: 1, 3: 2}},
+		{"percent 50/50", SplitPercent, 101, []Part{{1, 5000}, {2, 5000}}, 7, map[int64]int64{1: 50, 2: 51}},
+		{"amounts unaffected", SplitAmount, 1000, []Part{{1, 250}, {2, 750}}, 1, map[int64]int64{1: 250, 2: 750}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -119,30 +119,30 @@ func TestSplitErrors(t *testing.T) {
 		parts   []Part
 		wantMsg string
 	}{
-		{"keine Personen", SplitEqual, 100, nil, "Mindestens eine Person"},
-		{"Betrag null", SplitEqual, 0, []Part{{1, 1}}, "größer als 0"},
-		{"Betrag negativ", SplitEqual, -5, []Part{{1, 1}}, "größer als 0"},
-		{"Betrag zu groß", SplitEqual, MaxAmountCents + 1, []Part{{1, 1}}, "zu groß"},
-		{"doppelt", SplitEqual, 100, []Part{{1, 1}, {1, 1}}, "doppelt"},
-		{"ungültige ID", SplitEqual, 100, []Part{{0, 1}}, "Ungültige Person"},
-		{"unbekannter Modus", SplitMode("x"), 100, []Part{{1, 1}}, "Aufteilungsart"},
-		{"negative Anteile", SplitShares, 100, []Part{{1, -1}, {2, 2}}, "negativ"},
-		{"Anteile Summe null", SplitShares, 100, []Part{{1, 0}}, "größer als 0"},
-		{"Prozent ungleich 100", SplitPercent, 100, []Part{{1, 5000}, {2, 4000}}, "100 %"},
-		{"Beträge Summe falsch", SplitAmount, 1000, []Part{{1, 500}, {2, 400}}, "10,00 €"},
+		{"no people", SplitEqual, 100, nil, "Mindestens eine Person"},
+		{"amount zero", SplitEqual, 0, []Part{{1, 1}}, "größer als 0"},
+		{"amount negative", SplitEqual, -5, []Part{{1, 1}}, "größer als 0"},
+		{"amount too large", SplitEqual, MaxAmountCents + 1, []Part{{1, 1}}, "zu groß"},
+		{"duplicate", SplitEqual, 100, []Part{{1, 1}, {1, 1}}, "doppelt"},
+		{"invalid ID", SplitEqual, 100, []Part{{0, 1}}, "Ungültige Person"},
+		{"unknown mode", SplitMode("x"), 100, []Part{{1, 1}}, "Aufteilungsart"},
+		{"negative shares", SplitShares, 100, []Part{{1, -1}, {2, 2}}, "negativ"},
+		{"shares sum zero", SplitShares, 100, []Part{{1, 0}}, "größer als 0"},
+		{"percent not 100", SplitPercent, 100, []Part{{1, 5000}, {2, 4000}}, "100 %"},
+		{"amounts sum wrong", SplitAmount, 1000, []Part{{1, 500}, {2, 400}}, "10,00 €"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			_, err := Split(tt.mode, tt.total, tt.parts, 0)
 			if err == nil {
-				t.Fatal("erwarte Fehler")
+				t.Fatal("expected error")
 			}
 			var ve ValidationError
 			if !errors.As(err, &ve) {
-				t.Fatalf("kein ValidationError: %v", err)
+				t.Fatalf("not a ValidationError: %v", err)
 			}
 			if !strings.Contains(ve.Msg, tt.wantMsg) {
-				t.Errorf("Meldung %q enthält nicht %q", ve.Msg, tt.wantMsg)
+				t.Errorf("message %q does not contain %q", ve.Msg, tt.wantMsg)
 			}
 		})
 	}
@@ -151,10 +151,10 @@ func TestSplitErrors(t *testing.T) {
 func TestSplitModeValid(t *testing.T) {
 	for _, m := range SplitModes {
 		if !m.Valid() || m.Label() == "" {
-			t.Errorf("%q ungültig oder ohne Label", m)
+			t.Errorf("%q invalid or without label", m)
 		}
 	}
 	if SplitMode("foo").Valid() {
-		t.Error("foo sollte ungültig sein")
+		t.Error("foo should be invalid")
 	}
 }

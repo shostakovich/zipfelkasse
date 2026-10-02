@@ -1,28 +1,28 @@
-# Backlog (nach Version 1)
+# Backlog (after version 1)
 
-Bewusst zurückgestellt, damit Version 1 schlank bleibt. Quelle: Abnahme mit den echten Spliit-Daten (Oktober 2026).
+Deliberately deferred to keep version 1 lean. Source: acceptance test with the real Spliit data (October 2026).
 
 ## App
 
-- **Kategorie-Vorschlag im Formular:** Die Kategorie, die zuletzt für denselben Titel benutzt wurde, wird vorgeschlagen.
-  Hintergrund: 64 % der importierten Ausgaben haben keine Kategorie. Schon entschieden: nur der Vorschlag, keine Seite
-  zum Nachtragen.
-- **Platzhalter im Titel wiederkehrender Ausgaben** (`{MM/JJ}`, `{Monat}` …), damit nicht jeden Monat derselbe
-  Titel „Miete 10/26“ entsteht. Bis dahin: die Ausgabe vor „Als wiederkehrend einrichten“ neutral benennen
-  („Miete“).
+- **Category suggestion in the form:** the category last used for the same title is suggested.
+  Background: 64 % of the imported expenses have no category. Already decided: only the suggestion, no page
+  for filling them in afterwards.
+- **Placeholders in the title of recurring expenses** (`{MM/JJ}`, `{Monat}` …), so that you don't end up with
+  the same title "Miete 10/26" every month. Until then: give the expense a neutral name ("Miete") before
+  "Als wiederkehrend einrichten" (set up as recurring).
 
 ## MCP
 
-- `ausgaben_suchen`: Sortierung, Betragsgrenzen, mehrere Suchwörter, `bezahlt_von` getrennt von „beteiligt“,
-  kompaktere Ausgabe.
-- `statistik`: Gruppierungen `jahr`, `woche`, `titel` (Händler), Filter `kategorie`/`text`, leere Monate als 0,
-  Vorjahresvergleich.
-- Neue Tools `aktivitaet` und `saldo_verlauf`.
-- Datenüberblick in den Instructions (Zeitraum, Anzahl, Anteil ohne Kategorie), alle Werte von `activity.action`.
-- Antwortgröße halbieren (Text ist heute eine Kopie von `structuredContent`; `outputSchema` prüfen).
+- `ausgaben_suchen`: sorting, amount bounds, multiple search terms, `bezahlt_von` separate from "beteiligt"
+  (involved), more compact output.
+- `statistik`: groupings `jahr`, `woche`, `titel` (merchant), filters `kategorie`/`text`, empty months as 0,
+  year-over-year comparison.
+- New tools `aktivitaet` and `saldo_verlauf`.
+- Data overview in the instructions (date range, count, share without category), all values of `activity.action`.
+- Halve the response size (the text is currently a copy of `structuredContent`; check `outputSchema`).
 
-## Bewusst nicht geplant
+## Deliberately not planned
 
-- Spliit-Import als Befehl (Umzug läuft einmalig über das Wegwerf-Skript).
-- Negative Beträge/Gutschriften (die zwei Altfälle werden von Hand korrigiert).
-- Reisen/Ereignisse als eigenes Feld.
+- Spliit import as a command (the migration runs once via the throwaway script).
+- Negative amounts/credits (the two legacy cases are corrected by hand).
+- Trips/events as a separate field.

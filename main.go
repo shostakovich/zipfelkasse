@@ -1,9 +1,9 @@
-// Zipfelkasse – Ausgaben in einer Gruppe teilen (Spliit-Nachbau für den Heimserver).
+// Zipfelkasse – share expenses within a group (a Spliit port for the home server).
 //
-// Unterbefehle:
+// Subcommands:
 //
-//	zipfelkasse [serve]      startet den Server (Standard)
-//	zipfelkasse healthcheck  prüft GET /healthz des laufenden Servers (Exit-Code 0/1)
+//	zipfelkasse [serve]      starts the server (default)
+//	zipfelkasse healthcheck  checks GET /healthz of the running server (exit code 0/1)
 package main
 
 import (
@@ -18,7 +18,7 @@ import (
 	"sync"
 	"syscall"
 	"time"
-	_ "time/tzdata" // Zeitzonen im scratch-Image
+	_ "time/tzdata" // time zones in the scratch image
 
 	"github.com/shostakovich/zipfelkasse/internal/config"
 	"github.com/shostakovich/zipfelkasse/internal/export"
@@ -30,7 +30,7 @@ import (
 	"github.com/shostakovich/zipfelkasse/internal/ynab"
 )
 
-// backupKeep ist die Anzahl der aufbewahrten nächtlichen Backups.
+// backupKeep is the number of nightly backups kept.
 const backupKeep = 7
 
 func main() {
@@ -45,7 +45,7 @@ func main() {
 	case "healthcheck":
 		err = healthcheck(os.Getenv("ZIPFELKASSE_ADDR"))
 	default:
-		fmt.Fprintf(os.Stderr, "unbekannter Befehl %q\nBenutzung: zipfelkasse [serve|healthcheck]\n", cmd)
+		fmt.Fprintf(os.Stderr, "unknown command %q\nusage: zipfelkasse [serve|healthcheck]\n", cmd)
 		os.Exit(2)
 	}
 	if err != nil {
@@ -54,7 +54,7 @@ func main() {
 	}
 }
 
-// app ist die fertig verdrahtete Anwendung.
+// app is the fully wired application.
 type app struct {
 	handler   http.Handler
 	fx        *fx.Service
@@ -62,7 +62,7 @@ type app struct {
 	ynab      *ynab.Service
 }
 
-// newApp baut Deps, alle Services und den Mux.
+// newApp builds Deps, all services and the mux.
 func newApp(cfg config.Config, st *store.Store, log *slog.Logger) (*app, error) {
 	render, err := web.NewRenderer(st, cfg.Location, log)
 	if err != nil {
@@ -74,7 +74,7 @@ func newApp(cfg config.Config, st *store.Store, log *slog.Logger) (*app, error) 
 	if err != nil {
 		return nil, fmt.Errorf("fx: %w", err)
 	}
-	d.FX = fxSvc // ab hier sehen alle Pakete den Kursdienst
+	d.FX = fxSvc // from here on all packages see the rate service
 
 	rec, err := recurring.New(d)
 	if err != nil {
@@ -107,7 +107,7 @@ func serve() error {
 	log := slog.New(slog.NewTextHandler(os.Stderr, nil))
 	st, err := store.Open(cfg.DBPath)
 	if err != nil {
-		return fmt.Errorf("datenbank %s: %w", cfg.DBPath, err)
+		return fmt.Errorf("database %s: %w", cfg.DBPath, err)
 	}
 	defer st.Close()
 	a, err := newApp(cfg, st, log)
@@ -137,12 +137,12 @@ func serve() error {
 	}
 	errc := make(chan error, 1)
 	go func() { errc <- srv.Serve(ln) }()
-	log.Info("Zipfelkasse läuft", "addr", cfg.Addr, "db", cfg.DBPath, "tz", cfg.Location.String())
+	log.Info("Zipfelkasse running", "addr", cfg.Addr, "db", cfg.DBPath, "tz", cfg.Location.String())
 
 	select {
 	case err = <-errc:
 	case <-ctx.Done():
-		log.Info("fahre herunter")
+		log.Info("shutting down")
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		err = srv.Shutdown(shutdownCtx)
 		cancel()
@@ -155,8 +155,8 @@ func serve() error {
 	return err
 }
 
-// backupLoop schreibt jede Nacht um 03:00 (Ortszeit) ein Backup und behält
-// die letzten backupKeep.
+// backupLoop writes a backup every night at 03:00 (local time) and keeps
+// the last backupKeep.
 func backupLoop(ctx context.Context, st *store.Store, cfg config.Config, log *slog.Logger) {
 	for {
 		next := nextBackup(time.Now().In(cfg.Location))
@@ -169,14 +169,14 @@ func backupLoop(ctx context.Context, st *store.Store, cfg config.Config, log *sl
 		}
 		path, err := st.Backup(ctx, cfg.BackupDir, backupKeep)
 		if err != nil {
-			log.Error("backup fehlgeschlagen", "err", err)
+			log.Error("backup failed", "err", err)
 			continue
 		}
-		log.Info("backup geschrieben", "pfad", path)
+		log.Info("backup written", "path", path)
 	}
 }
 
-// nextBackup liefert den nächsten 03:00-Zeitpunkt nach now (in now's Zone).
+// nextBackup returns the next 03:00 after now (in now's zone).
 func nextBackup(now time.Time) time.Time {
 	t := time.Date(now.Year(), now.Month(), now.Day(), 3, 0, 0, 0, now.Location())
 	if !t.After(now) {
@@ -185,7 +185,7 @@ func nextBackup(now time.Time) time.Time {
 	return t
 }
 
-// healthcheck ruft GET /healthz auf dem lokalen Port auf.
+// healthcheck calls GET /healthz on the local port.
 func healthcheck(addr string) error {
 	u, err := healthURL(addr)
 	if err != nil {

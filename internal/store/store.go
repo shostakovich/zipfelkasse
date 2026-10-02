@@ -1,8 +1,8 @@
-// Package store kapselt die SQLite-Datenbank: Schema/Migrationen, Queries,
-// Activity-Log, Backup und den Change-Hook für Ausgaben.
+// Package store encapsulates the SQLite database: schema/migrations, queries,
+// activity log, backup and the change hook for expenses.
 //
-// Feature-Pakete legen ihre eigenen Queries in internal/store/<paket>.go ab
-// (z. B. store/ynab.go) und nutzen dort s.db bzw. s.tx direkt.
+// Feature packages put their own queries in internal/store/<package>.go
+// (e.g. store/ynab.go) and use s.db or s.tx directly there.
 package store
 
 import (
@@ -29,11 +29,11 @@ import (
 //go:embed migrations/*.sql
 var migrationsFS embed.FS
 
-// ErrNotFound wird geliefert, wenn ein Datensatz nicht existiert (oder bei
-// Ausgaben: bereits gelöscht ist, wo das relevant ist).
-var ErrNotFound = errors.New("nicht gefunden")
+// ErrNotFound is returned when a record does not exist (or, for expenses,
+// is already deleted where that matters).
+var ErrNotFound = errors.New("not found")
 
-// Store ist die Datenbank von Zipfelkasse. Alle Methoden sind nebenläufig nutzbar.
+// Store is Zipfelkasse's database. All methods are safe for concurrent use.
 type Store struct {
 	db   *sql.DB
 	path string
@@ -41,20 +41,20 @@ type Store struct {
 	hooksMu sync.RWMutex
 	hooks   []func(ExpenseChange)
 
-	// now ist in Tests überschreibbar.
+	// now can be overridden in tests.
 	now func() time.Time
 }
 
-// Open öffnet (bzw. erzeugt) die Datenbank unter path und spielt fehlende
-// Migrationen ein. path ":memory:" erzeugt eine flüchtige Datenbank (Tests).
-// Einstellungen: WAL, foreign_keys=ON, busy_timeout=5s, synchronous=NORMAL,
-// Transaktionen mit BEGIN IMMEDIATE.
+// Open opens (or creates) the database at path and applies missing
+// migrations. path ":memory:" creates an ephemeral database (tests).
+// Settings: WAL, foreign_keys=ON, busy_timeout=5s, synchronous=NORMAL,
+// transactions with BEGIN IMMEDIATE.
 func Open(path string) (*Store, error) {
 	memory := path == ":memory:"
 	if !memory {
 		if dir := filepath.Dir(path); dir != "" {
 			if err := os.MkdirAll(dir, 0o755); err != nil {
-				return nil, fmt.Errorf("datenbankverzeichnis anlegen: %w", err)
+				return nil, fmt.Errorf("create database directory: %w", err)
 			}
 		}
 	}
@@ -64,7 +64,7 @@ func Open(path string) (*Store, error) {
 		return nil, err
 	}
 	if memory {
-		// Jede Verbindung hätte sonst ihre eigene, leere Datenbank.
+		// Otherwise every connection would get its own empty database.
 		db.SetMaxOpenConns(1)
 	}
 	s := &Store{db: db, path: path, now: time.Now}
@@ -75,31 +75,31 @@ func Open(path string) (*Store, error) {
 	return s, nil
 }
 
-// Close schließt die Datenbank.
+// Close closes the database.
 func (s *Store) Close() error { return s.db.Close() }
 
-// Path ist der Dateipfad der Datenbank (":memory:" in Tests).
+// Path is the database file path (":memory:" in tests).
 func (s *Store) Path() string { return s.path }
 
-// Ping prüft, ob die Datenbank erreichbar ist (Health-Check).
+// Ping checks whether the database is reachable (health check).
 func (s *Store) Ping(ctx context.Context) error { return s.db.PingContext(ctx) }
 
-// SchemaVersion liefert PRAGMA user_version.
+// SchemaVersion returns PRAGMA user_version.
 func (s *Store) SchemaVersion(ctx context.Context) (int, error) {
 	var v int
 	err := s.db.QueryRowContext(ctx, "PRAGMA user_version").Scan(&v)
 	return v, err
 }
 
-// goMigrations sind Migrationen in Go für Datenkorrekturen, die SQL allein
-// nicht kann. Sie teilen sich den Nummernkreis mit migrations/*.sql.
+// goMigrations are migrations written in Go for data fixes that SQL alone
+// cannot do. They share the numbering with migrations/*.sql.
 var goMigrations = map[int]func(s *Store, ctx context.Context, tx *sql.Tx) error{
 	2: (*Store).resplitShares,
 }
 
-// migrate spielt alle Migrationen (migrations/NNN_*.sql und goMigrations)
-// ein, deren Nummer größer als PRAGMA user_version ist, jede in einer eigenen
-// Transaktion.
+// migrate applies all migrations (migrations/NNN_*.sql and goMigrations)
+// whose number is greater than PRAGMA user_version, each in its own
+// transaction.
 func (s *Store) migrate(ctx context.Context) error {
 	names, err := fs.Glob(migrationsFS, "migrations/*.sql")
 	if err != nil {
@@ -116,7 +116,7 @@ func (s *Store) migrate(ctx context.Context) error {
 		num, _, ok := strings.Cut(base, "_")
 		n, err := strconv.Atoi(num)
 		if !ok || err != nil || n <= 0 {
-			return fmt.Errorf("migration %s: dateiname muss mit NNN_ beginnen", base)
+			return fmt.Errorf("migration %s: file name must start with NNN_", base)
 		}
 		ms = append(ms, migration{n: n, name: name})
 	}
@@ -131,7 +131,7 @@ func (s *Store) migrate(ctx context.Context) error {
 	}
 	for i, m := range ms {
 		if i > 0 && ms[i-1].n == m.n {
-			return fmt.Errorf("migration %d doppelt vergeben", m.n)
+			return fmt.Errorf("migration %d is defined twice", m.n)
 		}
 		if m.n <= current {
 			continue
@@ -160,7 +160,7 @@ func (s *Store) migrate(ctx context.Context) error {
 	return nil
 }
 
-// inTx führt fn in einer Transaktion aus (Commit bei nil, sonst Rollback).
+// inTx runs fn in a transaction (commit on nil, rollback otherwise).
 func (s *Store) inTx(ctx context.Context, fn func(tx *sql.Tx) error) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -173,19 +173,19 @@ func (s *Store) inTx(ctx context.Context, fn func(tx *sql.Tx) error) error {
 	return tx.Commit()
 }
 
-// ExpenseChange beschreibt eine erfolgreich gespeicherte Änderung an einer
-// Ausgabe. Action ist ActionExpenseCreated, ActionExpenseUpdated oder
+// ExpenseChange describes a successfully stored change to an expense.
+// Action is ActionExpenseCreated, ActionExpenseUpdated or
 // ActionExpenseDeleted.
 type ExpenseChange struct {
 	ExpenseID int64
 	Action    string
 }
 
-// OnExpenseChange registriert fn; fn wird nach jedem erfolgreichen Commit
-// einer Ausgaben-Änderung (Anlegen, Ändern, Löschen) aufgerufen – synchron im
-// Goroutine des Aufrufers. fn darf also nicht blockieren (z. B. nur in eine
-// Queue/Channel einreihen) und keinen Request-Context weiterverwenden.
-// Registrierung beim Start, vor dem ersten Request.
+// OnExpenseChange registers fn; fn is called after every successful commit
+// of an expense change (create, update, delete), synchronously in the
+// caller's goroutine. So fn must not block (e.g. only enqueue into a
+// queue/channel) and must not keep using the request context.
+// Register at startup, before the first request.
 func (s *Store) OnExpenseChange(fn func(ExpenseChange)) {
 	s.hooksMu.Lock()
 	defer s.hooksMu.Unlock()
@@ -201,11 +201,12 @@ func (s *Store) notify(c ExpenseChange) {
 	}
 }
 
-// Zeitformate in der Datenbank.
+// Time formats in the database.
 const timeLayout = time.RFC3339
 
-// SetClock ersetzt die Uhr des Stores (Zeitstempel wie created_at); nur für
-// Tests, auch anderer Pakete. Nicht nebenläufig zu Schreibzugriffen aufrufen.
+// SetClock replaces the store's clock (timestamps such as created_at); for
+// tests only, including those of other packages. Do not call concurrently
+// with writes.
 func (s *Store) SetClock(now func() time.Time) { s.now = now }
 
 func (s *Store) nowString() string { return s.now().UTC().Format(timeLayout) }
@@ -236,7 +237,7 @@ func invalid(format string, args ...any) error {
 	return domain.ValidationError{Msg: fmt.Sprintf(format, args...)}
 }
 
-// cleanName prüft und normalisiert Namen von Personen/Kategorien.
+// cleanName validates and normalizes names of people/categories.
 func cleanName(name, what string) (string, error) {
 	name = strings.Join(strings.Fields(name), " ")
 	if name == "" {
