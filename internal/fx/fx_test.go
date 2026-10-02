@@ -311,10 +311,10 @@ func TestRateManualPrecedence(t *testing.T) {
 	st := newTestStore(t)
 	s, f := newTestService(t, st)
 	ctx := context.Background()
-	if err := st.SetManualFXRate(ctx, "USD", day("2026-09-30"), 1.2); err != nil {
+	if err := st.SetManualFXRate(ctx, 0, "USD", day("2026-09-30"), 1.2); err != nil {
 		t.Fatal(err)
 	}
-	if err := st.SetManualFXRate(ctx, "XYZ", day("2026-01-01"), 4.5); err != nil {
+	if err := st.SetManualFXRate(ctx, 0, "XYZ", day("2026-01-01"), 4.5); err != nil {
 		t.Fatal(err)
 	}
 	r, err := s.Rate(ctx, "USD", day("2026-10-01"))
@@ -552,7 +552,7 @@ func TestSettingsPage(t *testing.T) {
 	st := newTestStore(t)
 	s, f := newTestService(t, st)
 	ctx := context.Background()
-	annaID, err := st.CreateParticipant(ctx, "Anna")
+	annaID, err := st.CreateParticipant(ctx, 0, "Anna")
 	if err != nil {
 		t.Fatal(err)
 	}

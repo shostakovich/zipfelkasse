@@ -207,33 +207,54 @@ func (s *Store) SetRecurringNextDate(ctx context.Context, id int64, from, next t
 	return err
 }
 
+// getRecurring reads a recurrence in tx (ErrNotFound if missing).
+func getRecurring(ctx context.Context, tx *sql.Tx, id int64) (Recurring, error) {
+	r, err := scanRecurring(tx.QueryRowContext(ctx, "SELECT "+recurringCols+" FROM recurring WHERE id = ?", id))
+	if errors.Is(err, sql.ErrNoRows) {
+		return r, ErrNotFound
+	}
+	return r, err
+}
+
+// ruleLabel describes a rule for the activity log:
+// `Wiederholung „Miete“ (monatlich)`.
+func ruleLabel(r Recurring) string {
+	return fmt.Sprintf("Wiederholung „%s“ (%s)", r.Template.Title, strings.ToLower(r.Frequency.Label()))
+}
+
 // SetRecurringActive pauses or resumes a recurrence. On resume, occurrences
 // from the pause are not caught up: next_date is set to the first occurrence
 // from today on (unless it is later anyway).
-func (s *Store) SetRecurringActive(ctx context.Context, id int64, active bool, today time.Time) error {
+func (s *Store) SetRecurringActive(ctx context.Context, actorID, id int64, active bool, today time.Time) error {
 	return s.inTx(ctx, func(tx *sql.Tx) error {
-		r, err := scanRecurring(tx.QueryRowContext(ctx, "SELECT "+recurringCols+" FROM recurring WHERE id = ?", id))
-		if errors.Is(err, sql.ErrNoRows) {
-			return ErrNotFound
-		}
+		r, err := getRecurring(ctx, tx, id)
 		if err != nil {
 			return err
 		}
-		next := r.NextDate
-		if active && !r.Active && next.Before(today) {
-			next = domain.NextDate(r.Frequency, r.StartDate, today.AddDate(0, 0, -1))
+		next, verb := r.NextDate, "pausiert"
+		if active {
+			verb = "fortgesetzt"
+			if !r.Active && next.Before(today) {
+				next = domain.NextDate(r.Frequency, r.StartDate, today.AddDate(0, 0, -1))
+			}
 		}
-		_, err = tx.ExecContext(ctx, "UPDATE recurring SET active = ?, next_date = ?, updated_at = ? WHERE id = ?",
-			active, formatDate(next), s.nowString(), id)
-		return err
+		if _, err := tx.ExecContext(ctx, "UPDATE recurring SET active = ?, next_date = ?, updated_at = ? WHERE id = ?",
+			active, formatDate(next), s.nowString(), id); err != nil {
+			return err
+		}
+		return s.logSettings(ctx, tx, actorID, ruleLabel(r)+" "+verb)
 	})
 }
 
 // UpdateRecurringTemplateFromLatest adopts the most recent (non-deleted)
 // instance of the recurrence as the new template, e.g. after its amount was
-// changed. Without an instance: ErrNotFound.
-func (s *Store) UpdateRecurringTemplateFromLatest(ctx context.Context, id int64) error {
+// changed. Without an instance (or without the recurrence): ErrNotFound.
+func (s *Store) UpdateRecurringTemplateFromLatest(ctx context.Context, actorID, id int64) error {
 	return s.inTx(ctx, func(tx *sql.Tx) error {
+		r, err := getRecurring(ctx, tx, id)
+		if err != nil {
+			return err
+		}
 		es, err := queryExpenses(ctx, tx, expenseSelect+
 			" WHERE e.recurring_id = ? AND e.deleted_at IS NULL ORDER BY e.date DESC, e.id DESC LIMIT 1", id)
 		if err != nil {
@@ -246,9 +267,11 @@ func (s *Store) UpdateRecurringTemplateFromLatest(ctx context.Context, id int64)
 		if err != nil {
 			return err
 		}
-		res, err := tx.ExecContext(ctx, "UPDATE recurring SET template_json = ?, updated_at = ? WHERE id = ?",
-			string(tmpl), s.nowString(), id)
-		return checkAffected(res, err)
+		if _, err := tx.ExecContext(ctx, "UPDATE recurring SET template_json = ?, updated_at = ? WHERE id = ?",
+			string(tmpl), s.nowString(), id); err != nil {
+			return err
+		}
+		return s.logSettings(ctx, tx, actorID, ruleLabel(r)+": Vorlage aus der letzten Ausgabe übernommen")
 	})
 }
 
@@ -256,10 +279,7 @@ func (s *Store) UpdateRecurringTemplateFromLatest(ctx context.Context, id int64)
 // (their recurring_id is cleared via ON DELETE SET NULL).
 func (s *Store) DeleteRecurring(ctx context.Context, actorID, id int64) error {
 	return s.inTx(ctx, func(tx *sql.Tx) error {
-		r, err := scanRecurring(tx.QueryRowContext(ctx, "SELECT "+recurringCols+" FROM recurring WHERE id = ?", id))
-		if errors.Is(err, sql.ErrNoRows) {
-			return ErrNotFound
-		}
+		r, err := getRecurring(ctx, tx, id)
 		if err != nil {
 			return err
 		}

@@ -57,7 +57,7 @@ func newEnv(t *testing.T) *env {
 	e := &env{t: t, h: mux, st: st, logs: logs, ids: map[string]int64{}, cats: map[string]int64{}}
 	ctx := context.Background()
 	for _, n := range []string{"Anna", "Ben", "Cleo"} {
-		if e.ids[n], err = st.CreateParticipant(ctx, n); err != nil {
+		if e.ids[n], err = st.CreateParticipant(ctx, 0, n); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -481,7 +481,7 @@ func TestCategoryNone(t *testing.T) {
 // A real category named like the special value takes precedence.
 func TestCategoryNamedNone(t *testing.T) {
 	e := newEnv(t)
-	id, err := e.st.CreateCategory(context.Background(), "None")
+	id, err := e.st.CreateCategory(context.Background(), 0, "None")
 	if err != nil {
 		t.Fatal(err)
 	}

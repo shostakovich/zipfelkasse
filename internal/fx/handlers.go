@@ -2,7 +2,6 @@ package fx
 
 import (
 	"errors"
-	"fmt"
 	"net/http"
 	"strings"
 	"time"
@@ -171,7 +170,6 @@ func (s *Service) handleSaveManual(w http.ResponseWriter, r *http.Request) {
 		Date:     strings.TrimSpace(r.FormValue("datum")),
 		Rate:     strings.TrimSpace(r.FormValue("kurs")),
 	}
-	var logText string
 	err := func() error {
 		date, err := domain.ParseDate(form.Date)
 		if err != nil {
@@ -181,9 +179,8 @@ func (s *Service) handleSaveManual(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			return err
 		}
-		logText = fmt.Sprintf("Manueller Kurs für %s ab %s gespeichert: 1 € = %s %s",
-			form.Currency, domain.FormatDate(date), domain.FormatRate(rate), form.Currency)
-		return s.d.Store.SetManualFXRate(r.Context(), form.Currency, date, rate)
+		me, _ := web.Me(r.Context())
+		return s.d.Store.SetManualFXRate(r.Context(), me.ID, form.Currency, date, rate)
 	}()
 	var ve domain.ValidationError
 	if errors.As(err, &ve) {
@@ -194,7 +191,6 @@ func (s *Service) handleSaveManual(w http.ResponseWriter, r *http.Request) {
 		s.d.ServerError(w, r, err)
 		return
 	}
-	s.d.LogSettings(r, logText)
 	web.SetFlash(w, "Kurs für "+form.Currency+" gespeichert.")
 	http.Redirect(w, r, "/einstellungen/kurse", http.StatusSeeOther)
 }
@@ -203,7 +199,8 @@ func (s *Service) handleDeleteManual(w http.ResponseWriter, r *http.Request) {
 	cur := strings.ToUpper(strings.TrimSpace(r.FormValue("waehrung")))
 	date, err := domain.ParseDate(r.FormValue("datum"))
 	if err == nil {
-		err = s.d.Store.DeleteManualFXRate(r.Context(), cur, date)
+		me, _ := web.Me(r.Context())
+		err = s.d.Store.DeleteManualFXRate(r.Context(), me.ID, cur, date)
 	}
 	var ve domain.ValidationError
 	switch {
@@ -214,7 +211,6 @@ func (s *Service) handleDeleteManual(w http.ResponseWriter, r *http.Request) {
 		s.d.ServerError(w, r, err)
 		return
 	}
-	s.d.LogSettings(r, fmt.Sprintf("Manueller Kurs für %s ab %s gelöscht", cur, domain.FormatDate(date)))
 	web.SetFlash(w, "Manueller Kurs für "+cur+" gelöscht.")
 	http.Redirect(w, r, "/einstellungen/kurse", http.StatusSeeOther)
 }

@@ -155,7 +155,7 @@ func TestCreateAndSelectPerson(t *testing.T) {
 
 func TestSelectPerson(t *testing.T) {
 	srv, d := newTestServer(t)
-	id, _ := d.Store.CreateParticipant(context.Background(), "Anna")
+	id, _ := d.Store.CreateParticipant(context.Background(), 0, "Anna")
 	for _, tc := range []struct{ ret, want string }{
 		{"/aktivitaet", "/aktivitaet"},
 		{"//evil.example", "/"},
@@ -174,7 +174,7 @@ func TestSelectPerson(t *testing.T) {
 		t.Errorf("unknown person: %d", res.StatusCode)
 	}
 	// An archived person no longer counts as an identity.
-	d.Store.SetParticipantArchived(context.Background(), id, true)
+	d.Store.SetParticipantArchived(context.Background(), 0, id, true)
 	if res, _ := get(t, srv, "/", whoCookie(id)); res.StatusCode != http.StatusSeeOther {
 		t.Errorf("archived person: %d", res.StatusCode)
 	}
@@ -182,7 +182,7 @@ func TestSelectPerson(t *testing.T) {
 
 func TestPagesRender(t *testing.T) {
 	srv, d := newTestServer(t)
-	id, _ := d.Store.CreateParticipant(context.Background(), "Anna")
+	id, _ := d.Store.CreateParticipant(context.Background(), 0, "Anna")
 	for _, p := range []string{"/", "/salden", "/aktivitaet", "/einstellungen"} {
 		res, body := get(t, srv, p, whoCookie(id))
 		if res.StatusCode != 200 || !strings.Contains(body, `aria-current="page"`) {
@@ -231,7 +231,7 @@ func TestRenderTemplateErrorGives500(t *testing.T) {
 
 func TestCrossOriginProtection(t *testing.T) {
 	srv, d := newTestServer(t)
-	id, _ := d.Store.CreateParticipant(context.Background(), "Anna")
+	id, _ := d.Store.CreateParticipant(context.Background(), 0, "Anna")
 	post := func(hdr map[string]string) *http.Response {
 		req := httptest.NewRequest("POST", "/wer", strings.NewReader(url.Values{"id": {strconv.FormatInt(id, 10)}}.Encode()))
 		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
@@ -288,7 +288,7 @@ func TestSafeReturn(t *testing.T) {
 // not.
 func TestBodyLimit(t *testing.T) {
 	srv, d := newTestServer(t)
-	anna, _ := d.Store.CreateParticipant(context.Background(), "Anna")
+	anna, _ := d.Store.CreateParticipant(context.Background(), 0, "Anna")
 	big := url.Values{"name": {strings.Repeat("a", maxBodyBytes)}}.Encode()
 	post := func(path string, chunked bool) (*http.Response, string) {
 		req := httptest.NewRequest("POST", path, strings.NewReader(big))

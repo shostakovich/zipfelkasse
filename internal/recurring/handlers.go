@@ -83,12 +83,6 @@ func (s *Service) participantNames(r *http.Request) (map[int64]string, error) {
 	return m, nil
 }
 
-// ruleLabel describes a rule for the activity log:
-// `Wiederholung „Miete“ (monatlich)`.
-func ruleLabel(r store.Recurring) string {
-	return fmt.Sprintf("Wiederholung „%s“ (%s)", r.Template.Title, strings.ToLower(r.Frequency.Label()))
-}
-
 func (s *Service) handleSetActive(active bool) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		id := web.PathID(r)
@@ -96,10 +90,8 @@ func (s *Service) handleSetActive(active bool) http.HandlerFunc {
 			s.notFound(w, r)
 			return
 		}
-		rule, err := s.d.Store.GetRecurring(r.Context(), id)
-		if err == nil {
-			err = s.d.Store.SetRecurringActive(r.Context(), id, active, s.today())
-		}
+		me, _ := web.Me(r.Context())
+		err := s.d.Store.SetRecurringActive(r.Context(), me.ID, id, active, s.today())
 		switch {
 		case errors.Is(err, store.ErrNotFound):
 			s.notFound(w, r)
@@ -109,11 +101,6 @@ func (s *Service) handleSetActive(active bool) http.HandlerFunc {
 			return
 		}
 		msg := "Pausiert."
-		verb := "pausiert"
-		if active {
-			verb = "fortgesetzt"
-		}
-		s.d.LogSettings(r, ruleLabel(rule)+" "+verb)
 		if active {
 			msg = "Fortgesetzt."
 			n, err := s.MaterializeRule(r.Context(), id, s.today())
@@ -135,7 +122,7 @@ func (s *Service) handleRefreshTemplate(w http.ResponseWriter, r *http.Request) 
 		s.notFound(w, r)
 		return
 	}
-	rule, err := s.d.Store.GetRecurring(r.Context(), id)
+	_, err := s.d.Store.GetRecurring(r.Context(), id)
 	if errors.Is(err, store.ErrNotFound) {
 		s.notFound(w, r)
 		return
@@ -144,7 +131,8 @@ func (s *Service) handleRefreshTemplate(w http.ResponseWriter, r *http.Request) 
 		s.d.ServerError(w, r, err)
 		return
 	}
-	err = s.d.Store.UpdateRecurringTemplateFromLatest(r.Context(), id)
+	me, _ := web.Me(r.Context())
+	err = s.d.Store.UpdateRecurringTemplateFromLatest(r.Context(), me.ID, id)
 	switch {
 	case errors.Is(err, store.ErrNotFound):
 		web.SetFlash(w, "Es gibt keine Ausgabe dieser Wiederholung mehr, aus der die Vorlage übernommen werden könnte.")
@@ -152,7 +140,6 @@ func (s *Service) handleRefreshTemplate(w http.ResponseWriter, r *http.Request) 
 		s.d.ServerError(w, r, err)
 		return
 	default:
-		s.d.LogSettings(r, ruleLabel(rule)+": Vorlage aus der letzten Ausgabe übernommen")
 		web.SetFlash(w, "Vorlage aus der letzten Ausgabe übernommen.")
 	}
 	http.Redirect(w, r, listPath, http.StatusSeeOther)

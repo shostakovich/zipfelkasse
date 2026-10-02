@@ -71,12 +71,10 @@ func (s *Store) insertActivity(ctx context.Context, tx *sql.Tx, actorID int64, a
 	return err
 }
 
-// AddActivity writes a custom entry (for actions outside the expense
-// methods, which write their own entries).
-func (s *Store) AddActivity(ctx context.Context, actorID int64, action string, expenseID int64, d ActivityDetails) error {
-	return s.inTx(ctx, func(tx *sql.Tx) error {
-		return s.insertActivity(ctx, tx, actorID, action, expenseID, d)
-	})
+// logSettings writes an ActionSettingsUpdated entry with text, in the
+// transaction of the change it describes.
+func (s *Store) logSettings(ctx context.Context, tx *sql.Tx, actorID int64, text string) error {
+	return s.insertActivity(ctx, tx, actorID, ActionSettingsUpdated, 0, ActivityDetails{Text: text})
 }
 
 // ListActivity returns the newest entries first.

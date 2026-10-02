@@ -1,9 +1,7 @@
 package ynab
 
 import (
-	"cmp"
 	"errors"
-	"fmt"
 	"net/http"
 	"slices"
 	"strconv"
@@ -257,37 +255,23 @@ func (s *Service) saveToken(w http.ResponseWriter, r *http.Request) {
 		s.render(w, r, http.StatusUnprocessableEntity, msg, false)
 		return
 	}
-	var old store.YNABConfig
+	reachable := func(planID string) bool {
+		return slices.ContainsFunc(plans, func(p apiPlan) bool { return p.ID == planID })
+	}
 	var resetTarget bool
 	err = s.changeConnection(func() error {
 		var err error
-		old, err = s.d.Store.GetYNABConfig(ctx, me.ID)
-		if err != nil && !errors.Is(err, store.ErrNotFound) {
-			return err
-		}
 		// also resets locks and old errors of the old token
-		if err := s.d.Store.SetYNABToken(ctx, me.ID, token); err != nil {
-			return err
-		}
-		resetTarget = old.PlanID != "" && !slices.ContainsFunc(plans, func(p apiPlan) bool { return p.ID == old.PlanID })
-		if resetTarget {
-			return s.d.Store.SetYNABTarget(ctx, me.ID, "", "", old.StartDate)
-		}
-		return nil
+		resetTarget, err = s.d.Store.SetYNABToken(ctx, me.ID, token, reachable)
+		return err
 	})
 	if err != nil {
 		s.d.ServerError(w, r, err)
 		return
 	}
-	switch {
-	case resetTarget:
-		s.d.LogSettings(r, "YNAB-Token ersetzt (Plan und Konto zurückgesetzt)")
+	if resetTarget {
 		s.done(w, r, "Token gespeichert. Der bisher gewählte Plan ist mit diesem Token nicht erreichbar – bitte Plan und Konto neu wählen.")
 		return
-	case old.Token != "":
-		s.d.LogSettings(r, "YNAB-Token ersetzt")
-	default:
-		s.d.LogSettings(r, "YNAB verbunden (Token gesetzt)")
 	}
 	s.Trigger(0)
 	s.done(w, r, "Token gespeichert.")
@@ -295,11 +279,13 @@ func (s *Service) saveToken(w http.ResponseWriter, r *http.Request) {
 
 func (s *Service) disconnect(w http.ResponseWriter, r *http.Request) {
 	me, _ := web.Me(r.Context())
-	if err := s.changeConnection(func() error { return s.d.Store.SetYNABToken(r.Context(), me.ID, "") }); err != nil {
+	if err := s.changeConnection(func() error {
+		_, err := s.d.Store.SetYNABToken(r.Context(), me.ID, "", nil)
+		return err
+	}); err != nil {
 		s.d.ServerError(w, r, err)
 		return
 	}
-	s.d.LogSettings(r, "YNAB-Verbindung getrennt")
 	s.done(w, r, "YNAB-Verbindung getrennt. Die Buchungen in YNAB bleiben erhalten.")
 }
 
@@ -330,18 +316,14 @@ func (s *Service) saveTarget(w http.ResponseWriter, r *http.Request) {
 		s.render(w, r, http.StatusUnprocessableEntity, "Bitte Plan und Konto auswählen.", false)
 		return
 	}
+	plan, account := targetNames(plans, planID, accountID)
 	if err := s.changeConnection(func() error {
-		return s.d.Store.SetYNABTarget(ctx, me.ID, planID, accountID, start)
+		return s.d.Store.SetYNABTarget(ctx, me.ID, store.YNABTarget{
+			PlanID: planID, AccountID: accountID, PlanName: plan, AccountName: account, Start: start,
+		})
 	}); err != nil {
 		s.d.ServerError(w, r, err)
 		return
-	}
-	switch {
-	case planID != cfg.PlanID || accountID != cfg.AccountID:
-		plan, account := targetNames(plans, planID, accountID)
-		s.d.LogSettings(r, fmt.Sprintf("YNAB: Konto „%s“ im Plan „%s“ gewählt, Startdatum %s", account, plan, domain.FormatDate(start)))
-	case !start.Equal(cfg.StartDate):
-		s.d.LogSettings(r, fmt.Sprintf("YNAB: Startdatum %s → %s", cmp.Or(domain.FormatDate(cfg.StartDate), "–"), domain.FormatDate(start)))
 	}
 	s.Trigger(0)
 	s.done(w, r, "Gespeichert.")
@@ -418,7 +400,7 @@ func (s *Service) saveCategories(w http.ResponseWriter, r *http.Request) {
 		}
 		m[id] = v
 	}
-	err = s.d.Store.SetYNABCategoryMap(ctx, me.ID, m)
+	err = s.d.Store.SetYNABCategoryMap(ctx, me.ID, m, categoryNames(groups))
 	var ve domain.ValidationError
 	if errors.As(err, &ve) {
 		s.render(w, r, http.StatusUnprocessableEntity, ve.Msg, false)
@@ -428,49 +410,20 @@ func (s *Service) saveCategories(w http.ResponseWriter, r *http.Request) {
 		s.d.ServerError(w, r, err)
 		return
 	}
-	if text, err := s.mappingChanges(r, old, m, groups); err != nil {
-		s.d.Log.Error("activity", "err", err)
-	} else if text != "" {
-		s.d.LogSettings(r, "YNAB: Kategorie-Zuordnung geändert ("+text+")")
-	}
 	s.Trigger(0)
 	s.done(w, r, "Kategorie-Zuordnung gespeichert.")
 }
 
-// mappingChanges describes the differences between the old and the new
-// category mapping for the activity log (German): "Lebensmittel →
-// Lebensmittel & Drogerie, Kino → unkategorisiert" (in the order of the app
-// categories).
-func (s *Service) mappingChanges(r *http.Request, old, now map[int64]string, groups []apiCategoryGroup) (string, error) {
-	cats, err := s.d.Store.ListCategories(r.Context(), true)
-	if err != nil {
-		return "", err
-	}
+// categoryNames returns the names of the YNAB categories by ID (for the
+// activity log).
+func categoryNames(groups []apiCategoryGroup) map[string]string {
 	names := map[string]string{}
 	for _, g := range groups {
 		for _, c := range g.Categories {
 			names[c.ID] = c.Name
 		}
 	}
-	ynabName := func(id string) string {
-		if id == "" {
-			return "unkategorisiert"
-		}
-		return cmp.Or(names[id], "(nicht mehr vorhanden)")
-	}
-	var parts []string
-	for _, c := range cats {
-		o, n := old[c.ID], now[c.ID]
-		if o == n {
-			continue
-		}
-		p := c.Name + " → " + ynabName(n)
-		if o != "" {
-			p += " (vorher " + ynabName(o) + ")"
-		}
-		parts = append(parts, p)
-	}
-	return strings.Join(parts, ", "), nil
+	return names
 }
 
 // syncNow starts a full sync in the background and redirects right away; the

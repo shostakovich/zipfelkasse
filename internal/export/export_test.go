@@ -285,8 +285,8 @@ func newFixture(t *testing.T) fixture {
 	}
 	ctx := context.Background()
 	f := fixture{h: web.Wrap(d, mux), st: st}
-	f.anna, _ = st.CreateParticipant(ctx, "Anna")
-	f.juer, _ = st.CreateParticipant(ctx, "Jürgen")
+	f.anna, _ = st.CreateParticipant(ctx, 0, "Anna")
+	f.juer, _ = st.CreateParticipant(ctx, 0, "Jürgen")
 	add := func(title, date string, cents int64, payer int64, who ...int64) int64 {
 		in := store.ExpenseInput{Title: title, Date: day(date), PaidBy: payer, SplitMode: domain.SplitEqual, AmountCents: cents}
 		for _, id := range who {
@@ -396,8 +396,8 @@ func TestYNABDownloadsFollowSync(t *testing.T) {
 	// missing, an expense entered afterwards with an earlier date is included.
 	clock := time.Now().Add(time.Hour)
 	f.st.SetClock(func() time.Time { return clock })
-	f.st.SetYNABToken(ctx, f.anna, "tok")
-	if err := f.st.SetYNABTarget(ctx, f.anna, "p", "a", day("2026-09-01")); err != nil {
+	f.st.SetYNABToken(ctx, f.anna, "tok", nil)
+	if err := f.st.SetYNABTarget(ctx, f.anna, store.YNABTarget{PlanID: "p", AccountID: "a", Start: day("2026-09-01")}); err != nil {
 		t.Fatal(err)
 	}
 	clock = clock.Add(time.Minute)

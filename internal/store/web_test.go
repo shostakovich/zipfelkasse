@@ -10,13 +10,13 @@ import (
 func TestSetGroupName(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
-	if err := s.SetGroupName(ctx, "  WG   Kastanienallee "); err != nil {
+	if err := s.SetGroupName(ctx, 0, "  WG   Kastanienallee "); err != nil {
 		t.Fatal(err)
 	}
 	if got := s.GroupName(ctx); got != "WG Kastanienallee" {
 		t.Errorf("GroupName = %q", got)
 	}
-	if err := s.SetGroupName(ctx, "   "); !isValidation(err) {
+	if err := s.SetGroupName(ctx, 0, "   "); !isValidation(err) {
 		t.Errorf("empty name: %v", err)
 	}
 }
@@ -37,31 +37,31 @@ func TestMoveCategory(t *testing.T) {
 	}
 	cats, _ := s.ListCategories(ctx, false)
 	first, second := cats[0], cats[1]
-	if err := s.MoveCategory(ctx, second.ID, true); err != nil {
+	if err := s.MoveCategory(ctx, 0, second.ID, true); err != nil {
 		t.Fatal(err)
 	}
 	if got := names(); got[0] != second.Name || got[1] != first.Name {
 		t.Errorf("after up: %v", got)
 	}
 	// At the edge: nothing happens.
-	if err := s.MoveCategory(ctx, second.ID, true); err != nil {
+	if err := s.MoveCategory(ctx, 0, second.ID, true); err != nil {
 		t.Fatal(err)
 	}
 	if got := names(); got[0] != second.Name {
 		t.Errorf("at the edge: %v", got)
 	}
-	if err := s.MoveCategory(ctx, second.ID, false); err != nil {
+	if err := s.MoveCategory(ctx, 0, second.ID, false); err != nil {
 		t.Fatal(err)
 	}
 	if got := names(); got[0] != first.Name || got[1] != second.Name {
 		t.Errorf("after down: %v", got)
 	}
 	// Archived ones are skipped and cannot be moved.
-	s.SetCategoryArchived(ctx, second.ID, true)
-	if err := s.MoveCategory(ctx, second.ID, true); !errors.Is(err, ErrNotFound) {
+	s.SetCategoryArchived(ctx, 0, second.ID, true)
+	if err := s.MoveCategory(ctx, 0, second.ID, true); !errors.Is(err, ErrNotFound) {
 		t.Errorf("archived: %v", err)
 	}
-	if err := s.MoveCategory(ctx, 999, true); !errors.Is(err, ErrNotFound) {
+	if err := s.MoveCategory(ctx, 0, 999, true); !errors.Is(err, ErrNotFound) {
 		t.Errorf("unknown: %v", err)
 	}
 }
@@ -84,7 +84,7 @@ func TestCreateCategoryAfterMove(t *testing.T) {
 		return out
 	}
 	create := func(name string) {
-		if _, err := s.CreateCategory(ctx, name); err != nil {
+		if _, err := s.CreateCategory(ctx, 0, name); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -93,7 +93,7 @@ func TestCreateCategoryAfterMove(t *testing.T) {
 		return strings.Join(o[len(o)-n:], ",")
 	}
 	cats, _ := s.ListCategories(ctx, false)
-	if err := s.MoveCategory(ctx, cats[0].ID, false); err != nil {
+	if err := s.MoveCategory(ctx, 0, cats[0].ID, false); err != nil {
 		t.Fatal(err)
 	}
 	create("Neu")
@@ -103,7 +103,7 @@ func TestCreateCategoryAfterMove(t *testing.T) {
 	// Sonstiges moved up by one: still directly before it.
 	cats, _ = s.ListCategories(ctx, false)
 	sonstiges := cats[len(cats)-1].ID
-	if err := s.MoveCategory(ctx, sonstiges, true); err != nil {
+	if err := s.MoveCategory(ctx, 0, sonstiges, true); err != nil {
 		t.Fatal(err)
 	}
 	create("Noch neuer")
@@ -111,7 +111,7 @@ func TestCreateCategoryAfterMove(t *testing.T) {
 		t.Errorf("Sonstiges not last: %s", got)
 	}
 	// Without an active Sonstiges: at the end.
-	if err := s.SetCategoryArchived(ctx, sonstiges, true); err != nil {
+	if err := s.SetCategoryArchived(ctx, 0, sonstiges, true); err != nil {
 		t.Fatal(err)
 	}
 	create("Zuletzt")
@@ -164,7 +164,7 @@ func TestCategoryHistory(t *testing.T) {
 	mk("Archiviert", "2026-09-12", archived)
 	gone := mk("Gelöscht", "2026-09-13", f.food)
 	f.s.DeleteExpense(ctx, f.anna, gone)
-	f.s.SetCategoryArchived(ctx, archived, true)
+	f.s.SetCategoryArchived(ctx, 0, archived, true)
 	back := f.equal("Rückzahlung", 500, "2026-09-14", f.ben, f.anna)
 	back.IsReimbursement = true
 	if _, err := f.s.CreateExpense(ctx, f.ben, back); err != nil {

@@ -23,19 +23,23 @@ func (s *Store) GetSetting(ctx context.Context, key string) (string, error) {
 	return v, err
 }
 
-// SetSetting sets key to value (creating the key if needed).
+const setSettingSQL = "INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT (key) DO UPDATE SET value = excluded.value"
+
+// SetSetting sets key to value (creating the key if needed). It writes no
+// activity entry; it is meant for internal state (e.g. the ECB cache).
 func (s *Store) SetSetting(ctx context.Context, key, value string) error {
-	_, err := s.db.ExecContext(ctx,
-		"INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT (key) DO UPDATE SET value = excluded.value",
-		key, value)
+	_, err := s.db.ExecContext(ctx, setSettingSQL, key, value)
 	return err
 }
+
+// defaultGroupName is the group name as long as none is set.
+const defaultGroupName = "Zipfelkasse"
 
 // GroupName returns the group name (fallback "Zipfelkasse").
 func (s *Store) GroupName(ctx context.Context) string {
 	v, err := s.GetSetting(ctx, SettingGroupName)
 	if err != nil || v == "" {
-		return "Zipfelkasse"
+		return defaultGroupName
 	}
 	return v
 }

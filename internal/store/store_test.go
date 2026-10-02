@@ -29,7 +29,7 @@ func newTestStore(t *testing.T) *Store {
 
 func mustParticipant(t *testing.T, s *Store, name string) int64 {
 	t.Helper()
-	id, err := s.CreateParticipant(context.Background(), name)
+	id, err := s.CreateParticipant(context.Background(), 0, name)
 	if err != nil {
 		t.Fatalf("CreateParticipant(%q): %v", name, err)
 	}
@@ -108,23 +108,23 @@ func TestParticipants(t *testing.T) {
 	anna := mustParticipant(t, s, "  Anna  ")
 	ben := mustParticipant(t, s, "Ben")
 
-	if _, err := s.CreateParticipant(ctx, "anna"); !isValidation(err) {
+	if _, err := s.CreateParticipant(ctx, 0, "anna"); !isValidation(err) {
 		t.Errorf("duplicate name: err = %v, want ValidationError", err)
 	}
-	if _, err := s.CreateParticipant(ctx, "   "); !isValidation(err) {
+	if _, err := s.CreateParticipant(ctx, 0, "   "); !isValidation(err) {
 		t.Errorf("empty name: err = %v", err)
 	}
 	p, err := s.GetParticipant(ctx, anna)
 	if err != nil || p.Name != "Anna" || p.Archived() || p.CreatedAt.IsZero() {
 		t.Errorf("GetParticipant = %+v, %v", p, err)
 	}
-	if err := s.RenameParticipant(ctx, ben, "Benedikt"); err != nil {
+	if err := s.RenameParticipant(ctx, 0, ben, "Benedikt"); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.RenameParticipant(ctx, ben, "ANNA"); !isValidation(err) {
+	if err := s.RenameParticipant(ctx, 0, ben, "ANNA"); !isValidation(err) {
 		t.Errorf("rename to a taken name: %v", err)
 	}
-	if err := s.SetParticipantArchived(ctx, ben, true); err != nil {
+	if err := s.SetParticipantArchived(ctx, 0, ben, true); err != nil {
 		t.Fatal(err)
 	}
 	active, _ := s.ListParticipants(ctx, false)
@@ -132,13 +132,13 @@ func TestParticipants(t *testing.T) {
 	if len(active) != 1 || len(all) != 2 || !all[1].Archived() {
 		t.Errorf("active=%v all=%v", active, all)
 	}
-	if err := s.SetParticipantArchived(ctx, ben, false); err != nil {
+	if err := s.SetParticipantArchived(ctx, 0, ben, false); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := s.GetParticipant(ctx, 999); !errors.Is(err, ErrNotFound) {
 		t.Errorf("unknown ID: %v", err)
 	}
-	if err := s.RenameParticipant(ctx, 999, "X"); !errors.Is(err, ErrNotFound) {
+	if err := s.RenameParticipant(ctx, 0, 999, "X"); !errors.Is(err, ErrNotFound) {
 		t.Errorf("rename unknown ID: %v", err)
 	}
 }
@@ -146,7 +146,7 @@ func TestParticipants(t *testing.T) {
 func TestCategories(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
-	id, err := s.CreateCategory(ctx, "Haustiere")
+	id, err := s.CreateCategory(ctx, 0, "Haustiere")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -154,13 +154,13 @@ func TestCategories(t *testing.T) {
 	if cats[len(cats)-1].Name != "Sonstiges" || cats[len(cats)-2].ID != id {
 		t.Errorf("new category not before Sonstiges: %+v", cats)
 	}
-	if _, err := s.CreateCategory(ctx, "lebensmittel"); !isValidation(err) {
+	if _, err := s.CreateCategory(ctx, 0, "lebensmittel"); !isValidation(err) {
 		t.Errorf("duplicate category: %v", err)
 	}
-	if err := s.RenameCategory(ctx, id, "Tiere"); err != nil {
+	if err := s.RenameCategory(ctx, 0, id, "Tiere"); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.SetCategoryArchived(ctx, id, true); err != nil {
+	if err := s.SetCategoryArchived(ctx, 0, id, true); err != nil {
 		t.Fatal(err)
 	}
 	c, err := s.GetCategory(ctx, id)
@@ -238,7 +238,7 @@ func TestCreateGetExpense(t *testing.T) {
 	if len(events) != 1 || events[0] != (ExpenseChange{id, ActionExpenseCreated}) {
 		t.Errorf("hook events = %+v", events)
 	}
-	acts, err := f.s.ListActivity(ctx, ActivityFilter{})
+	acts, err := f.s.ListActivity(ctx, ActivityFilter{ExpenseID: id})
 	if err != nil || len(acts) != 1 {
 		t.Fatalf("ListActivity = %v, %v", acts, err)
 	}
@@ -307,23 +307,23 @@ func TestArchiveParticipantWithBalance(t *testing.T) {
 	f := newFixture(t)
 	ctx := context.Background()
 	id := f.mustCreate(t, f.equal("Einkauf", 1000, "2026-08-01", f.anna, f.anna, f.ben))
-	err := f.s.SetParticipantArchived(ctx, f.ben, true)
+	err := f.s.SetParticipantArchived(ctx, 0, f.ben, true)
 	if !isValidation(err) || !strings.Contains(err.Error(), "Ben hat noch einen Saldo von -5,00 €") {
 		t.Errorf("Ben with balance: %v", err)
 	}
 	if p, _ := f.s.GetParticipant(ctx, f.ben); p.Archived() {
 		t.Error("archived despite balance")
 	}
-	if err := f.s.SetParticipantArchived(ctx, f.cleo, true); err != nil {
+	if err := f.s.SetParticipantArchived(ctx, 0, f.cleo, true); err != nil {
 		t.Errorf("Cleo without balance: %v", err)
 	}
-	if err := f.s.SetParticipantArchived(ctx, 999, true); !errors.Is(err, ErrNotFound) {
+	if err := f.s.SetParticipantArchived(ctx, 0, 999, true); !errors.Is(err, ErrNotFound) {
 		t.Errorf("unknown: %v", err)
 	}
 	if err := f.s.DeleteExpense(ctx, f.anna, id); err != nil {
 		t.Fatal(err)
 	}
-	if err := f.s.SetParticipantArchived(ctx, f.ben, true); err != nil {
+	if err := f.s.SetParticipantArchived(ctx, 0, f.ben, true); err != nil {
 		t.Errorf("Ben after delete: %v", err)
 	}
 }
@@ -997,6 +997,7 @@ func TestRecurringDuplicate(t *testing.T) {
 	rid, _ := res.LastInsertId()
 	in := f.equal("Miete", 100000, "2026-01-31", f.anna, f.anna, f.ben)
 	in.RecurringID = rid
+	before, _ := f.s.ListActivity(ctx, ActivityFilter{})
 	if _, err := f.s.CreateExpense(ctx, 0, in); err != nil {
 		t.Fatal(err)
 	}
@@ -1004,7 +1005,7 @@ func TestRecurringDuplicate(t *testing.T) {
 		t.Errorf("second instance = %v, want ErrRecurringExists", err)
 	}
 	acts, _ := f.s.ListActivity(ctx, ActivityFilter{})
-	if len(acts) != 1 || acts[0].ActorID != 0 || acts[0].ActorName != "" {
+	if len(acts) != len(before)+1 || acts[0].ActorID != 0 || acts[0].ActorName != "" {
 		t.Errorf("system activity = %+v", acts)
 	}
 }
@@ -1035,18 +1036,6 @@ func TestUpdateRecurringDateCollision(t *testing.T) {
 	var ve domain.ValidationError
 	if !errors.As(err, &ve) || !strings.Contains(ve.Msg, "Termin") {
 		t.Errorf("UpdateExpense = %v, want ValidationError", err)
-	}
-}
-
-func TestAddActivity(t *testing.T) {
-	f := newFixture(t)
-	ctx := context.Background()
-	if err := f.s.AddActivity(ctx, f.anna, "recurring_created", 0, ActivityDetails{Text: "Miete monatlich"}); err != nil {
-		t.Fatal(err)
-	}
-	acts, _ := f.s.ListActivity(ctx, ActivityFilter{})
-	if len(acts) != 1 || acts[0].Details.Text != "Miete monatlich" || acts[0].ExpenseID != 0 {
-		t.Errorf("Activity = %+v", acts)
 	}
 }
 

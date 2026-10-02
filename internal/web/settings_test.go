@@ -177,7 +177,7 @@ func TestSettingsCategories(t *testing.T) {
 
 func TestPWA(t *testing.T) {
 	g := newGroup(t, nil)
-	g.d.Store.SetGroupName(context.Background(), "WG Süd")
+	g.d.Store.SetGroupName(context.Background(), 0, "WG Süd")
 	// Public, without a person.
 	res, body := get(t, g.srv, "/manifest.webmanifest")
 	if res.StatusCode != 200 || !strings.HasPrefix(res.Header.Get("Content-Type"), "application/manifest+json") {

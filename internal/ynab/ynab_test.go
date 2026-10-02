@@ -63,7 +63,7 @@ func newEnv(t *testing.T) *env {
 		id   *int64
 		name string
 	}{{&e.anna, "Anna"}, {&e.ben, "Ben"}, {&e.cleo, "Cleo"}} {
-		if *p.id, err = st.CreateParticipant(e.ctx, p.name); err != nil {
+		if *p.id, err = st.CreateParticipant(e.ctx, 0, p.name); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -83,10 +83,10 @@ func day(s string) time.Time {
 // connect sets up Anna's YNAB (token, plan, account, start date).
 func (e *env) connect(start string) {
 	e.t.Helper()
-	if err := e.st.SetYNABToken(e.ctx, e.anna, testToken); err != nil {
+	if _, err := e.st.SetYNABToken(e.ctx, e.anna, testToken, nil); err != nil {
 		e.t.Fatal(err)
 	}
-	if err := e.st.SetYNABTarget(e.ctx, e.anna, testPlan, testAccount, day(start)); err != nil {
+	if err := e.st.SetYNABTarget(e.ctx, e.anna, store.YNABTarget{PlanID: testPlan, AccountID: testAccount, Start: day(start)}); err != nil {
 		e.t.Fatal(err)
 	}
 }
@@ -164,7 +164,7 @@ const (
 func TestSyncCreateUpdateDelete(t *testing.T) {
 	e := newEnv(t)
 	e.connect("2026-09-01")
-	if err := e.st.SetYNABCategoryMap(e.ctx, e.anna, map[int64]string{e.food: "c-food"}); err != nil {
+	if err := e.st.SetYNABCategoryMap(e.ctx, e.anna, map[int64]string{e.food: "c-food"}, nil); err != nil {
 		t.Fatal(err)
 	}
 	id := e.create(e.input("Einkauf Rewe", 8400, "2026-09-15", e.ben, e.anna, e.ben))
@@ -240,7 +240,7 @@ func TestSyncBundlesRequests(t *testing.T) {
 	}
 	e.expectRequests(post)
 	// Renaming the payer changes all memos → a single PATCH.
-	if err := e.st.RenameParticipant(e.ctx, e.anna, "Änna"); err != nil {
+	if err := e.st.RenameParticipant(e.ctx, 0, e.anna, "Änna"); err != nil {
 		t.Fatal(err)
 	}
 	if res := e.mustSync(false); res.Updated != 5 {
@@ -276,7 +276,7 @@ func TestSyncUncategorizedKeepsManualCategory(t *testing.T) {
 		t.Errorf("manual category overwritten: %+v", tx)
 	}
 	// With a mapping, the sync sets the category.
-	if err := e.st.SetYNABCategoryMap(e.ctx, e.anna, map[int64]string{e.food: "c-food"}); err != nil {
+	if err := e.st.SetYNABCategoryMap(e.ctx, e.anna, map[int64]string{e.food: "c-food"}, nil); err != nil {
 		t.Fatal(err)
 	}
 	if res := e.mustSync(false); res.Updated != 1 {
@@ -315,7 +315,7 @@ func TestSyncFilters(t *testing.T) {
 	}
 
 	// Move the start date earlier → an earlier expense is added.
-	if err := e.st.SetYNABTarget(e.ctx, e.anna, testPlan, testAccount, day("2026-09-01")); err != nil {
+	if err := e.st.SetYNABTarget(e.ctx, e.anna, store.YNABTarget{PlanID: testPlan, AccountID: testAccount, Start: day("2026-09-01")}); err != nil {
 		t.Fatal(err)
 	}
 	if res := e.mustSync(false); res.Created != 1 || len(e.fake.live()) != 2 {
@@ -323,7 +323,7 @@ func TestSyncFilters(t *testing.T) {
 	}
 	// Move the start date later → already transferred transactions stay
 	// (they are only deleted on deletion of the expense or share 0).
-	if err := e.st.SetYNABTarget(e.ctx, e.anna, testPlan, testAccount, day("2026-09-16")); err != nil {
+	if err := e.st.SetYNABTarget(e.ctx, e.anna, store.YNABTarget{PlanID: testPlan, AccountID: testAccount, Start: day("2026-09-16")}); err != nil {
 		t.Fatal(err)
 	}
 	if res := e.mustSync(false); res.Deleted != 0 || len(e.fake.live()) != 2 {
@@ -411,7 +411,7 @@ func TestSyncRateLimitBackoff(t *testing.T) {
 func TestSyncUnauthorized(t *testing.T) {
 	e := newEnv(t)
 	e.connect("2026-09-01")
-	if err := e.st.SetYNABToken(e.ctx, e.anna, "falsch"); err != nil {
+	if _, err := e.st.SetYNABToken(e.ctx, e.anna, "falsch", nil); err != nil {
 		t.Fatal(err)
 	}
 	e.create(e.input("Kino", 2400, "2026-09-20", e.anna, e.anna, e.ben))
@@ -739,7 +739,7 @@ func TestSettingsChangeAccountResetsSync(t *testing.T) {
 	if len(e.syncRows()) != 1 {
 		t.Fatal("no row")
 	}
-	if err := e.st.SetYNABTarget(e.ctx, e.anna, testPlan, "acc-giro", day("2026-09-01")); err != nil {
+	if err := e.st.SetYNABTarget(e.ctx, e.anna, store.YNABTarget{PlanID: testPlan, AccountID: "acc-giro", Start: day("2026-09-01")}); err != nil {
 		t.Fatal(err)
 	}
 	for _, r := range e.syncRows() {
@@ -766,7 +766,7 @@ func TestSyncTargetChangeBackNoDuplicates(t *testing.T) {
 	e.mustSync(false)
 	inA := e.syncRows()
 
-	if err := e.st.SetYNABTarget(e.ctx, e.anna, testPlan, "acc-giro", day("2026-09-01")); err != nil {
+	if err := e.st.SetYNABTarget(e.ctx, e.anna, store.YNABTarget{PlanID: testPlan, AccountID: "acc-giro", Start: day("2026-09-01")}); err != nil {
 		t.Fatal(err)
 	}
 	if res := e.mustSync(false); res.Created != 3 {
@@ -777,7 +777,7 @@ func TestSyncTargetChangeBackNoDuplicates(t *testing.T) {
 	e.st.DeleteExpense(e.ctx, e.anna, gone)
 	e.mustSync(false)
 
-	if err := e.st.SetYNABTarget(e.ctx, e.anna, testPlan, testAccount, day("2026-09-01")); err != nil {
+	if err := e.st.SetYNABTarget(e.ctx, e.anna, store.YNABTarget{PlanID: testPlan, AccountID: testAccount, Start: day("2026-09-01")}); err != nil {
 		t.Fatal(err)
 	}
 	e.fake.takeRequests()
@@ -831,7 +831,7 @@ func TestSyncBackdatedExpenseAfterConnect(t *testing.T) {
 	}
 	// Account change = set up anew: now only the start date counts again.
 	clock = clock.Add(time.Hour)
-	if err := e.st.SetYNABTarget(e.ctx, e.anna, testPlan, "acc-giro", day("2026-09-10")); err != nil {
+	if err := e.st.SetYNABTarget(e.ctx, e.anna, store.YNABTarget{PlanID: testPlan, AccountID: "acc-giro", Start: day("2026-09-10")}); err != nil {
 		t.Fatal(err)
 	}
 	if res := e.mustSync(false); res.Created != 0 {
@@ -965,7 +965,7 @@ func TestSyncPlanNotAccessible(t *testing.T) {
 	b := e.create(e.input("B", 2000, "2026-09-21", e.anna, e.anna, e.ben))
 	e.mustSync(false)
 	before := e.syncRows()
-	if err := e.st.SetYNABToken(e.ctx, e.anna, otherToken); err != nil {
+	if _, err := e.st.SetYNABToken(e.ctx, e.anna, otherToken, nil); err != nil {
 		t.Fatal(err)
 	}
 	check := func(step string) {
@@ -986,7 +986,7 @@ func TestSyncPlanNotAccessible(t *testing.T) {
 	e.st.UpdateExpense(e.ctx, e.anna, a, e.input("A2", 1000, "2026-09-20", e.anna, e.anna, e.ben))
 	check("update")
 
-	if err := e.st.SetYNABToken(e.ctx, e.anna, testToken); err != nil {
+	if _, err := e.st.SetYNABToken(e.ctx, e.anna, testToken, nil); err != nil {
 		t.Fatal(err)
 	}
 	if res := e.mustSync(false); res.Updated != 1 || res.Deleted != 1 || res.Created != 0 {
@@ -1049,7 +1049,7 @@ func TestSyncNowLog(t *testing.T) {
 		t.Errorf("log = %s", log)
 	}
 	e.now = e.now.Add(6 * time.Minute)
-	e.st.SetYNABToken(e.ctx, e.anna, "abgelaufen")
+	e.st.SetYNABToken(e.ctx, e.anna, "abgelaufen", nil)
 	syncNow() // 401: the token is marked invalid
 	if log := syncNow(); strings.Contains(log, "failed") {
 		t.Errorf("invalid token logged again: %s", log)
@@ -1148,7 +1148,7 @@ func TestSettingsChangeAccountDuringSync(t *testing.T) {
 func TestSettingsNewTokenDuringSync(t *testing.T) {
 	e := newEnv(t)
 	e.connect("2026-09-01")
-	if err := e.st.SetYNABToken(e.ctx, e.anna, "abgelaufen"); err != nil {
+	if _, err := e.st.SetYNABToken(e.ctx, e.anna, "abgelaufen", nil); err != nil {
 		t.Fatal(err)
 	}
 	e.create(e.input("Kino", 2400, "2026-09-20", e.anna, e.anna, e.ben))

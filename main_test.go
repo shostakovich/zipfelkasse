@@ -34,7 +34,7 @@ func TestAppWiring(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	anna, _ := st.CreateParticipant(context.Background(), "Anna")
+	anna, _ := st.CreateParticipant(context.Background(), 0, "Anna")
 	who := &http.Cookie{Name: web.IdentityCookie, Value: strconv.FormatInt(anna, 10)}
 
 	tests := []struct {

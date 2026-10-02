@@ -56,9 +56,9 @@ func newGroup(t *testing.T, fx FXRater) *group {
 	Register(mux, d)
 	g := &group{t: t, srv: testServer{h: Wrap(d, mux)}, d: d}
 	ctx := context.Background()
-	g.anna, _ = st.CreateParticipant(ctx, "Anna")
-	g.ben, _ = st.CreateParticipant(ctx, "Ben")
-	g.cleo, _ = st.CreateParticipant(ctx, "Cleo")
+	g.anna, _ = st.CreateParticipant(ctx, 0, "Anna")
+	g.ben, _ = st.CreateParticipant(ctx, 0, "Ben")
+	g.cleo, _ = st.CreateParticipant(ctx, 0, "Cleo")
 	cats, _ := st.ListCategories(ctx, false)
 	g.food = cats[0].ID
 	g.cookie = whoCookie(g.anna)
@@ -541,7 +541,7 @@ func TestExpenseFormRotation(t *testing.T) {
 
 func TestNewExpenseDefaults(t *testing.T) {
 	g := newGroup(t, nil)
-	g.d.Store.SetParticipantArchived(context.Background(), g.cleo, true)
+	g.d.Store.SetParticipantArchived(context.Background(), 0, g.cleo, true)
 	status, body := g.get("/ausgaben/neu")
 	if status != 200 {
 		t.Fatalf("status %d", status)
@@ -571,7 +571,7 @@ func TestActivityPage(t *testing.T) {
 	v.Set("titel", "Einkauf groß")
 	g.post("/ausgaben/"+id(e.ID), v)
 	g.post("/ausgaben/"+id(e.ID)+"/loeschen", nil)
-	g.d.Store.AddActivity(context.Background(), 0, "recurring_created", 0, store.ActivityDetails{Text: "Regel angelegt"})
+	g.d.Store.CreateCategory(context.Background(), 0, "Regel") // system entry
 
 	status, body := g.get("/aktivitaet")
 	if status != 200 {
@@ -580,7 +580,7 @@ func TestActivityPage(t *testing.T) {
 	for _, want := range []string{
 		"Heute", "<strong>Anna</strong> hat <em>„Einkauf“</em> angelegt", "<em>„Einkauf groß“</em> geändert",
 		"<em>„Einkauf groß“</em> gelöscht", "Titel: <del>Einkauf</del> → <ins>Einkauf groß</ins>",
-		`href="/ausgaben/` + id(e.ID) + `"`, "<strong>Automatisch</strong>: Regel angelegt",
+		`href="/ausgaben/` + id(e.ID) + `"`, "<strong>Automatisch</strong>: Kategorie „Regel“ hinzugefügt",
 		// amount for created and deleted, not for changed (Changes lists it)
 		`„Einkauf“</em> angelegt <span class="amount`, `„Einkauf groß“</em> gelöscht <span class="amount`,
 		`„Einkauf groß“</em> geändert.`,
@@ -595,16 +595,16 @@ func TestActivityPaging(t *testing.T) {
 	g := newGroup(t, nil)
 	ctx := context.Background()
 	for i := range activityPageSize + 5 {
-		g.d.Store.AddActivity(ctx, g.anna, "test", 0, store.ActivityDetails{Text: "Eintrag " + strconv.Itoa(i)})
+		g.d.Store.CreateCategory(ctx, g.anna, "Eintrag "+strconv.Itoa(i))
 	}
 	_, body := g.get("/aktivitaet")
-	if !strings.Contains(body, "Eintrag 54") || strings.Contains(body, "Eintrag 4<") || !strings.Contains(body, "/aktivitaet?vor=") {
+	if !strings.Contains(body, "„Eintrag 54“") || strings.Contains(body, "„Eintrag 4“") || !strings.Contains(body, "/aktivitaet?vor=") {
 		t.Fatal("first page wrong")
 	}
 	i := strings.Index(body, "/aktivitaet?vor=")
 	next := body[i : i+strings.IndexByte(body[i:], '"')]
 	_, body = g.get(next)
-	if !strings.Contains(body, "Eintrag 4<") || strings.Contains(body, "Eintrag 54") || strings.Contains(body, "Ältere anzeigen") {
+	if !strings.Contains(body, "„Eintrag 4“") || strings.Contains(body, "„Eintrag 54“") || strings.Contains(body, "Ältere anzeigen") {
 		t.Error("second page wrong")
 	}
 }
@@ -637,8 +637,8 @@ func TestExpenseRateWithThousands(t *testing.T) {
 func TestExpenseForeignAmountsTieBreak(t *testing.T) {
 	g := newGroup(t, fakeFX{})
 	ctx := context.Background()
-	zoe, _ := g.d.Store.CreateParticipant(ctx, "Zoe")
-	adam, _ := g.d.Store.CreateParticipant(ctx, "Adam")
+	zoe, _ := g.d.Store.CreateParticipant(ctx, 0, "Zoe")
+	adam, _ := g.d.Store.CreateParticipant(ctx, 0, "Adam")
 	v := g.form()
 	v.Set("bezahlt_von", id(zoe))
 	v.Set("waehrung", "USD")
