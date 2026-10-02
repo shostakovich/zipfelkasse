@@ -407,6 +407,18 @@ func TestMalformed(t *testing.T) {
 	}
 }
 
+func TestAusgabenSuchenUmlaute(t *testing.T) {
+	e := newEnv(t)
+	e.expense("Bäckerei", 300, "2026-09-01", "Anna", "Lebensmittel", "Anna", "Ben")
+	e.expense("ÖLWECHSEL", 9000, "2026-09-02", "Ben", "", "Anna", "Ben")
+	for text, want := range map[string]string{"BÄCKEREI": "Bäckerei", "bäcker": "Bäckerei", "ölwechsel": "ÖLWECHSEL", "Ölwechsel": "ÖLWECHSEL"} {
+		sc, msg, isErr := e.call("ausgaben_suchen", map[string]any{"text": text})
+		if isErr || sc["treffer"].(float64) != 1 || sc["ausgaben"].([]any)[0].(map[string]any)["titel"] != want {
+			t.Errorf("text %q: %s", text, msg)
+		}
+	}
+}
+
 func TestTools(t *testing.T) {
 	e := newEnv(t)
 	ctx := context.Background()

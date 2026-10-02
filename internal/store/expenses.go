@@ -79,7 +79,7 @@ func (e Expense) ShareOf(participantID int64) int64 {
 
 // ExpenseFilter schränkt ListExpenses ein. Nullwerte bedeuten „kein Filter“.
 type ExpenseFilter struct {
-	Text          string    // Teilstring in Titel oder Notiz
+	Text          string    // Teilstring in Titel oder Notiz, Groß-/Kleinschreibung egal (auch Umlaute, ß = ss)
 	CategoryID    int64     //
 	ParticipantID int64     // hat bezahlt oder ist beteiligt
 	From, To      time.Time // Datum, jeweils inklusive
@@ -313,9 +313,11 @@ func (s *Store) ListExpenses(ctx context.Context, f ExpenseFilter) ([]Expense, e
 	where := []string{"e.deleted_at IS NULL"}
 	var args []any
 	if t := strings.TrimSpace(f.Text); t != "" {
-		like := "%" + escapeLike(t) + "%"
-		where = append(where, `(e.title LIKE ? ESCAPE '\' OR e.notes LIKE ? ESCAPE '\')`)
-		args = append(args, like, like)
+		// Gefaltet in Go (siehe fold): LIKE wäre nur bei ASCII unabhängig von
+		// Groß-/Kleinschreibung.
+		t = fold(t)
+		where = append(where, "(instr("+foldFunc+"(e.title), ?) > 0 OR instr("+foldFunc+"(e.notes), ?) > 0)")
+		args = append(args, t, t)
 	}
 	if f.CategoryID != 0 {
 		where = append(where, "e.category_id = ?")
@@ -596,8 +598,4 @@ func int64sToAny(ids []int64) []any {
 		out[i] = id
 	}
 	return out
-}
-
-func escapeLike(s string) string {
-	return strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`).Replace(s)
 }

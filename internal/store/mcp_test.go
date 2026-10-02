@@ -122,6 +122,17 @@ func TestReadOnlyQuery(t *testing.T) {
 	}
 }
 
+func TestReadOnlyQueryHasFold(t *testing.T) {
+	f := newFileFixture(t)
+	res, err := f.s.ReadOnlyQuery(context.Background(), "SELECT "+foldFunc+"('BÄCKER Straße'), "+foldFunc+"(NULL), "+foldFunc+"(42)")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := res.Rows[0]; got[0] != "bäcker strasse" || got[1] != nil || got[2] != int64(42) {
+		t.Errorf("fold in der Sandbox = %#v", got)
+	}
+}
+
 func TestReadOnlyQueryHidesYNAB(t *testing.T) {
 	f := newFileFixture(t)
 	ctx := context.Background()

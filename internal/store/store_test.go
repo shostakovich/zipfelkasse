@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -514,6 +515,53 @@ func TestListExpensesFilter(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestListExpensesTextIgnoresCaseOfUmlauts(t *testing.T) {
+	f := newFixture(t)
+	ctx := context.Background()
+	mk := func(title, notes string) int64 {
+		in := f.equal(title, 1000, "2026-09-01", f.anna, f.anna, f.ben)
+		in.Notes = notes
+		id, err := f.s.CreateExpense(ctx, f.anna, in)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return id
+	}
+	lower := mk("bäckerei am markt", "")
+	upper := mk("BÄCKER SCHMIDT", "")
+	mixed := mk("Brötchen", "vom Bäcker")
+	street := mk("Parken Hauptstraße", "")
+	caps := mk("PARKHAUS HAUPTSTRASSE", "")
+	mk("Baecker ohne Umlaut", "")
+
+	tests := []struct {
+		text string
+		want []int64
+	}{
+		{"BÄCKER", []int64{mixed, upper, lower}},
+		{"bäcker", []int64{mixed, upper, lower}},
+		{"Bäckerei", []int64{lower}},
+		{"brötchen", []int64{mixed}},
+		{"BRÖTCHEN", []int64{mixed}},
+		{"straße", []int64{caps, street}},
+		{"STRASSE", []int64{caps, street}},
+		{"ẞ", []int64{caps, street}},
+	}
+	for _, tt := range tests {
+		es, err := f.s.ListExpenses(ctx, ExpenseFilter{Text: tt.text})
+		if err != nil {
+			t.Fatal(err)
+		}
+		var got []int64
+		for _, e := range es {
+			got = append(got, e.ID)
+		}
+		if !slices.Equal(got, tt.want) {
+			t.Errorf("Text %q: got %v, want %v", tt.text, got, tt.want)
+		}
 	}
 }
 

@@ -493,12 +493,17 @@ func TestHomeSearch(t *testing.T) {
 	v.Del("teil")
 	v.Add("teil", id(g.ben))
 	g.create(v)
+	v = g.form()
+	v.Set("titel", "Bäckerei Ölmühle")
+	g.create(v)
 
 	tests := []struct {
 		query     string
 		want, not string
 	}{
 		{"q=kino", "Kinoabend", ">Einkauf<"},
+		{"q=" + url.QueryEscape("BÄCKEREI ÖLMÜHLE"), "Bäckerei Ölmühle", "Kinoabend"},
+		{"q=" + url.QueryEscape("ölmühle"), "Bäckerei Ölmühle", "Kinoabend"},
 		{"kategorie=" + id(g.food), ">Einkauf<", "Kinoabend"},
 		{"person=" + id(g.cleo), ">Einkauf<", "Kinoabend"},
 		{"q=gibtsnicht", "Keine Ausgaben gefunden", "Kinoabend"},
