@@ -1,5 +1,6 @@
-// Package mcp is a read-only MCP server (JSON-RPC 2.0 over Streamable HTTP,
-// JSON-only responses) at /mcp/{MCP_SECRET}.
+// Package mcp is an MCP server (JSON-RPC 2.0 over Streamable HTTP,
+// JSON-only responses) at /mcp/{MCP_SECRET}. Its tools read, and two of them
+// add expenses and reimbursements; nothing is changed or deleted.
 //
 // Access (see docs/MCP.md): wrong secret → 404, client IP not in
 // MCP_ALLOWED_CIDRS → 403 (behind TRUSTED_PROXIES, X-Forwarded-For counts),

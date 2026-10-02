@@ -1,7 +1,8 @@
-# MCP – analysis with Claude
+# MCP – analysis and entry with Claude
 
-Zipfelkasse has its own MCP server through which Claude can analyze the expenses. It has **read-only tools only**.
-It runs at `/mcp/<MCP_SECRET>`. Without `MCP_SECRET` it is disabled.
+Zipfelkasse has its own MCP server through which Claude can analyze the expenses and enter new ones. Two tools
+**add** expenses and reimbursements; nothing can be changed or deleted via MCP – that stays in the app. All other
+tools only read. It runs at `/mcp/<MCP_SECRET>`. Without `MCP_SECRET` it is disabled.
 
 The whole MCP interface is in English (tool names, parameters, output keys, instructions, error messages). Data
 values from the database (names, titles, categories, notes) are returned as entered, i.e. usually in German.
@@ -17,6 +18,8 @@ values from the database (names, titles, categories, notes) are returned as ente
 | `activity` | the activity log: who created, changed or deleted what when |
 | `schema` | explains tables and columns, lists people and categories, returns the CREATE statements |
 | `sql_query` | any `SELECT`/`WITH` (SQLite) as `query`, at most 500 rows, aborted after 5 s |
+| `create_expense` | **writes:** creates an expense |
+| `create_reimbursement` | **writes:** records a settlement payment from one person to another |
 
 Parameters in detail:
 
@@ -43,6 +46,25 @@ Parameters in detail:
   At most 500 periods.
 - `activity`: `from`, `to` (days in the server time zone), `person` (who made the change), `action`, `expense_id`,
   `before_id` (paging), `limit` (1–500, default 50).
+- `create_expense`: `title`, `amount`, `paid_by` (required), `date` (default today), `category`, `currency` (default
+  EUR), `fx_rate` (default: the ECB rate of the date, as in the form), `split` (`equal` = default, `shares`,
+  `percent`, `amount`), `participants` (for `equal`; default all active people), `weights` (for the other modes:
+  person → value, e.g. `{"Anna": 70, "Ben": 30}`), `notes`, `allow_duplicate`.
+- `create_reimbursement`: `from`, `to`, `amount` (required), `date`, `currency`, `fx_rate`, `notes`,
+  `allow_duplicate`. The title is "Rückzahlung", as in the form.
+
+Rules for both write tools:
+
+- The person who paid (`paid_by` or `from`) counts as the author in the activity log; MCP has no logged-in user.
+- Amounts are strict: digits with a dot as decimal separator, no thousands separator (`"1234.50"`, not `"1.234,50"`),
+  so `"1.234"` is refused instead of becoming 1234 €.
+- Archived people and categories cannot be used.
+- An entry with the same date, payer, amount (in euros) and title – for reimbursements: recipient – is refused as a
+  likely duplicate (e.g. a retried call) unless `allow_duplicate` is `true`.
+- The tools are marked as not read-only and not idempotent (`readOnlyHint`/`idempotentHint` false), so Claude asks
+  for confirmation before running them.
+- The result is the created entry (as in `search_expenses` with `detail=full`). Every created entry is also logged
+  (`mcp: entry created` with its id).
 
 `category: "none"` selects expenses without a category, both in `search_expenses` and in `statistics` (which labels
 them "No category"; that label is accepted as input too). A real category with that name takes precedence. The
@@ -185,6 +207,8 @@ Questions can be asked in any language; Claude maps them to the English tools.
 - "Who paid how much up front and how much did each person consume?"
 - "How did Ben's balance develop this year?"
 - "Who changed the dinner expense last week, and what was changed?"
+- "Ich habe gerade 23,40 € bei Rewe für Anna und mich bezahlt." (creates an expense)
+- "Ben hat mir 50 € überwiesen." (creates a reimbursement)
 
 ## Testing with curl
 
