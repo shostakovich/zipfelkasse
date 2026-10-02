@@ -40,7 +40,7 @@
   // splitNumber splits a number like domain.splitNumber into sign, integer
   // and fractional digits ({neg, int, frac}) or returns null.
   // dotThousands: a single dot before exactly three digits is a thousands
-  // separator ("17.000" = 17000).
+  // separator ("17.000" = 17000), unless only zeros precede it ("0.856").
   function splitNumber(s, dotThousands) {
     if (!s) return null;
     var neg = false;
@@ -56,7 +56,7 @@
       thousands = commas > 0 ? "," : ".";
     } else if (dots + commas === 1) {
       var p = Math.max(s.lastIndexOf("."), s.lastIndexOf(","));
-      if (s[p] === "." && s.length - p - 1 === 3 && dotThousands && p > 0) {
+      if (s[p] === "." && s.length - p - 1 === 3 && dotThousands && /[1-9]/.test(s.slice(0, p))) {
         thousands = ".";
       } else {
         intPart = s.slice(0, p); frac = s.slice(p + 1);
@@ -81,7 +81,7 @@
     return n.neg ? -v : v;
   }
 
-  // parseRate reads a rate like domain.ParseRate ("1,0857", "17.000" = 17000).
+  // parseRate reads a rate like domain.ParseRate ("1,0857", "17.000" = 17000, "0.856").
   function parseRate(s) {
     var n = splitNumber(String(s || "").replace(/\s/g, ""), true);
     if (!n || n.neg) return null;
