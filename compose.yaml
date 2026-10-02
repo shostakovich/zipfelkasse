@@ -1,0 +1,17 @@
+services:
+  teilen:
+    build: .
+    image: teilen:latest
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    environment:
+      TZ: Europe/Berlin
+      MCP_SECRET: ${MCP_SECRET:-}
+      # MCP_ALLOWED_CIDRS: 160.79.104.0/21
+      # TRUSTED_PROXIES: 172.18.0.0/16   # Adresse(n) von Pangolin/Newt
+    volumes:
+      - teilen-data:/data
+
+volumes:
+  teilen-data:

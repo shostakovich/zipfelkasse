@@ -1,0 +1,4 @@
+/data/
+/teilen
+*.db-shm
+*.db-wal

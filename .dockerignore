@@ -1,0 +1,7 @@
+.git
+.claude
+data
+teilen
+*.db
+*.db-shm
+*.db-wal

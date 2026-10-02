@@ -1,0 +1,43 @@
+{{define "layout" -}}
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>{{with .Title}}{{.}} · {{end}}{{.GroupName}}</title>
+  <meta name="color-scheme" content="light dark">
+  <link rel="stylesheet" href="{{static "app.css"}}">
+  {{- block "head" .}}{{end}}
+</head>
+<body>
+  <header class="site-header">
+    <div class="container site-header-inner">
+      <a class="brand" href="/">{{.GroupName}}</a>
+      {{- with .Me}}
+      <p class="whoami">Du bist <strong>{{.Name}}</strong> · <a href="/wer">wechseln</a></p>
+      {{- end}}
+    </div>
+  </header>
+  {{- if .Me}}
+  <div class="container">
+  <nav class="tabs" aria-label="Hauptnavigation">
+    <a href="/"{{if eq .Nav "ausgaben"}} aria-current="page"{{end}}>Ausgaben</a>
+    <a href="/salden"{{if eq .Nav "salden"}} aria-current="page"{{end}}>Salden</a>
+    <a href="/aktivitaet"{{if eq .Nav "aktivitaet"}} aria-current="page"{{end}}>Aktivität</a>
+    <a href="/einstellungen"{{if eq .Nav "einstellungen"}} aria-current="page"{{end}}>Einstellungen</a>
+  </nav>
+  </div>
+  {{- end}}
+  <main class="container main">
+    {{- with .Flash}}
+    <p class="alert alert-success" role="status">{{.}}</p>
+    {{- end}}
+    {{- with .Error}}
+    <p class="alert alert-destructive" role="alert">{{.}}</p>
+    {{- end}}
+    {{template "content" .}}
+  </main>
+  {{- block "scripts" .}}{{end}}
+</body>
+</html>
+{{- end}}
