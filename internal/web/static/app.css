@@ -282,6 +282,10 @@ details.disclosure > summary {
 details.disclosure > summary::-webkit-details-marker { display: none; }
 details.disclosure > summary:hover { text-decoration: underline; }
 
+/* <summary> als Knopf (z. B. Rückfrage vor dem Löschen). */
+summary.btn { list-style: none; }
+summary.btn::-webkit-details-marker { display: none; }
+
 /* --- Suche (Spliit search-bar) -------------------------------------------- */
 
 .search { display: flex; flex-direction: column; gap: 0.5rem; padding: 0 1rem 0.5rem; }

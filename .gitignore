@@ -2,3 +2,4 @@
 /teilen
 *.db-shm
 *.db-wal
+.claude/worktrees/
