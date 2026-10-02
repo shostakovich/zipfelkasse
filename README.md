@@ -25,8 +25,6 @@ One group, no login ("Wer bist du?" – who are you?), SQLite, a single binary.
 - Read-only MCP server for asking an AI about your expenses: [docs/MCP.md](docs/MCP.md)
 - Installable as a PWA, works on desktop and phone
 
-Details and design decisions: [docs/PLAN.md](docs/PLAN.md).
-
 ## Quick start
 
 Locally (Go 1.26):
