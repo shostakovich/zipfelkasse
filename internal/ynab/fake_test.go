@@ -28,7 +28,8 @@ type fakeYNAB struct {
 	failNext []int
 	// lostPost: the next POST is executed, but the response gets lost (500).
 	lostPost bool
-	// hold: if set, every request waits until the channel is closed.
+	// hold: if set, every request except the plan list (token check) waits
+	// until the channel is closed.
 	hold chan struct{}
 	mux  *http.ServeMux
 }
@@ -55,7 +56,7 @@ func (f *fakeYNAB) RoundTrip(req *http.Request) (*http.Response, error) {
 	}
 	hold := f.hold
 	f.mu.Unlock()
-	if hold != nil {
+	if hold != nil && req.URL.Path != "/v1/plans" {
 		<-hold
 	}
 	rec := httptest.NewRecorder()
@@ -266,6 +267,12 @@ func (f *fakeYNAB) takeRequests() []string {
 	r := f.requests
 	f.requests = nil
 	return r
+}
+
+func (f *fakeYNAB) requestCount() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return len(f.requests)
 }
 
 func (f *fakeYNAB) fail(statuses ...int) {

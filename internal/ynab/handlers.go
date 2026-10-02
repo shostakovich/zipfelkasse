@@ -259,12 +259,22 @@ func (s *Service) saveToken(w http.ResponseWriter, r *http.Request) {
 		s.render(w, r, http.StatusUnprocessableEntity, msg, false)
 		return
 	}
-	old, err := s.d.Store.GetYNABConfig(ctx, me.ID)
-	if err != nil && !errors.Is(err, store.ErrNotFound) {
-		s.serverError(w, r, err)
-		return
-	}
-	if err := s.d.Store.SetYNABToken(ctx, me.ID, token); err != nil {
+	var old store.YNABConfig
+	err := s.changeConnection(func() error {
+		var err error
+		old, err = s.d.Store.GetYNABConfig(ctx, me.ID)
+		if err != nil && !errors.Is(err, store.ErrNotFound) {
+			return err
+		}
+		if err := s.d.Store.SetYNABToken(ctx, me.ID, token); err != nil {
+			return err
+		}
+		// new token: reset locks and old errors
+		st := s.loadStatus(ctx, me.ID)
+		st.TokenInvalid, st.RetryAt, st.Backoff, st.Error = false, time.Time{}, 0, ""
+		return s.saveStatus(ctx, me.ID, st)
+	})
+	if err != nil {
 		s.serverError(w, r, err)
 		return
 	}
@@ -273,20 +283,13 @@ func (s *Service) saveToken(w http.ResponseWriter, r *http.Request) {
 	} else {
 		s.d.LogSettings(r, "YNAB verbunden (Token gesetzt)")
 	}
-	// new token: reset locks and old errors
-	st := s.loadStatus(ctx, me.ID)
-	st.TokenInvalid, st.RetryAt, st.Backoff, st.Error = false, time.Time{}, 0, ""
-	if err := s.saveStatus(ctx, me.ID, st); err != nil {
-		s.serverError(w, r, err)
-		return
-	}
 	s.Trigger(0)
 	s.done(w, r, "Token gespeichert.")
 }
 
 func (s *Service) disconnect(w http.ResponseWriter, r *http.Request) {
 	me, _ := web.Me(r.Context())
-	if err := s.d.Store.SetYNABToken(r.Context(), me.ID, ""); err != nil {
+	if err := s.changeConnection(func() error { return s.d.Store.SetYNABToken(r.Context(), me.ID, "") }); err != nil {
 		s.serverError(w, r, err)
 		return
 	}
@@ -321,7 +324,9 @@ func (s *Service) saveTarget(w http.ResponseWriter, r *http.Request) {
 		s.render(w, r, http.StatusUnprocessableEntity, "Bitte Plan und Konto auswählen.", false)
 		return
 	}
-	if err := s.d.Store.SetYNABTarget(ctx, me.ID, planID, accountID, start); err != nil {
+	if err := s.changeConnection(func() error {
+		return s.d.Store.SetYNABTarget(ctx, me.ID, planID, accountID, start)
+	}); err != nil {
 		s.serverError(w, r, err)
 		return
 	}

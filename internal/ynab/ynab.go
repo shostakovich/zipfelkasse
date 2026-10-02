@@ -44,7 +44,9 @@ type Service struct {
 	debounce   time.Duration
 	startDelay time.Duration
 
-	syncMu sync.Mutex // at most one sync at a time (worker or button)
+	// syncMu: at most one sync at a time (worker or button). Changes of
+	// token or target wait for it (see changeConnection).
+	syncMu sync.Mutex
 
 	// Background syncs via "Jetzt synchronisieren" (see syncInBackground).
 	// Run cancels them on shutdown and waits for them.
@@ -136,24 +138,26 @@ func (s *Service) Run(ctx context.Context) {
 }
 
 // SyncAll syncs all configured people and returns the delay until the next
-// necessary run.
+// necessary run. syncMu is taken per person, so a change of the settings
+// waits for one person's run at most.
 func (s *Service) SyncAll(ctx context.Context, full bool) time.Duration {
-	s.syncMu.Lock()
-	defer s.syncMu.Unlock()
 	next := fullInterval
 	cfgs, err := s.d.Store.ListYNABConfigs(ctx)
 	if err != nil {
 		s.d.Log.Error("ynab: read configs", "err", err)
 		return retryDelay
 	}
-	for _, cfg := range cfgs {
+	for _, c := range cfgs {
 		if ctx.Err() != nil {
 			return next
 		}
-		if !cfg.Ready() {
+		if !c.Ready() {
 			continue
 		}
-		res, st, err := s.syncOne(ctx, cfg, full)
+		cfg, res, st, err := s.syncPerson(ctx, c.ParticipantID, full)
+		if err == errNotReady {
+			continue // changed in the meantime
+		}
 		switch err.(type) {
 		case nil:
 			if res.Created+res.Updated+res.Deleted+res.Failed > 0 {
@@ -177,17 +181,35 @@ func (s *Service) SyncAll(ctx context.Context, full bool) time.Duration {
 
 // SyncNow fully syncs one person right away ("Jetzt synchronisieren").
 func (s *Service) SyncNow(ctx context.Context, participantID int64) (syncResult, error) {
+	_, res, _, err := s.syncPerson(ctx, participantID, true)
+	return res, err
+}
+
+// syncPerson syncs one person under syncMu with the connection as it is now.
+// A sync uses the connection read at its start throughout, so token or
+// target must not change while it runs (see changeConnection).
+func (s *Service) syncPerson(ctx context.Context, participantID int64, full bool) (store.YNABConfig, syncResult, Status, error) {
 	s.syncMu.Lock()
 	defer s.syncMu.Unlock()
 	cfg, err := s.d.Store.GetYNABConfig(ctx, participantID)
 	if err != nil && err != store.ErrNotFound {
-		return syncResult{}, err
+		return cfg, syncResult{}, Status{}, err
 	}
 	if !cfg.Ready() {
-		return syncResult{}, errNotReady
+		return cfg, syncResult{}, Status{}, errNotReady
 	}
-	res, _, err := s.syncOne(ctx, cfg, true)
-	return res, err
+	res, st, err := s.syncOne(ctx, cfg, full)
+	return cfg, res, st, err
+}
+
+// changeConnection runs fn – a change of token or target – under syncMu, so
+// that it never interleaves with a sync: otherwise the sync would write
+// transaction IDs of the old account into the state for the new one, or
+// overwrite the status just reset for a new token with its own result.
+func (s *Service) changeConnection(fn func() error) error {
+	s.syncMu.Lock()
+	defer s.syncMu.Unlock()
+	return fn()
 }
 
 // syncInBackground starts SyncNow for participantID in its own goroutine so

@@ -957,6 +957,86 @@ func TestSyncNowDoesNotBlock(t *testing.T) {
 	}
 }
 
+// postDuringSync sends a form while a sync (SyncAll) hangs in its first
+// request to YNAB. It lets the sync go on once the handler has answered or
+// after a short wait (if the handler waits for the sync), and returns after
+// both have finished.
+func (e *env) postDuringSync(path string, v url.Values) *httptest.ResponseRecorder {
+	e.t.Helper()
+	hold := make(chan struct{})
+	e.fake.hold = hold
+	e.fake.takeRequests()
+	synced := make(chan struct{})
+	go func() { e.svc.SyncAll(e.ctx, false); close(synced) }()
+	for deadline := time.Now().Add(3 * time.Second); e.fake.requestCount() == 0; time.Sleep(time.Millisecond) {
+		if time.Now().After(deadline) {
+			close(hold)
+			e.t.Fatal("sync did not start")
+		}
+	}
+	answered := make(chan *httptest.ResponseRecorder, 1)
+	go func() { answered <- e.post(path, v) }()
+	var rec *httptest.ResponseRecorder
+	select {
+	case rec = <-answered:
+	case <-time.After(100 * time.Millisecond):
+	}
+	close(hold)
+	<-synced
+	if rec == nil {
+		rec = <-answered
+	}
+	e.fake.hold = nil
+	return rec
+}
+
+// Changing the account while a sync runs must not end up with transaction
+// IDs of the old account in the new sync state.
+func TestSettingsChangeAccountDuringSync(t *testing.T) {
+	e := newEnv(t)
+	e.connect("2026-09-01")
+	id := e.create(e.input("Kino", 2400, "2026-09-20", e.anna, e.anna, e.ben))
+	if _, err := e.svc.plans(e.ctx, testToken, true); err != nil { // the handler uses the cache
+		t.Fatal(err)
+	}
+	rec := e.postDuringSync("/einstellungen/ynab/konto", url.Values{"ziel": {"plan-1|acc-giro"}, "start": {"2026-09-01"}})
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("account: %d %s", rec.Code, rec.Body)
+	}
+	if r := e.syncRows()[id]; r.TxnID != "" {
+		t.Errorf("row after account change = %+v", r)
+	}
+	e.mustSync(false)
+	byID := map[string]apiTxn{}
+	for _, tx := range e.fake.live() {
+		byID[tx.ID] = tx
+	}
+	if tx := byID[e.syncRows()[id].TxnID]; tx.AccountID != "acc-giro" {
+		t.Errorf("row points to %+v, live %+v", tx, e.fake.live())
+	}
+}
+
+// A new token saved while a sync with the old (invalid) token runs stays
+// valid: the end of the sync must not overwrite the reset status.
+func TestSettingsNewTokenDuringSync(t *testing.T) {
+	e := newEnv(t)
+	e.connect("2026-09-01")
+	if err := e.st.SetYNABToken(e.ctx, e.anna, "abgelaufen"); err != nil {
+		t.Fatal(err)
+	}
+	e.create(e.input("Kino", 2400, "2026-09-20", e.anna, e.anna, e.ben))
+	rec := e.postDuringSync("/einstellungen/ynab/token", url.Values{"token": {testToken}})
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("token: %d %s", rec.Code, rec.Body)
+	}
+	if st := e.svc.loadStatus(e.ctx, e.anna); st.TokenInvalid || st.Error != "" {
+		t.Errorf("status = %+v", st)
+	}
+	if res := e.mustSync(false); res.Created != 1 {
+		t.Errorf("res = %+v", res)
+	}
+}
+
 func flashOf(rec *httptest.ResponseRecorder) string {
 	for _, c := range rec.Result().Cookies() {
 		if c.Name == "flash" {
