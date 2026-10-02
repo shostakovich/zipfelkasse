@@ -1083,7 +1083,7 @@ func TestCreateExpense(t *testing.T) {
 		t.Errorf("participants: %v", x)
 	}
 	// Weights: shares, percent, amount.
-	if x = created("create_expense", map[string]any{"title": "Hotel", "amount": "90", "paid_by": "Anna", "split": "shares", "weights": map[string]any{"Anna": 2, "Ben": "1"}}); shares(x) != "Anna=60.00,Ben=30.00" {
+	if x = created("create_expense", map[string]any{"title": "Hotel", "amount": "90", "paid_by": "Anna", "split": "shares", "weights": map[string]any{"Anna": "2.0", "Ben": 1}}); shares(x) != "Anna=60.00,Ben=30.00" {
 		t.Errorf("shares: %v", x)
 	}
 	if x = created("create_expense", map[string]any{"title": "Auto", "amount": "100", "paid_by": "Anna", "split": "percent", "weights": map[string]any{"Anna": 70, "Ben": 30}}); shares(x) != "Anna=70.00,Ben=30.00" {
@@ -1129,6 +1129,12 @@ func TestCreateExpense(t *testing.T) {
 	}
 	if _, text, _ := e.call("create_expense", map[string]any{"title": "X", "amount": "1", "paid_by": "Anna", "currency": "CHF"}); !strings.Contains(text, "fx_rate") {
 		t.Errorf("no rate: %s", text)
+	}
+	if _, text, _ := e.call("create_expense", map[string]any{"title": "X", "amount": "1", "paid_by": "Anna", "split": "shares", "weights": map[string]any{"Anna": "1.5"}}); !strings.Contains(text, "whole number") {
+		t.Errorf("fractional shares: %s", text)
+	}
+	if _, text, _ := e.call("create_expense", map[string]any{"title": "X", "amount": "1", "paid_by": "Anna", "split": "percent", "weights": map[string]any{"Anna": 60, "Ben": 30}}); !strings.HasPrefix(text, "The app refused the entry (message in German): ") {
+		t.Errorf("store validation: %s", text)
 	}
 	if es, _ := e.st.ListExpenses(ctx, store.ExpenseFilter{}); len(es) != 9 {
 		t.Errorf("%d expenses after the invalid calls", len(es))

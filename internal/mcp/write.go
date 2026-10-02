@@ -7,6 +7,7 @@ package mcp
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"maps"
 	"slices"
@@ -26,11 +27,7 @@ const reimbursementTitle = "Rückzahlung"
 func (s *server) registerWriteTools(dateProp func(string) map[string]any) {
 	annotations := map[string]any{"readOnlyHint": false, "destructiveHint": false, "idempotentHint": false, "openWorldHint": false}
 	add := func(name, title, desc string, schema map[string]any, run func(context.Context, json.RawMessage) (toolResult, error)) {
-		s.order = append(s.order, name)
-		s.tools[name] = tool{
-			def: map[string]any{"name": name, "title": title, "description": desc, "inputSchema": schema, "annotations": annotations},
-			run: run,
-		}
+		s.addTool(annotations, name, title, desc, schema, run)
 	}
 	amountProp := map[string]any{"type": []string{"string", "number"},
 		"description": `Amount in currency (default EUR) with a dot as decimal separator, e.g. "23.40".`}
@@ -123,6 +120,8 @@ func parseDecimal(s string, decimals int) (int64, error) {
 	switch {
 	case whole == "" || !digits(whole) || !digits(frac):
 		return 0, fmt.Errorf("use digits with a dot as decimal separator and no thousands separator, e.g. 1234.50")
+	case len(frac) > decimals && decimals == 0:
+		return 0, fmt.Errorf("must be a whole number")
 	case len(frac) > decimals:
 		return 0, fmt.Errorf("at most %d decimal places", decimals)
 	case len(whole) > 15:
@@ -142,7 +141,7 @@ type moneyArgs struct {
 // foreign currency without fx_rate gets the ECB rate of the date.
 func (s *server) setMoney(ctx context.Context, in *store.ExpenseInput, a moneyArgs) error {
 	cur := strings.ToUpper(cmpOr(a.Currency, "EUR"))
-	if len(cur) != 3 || strings.Trim(cur, "ABCDEFGHIJKLMNOPQRSTUVWXYZ") != "" {
+	if !domain.ValidCurrencyCode(cur) {
 		return invalid("currency must be a three-letter ISO code such as USD, not %q.", a.Currency)
 	}
 	if strings.TrimSpace(string(a.Amount)) == "" {
@@ -246,7 +245,7 @@ func (s *server) createExpense(ctx context.Context, raw json.RawMessage) (toolRe
 	if err := s.setMoney(ctx, &in, args.moneyArgs); err != nil {
 		return toolResult{}, err
 	}
-	_, ps, err := s.participantNames(ctx)
+	names, ps, err := s.participantNames(ctx)
 	if err != nil {
 		return toolResult{}, err
 	}
@@ -268,7 +267,7 @@ func (s *server) createExpense(ctx context.Context, raw json.RawMessage) (toolRe
 	if in.Parts, err = splitArgs(ps, in.SplitMode, cmpOr(in.OriginalCurrency, "EUR"), args.Participants, args.Weights); err != nil {
 		return toolResult{}, err
 	}
-	return s.create(ctx, in, payer, args.AllowDuplicate)
+	return s.create(ctx, in, payer, names, args.AllowDuplicate)
 }
 
 // splitArgs turns participants (equal) or weights (other modes) into parts.
@@ -314,21 +313,9 @@ func splitArgs(ps []store.Participant, mode domain.SplitMode, cur string, partic
 		return nil, invalid("split=%s needs weights (person name → value).", mode)
 	}
 	for _, name := range slices.Sorted(maps.Keys(weights)) {
-		var w int64
-		var err error
-		switch mode {
-		case domain.SplitPercent:
-			w, err = parseDecimal(string(weights[name]), 2) // basis points
-		case domain.SplitAmount:
-			w, err = parseDecimal(string(weights[name]), domain.CurrencyDecimals(cur))
-		default:
-			w, err = domain.ParseWeight(mode, cur, string(weights[name]))
-		}
+		w, err := parseDecimal(string(weights[name]), domain.WeightDecimals(mode, cur))
 		if err != nil {
-			return nil, invalid("Invalid value %q for %s in weights.", weights[name], name)
-		}
-		if w < 0 {
-			return nil, invalid("Negative value for %s in weights.", name)
+			return nil, invalid("Invalid value %q for %s in weights: %v.", weights[name], name, err)
 		}
 		if err := addPart(name, w); err != nil {
 			return nil, err
@@ -357,7 +344,7 @@ func (s *server) createReimbursement(ctx context.Context, raw json.RawMessage) (
 	if err := s.setMoney(ctx, &in, args.moneyArgs); err != nil {
 		return toolResult{}, err
 	}
-	_, ps, err := s.participantNames(ctx)
+	names, ps, err := s.participantNames(ctx)
 	if err != nil {
 		return toolResult{}, err
 	}
@@ -373,13 +360,13 @@ func (s *server) createReimbursement(ctx context.Context, raw json.RawMessage) (
 		return toolResult{}, invalid("from and to must be different people.")
 	}
 	in.PaidBy, in.Parts = from.ID, []domain.Part{{ParticipantID: to.ID}}
-	return s.create(ctx, in, from, args.AllowDuplicate)
+	return s.create(ctx, in, from, names, args.AllowDuplicate)
 }
 
 // create stores in with the payer as author, unless an identical entry
 // exists (same date, payer, amount in euros, kind and title or recipient), and
 // returns the stored entry.
-func (s *server) create(ctx context.Context, in store.ExpenseInput, payer store.Participant, allowDuplicate bool) (toolResult, error) {
+func (s *server) create(ctx context.Context, in store.ExpenseInput, payer store.Participant, names map[int64]string, allowDuplicate bool) (toolResult, error) {
 	cents := in.AmountCents
 	if in.OriginalCurrency != "" {
 		cents = domain.ToEURCents(in.OriginalAmountMinor, in.OriginalCurrency, in.FXRate)
@@ -401,15 +388,15 @@ func (s *server) create(ctx context.Context, in store.ExpenseInput, payer store.
 		}
 	}
 	id, err := s.d.Store.CreateExpense(ctx, payer.ID, in)
+	if ve := (domain.ValidationError{}); errors.As(err, &ve) {
+		// The app's own rules (e.g. sum of the split) answer in German.
+		return toolResult{}, invalid("The app refused the entry (message in German): %s", ve.Msg)
+	}
 	if err != nil {
 		return toolResult{}, err
 	}
 	s.log.Info("mcp: entry created", "id", id, "reimbursement", in.IsReimbursement)
 	e, err := s.d.Store.GetExpense(ctx, id)
-	if err != nil {
-		return toolResult{}, err
-	}
-	names, _, err := s.participantNames(ctx)
 	if err != nil {
 		return toolResult{}, err
 	}

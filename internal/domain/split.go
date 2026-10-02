@@ -64,9 +64,22 @@ func ParseWeight(mode SplitMode, currency, v string) (int64, error) {
 	case SplitPercent:
 		return ParseBasisPoints(v)
 	case SplitAmount:
-		return ParseMinor(v, CurrencyDecimals(currency))
+		return ParseMinor(v, WeightDecimals(mode, currency))
 	}
 	return 0, nil
+}
+
+// WeightDecimals is the number of decimal places a value for mode has before
+// it becomes Part.Weight (see ParseWeight): 0 for shares and equal, 2 for
+// percent (basis points), the currency's decimals for amount.
+func WeightDecimals(mode SplitMode, currency string) int {
+	switch mode {
+	case SplitPercent:
+		return 2
+	case SplitAmount:
+		return CurrencyDecimals(currency)
+	}
+	return 0
 }
 
 // Part is an input to Split: who takes part, with which weight.

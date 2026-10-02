@@ -5,7 +5,9 @@ Zipfelkasse has its own MCP server through which Claude can analyze the expenses
 tools only read. It runs at `/mcp/<MCP_SECRET>`. Without `MCP_SECRET` it is disabled.
 
 The whole MCP interface is in English (tool names, parameters, output keys, instructions, error messages). Data
-values from the database (names, titles, categories, notes) are returned as entered, i.e. usually in German.
+values from the database (names, titles, categories, notes) are returned as entered, i.e. usually in German. One
+exception: when the app's own rules refuse an entry of a write tool (e.g. the split does not add up), the error starts
+with "The app refused the entry (message in German):" followed by the app's German message.
 
 ## Tools
 

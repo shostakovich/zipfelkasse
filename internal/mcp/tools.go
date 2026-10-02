@@ -147,15 +147,20 @@ var historyIntervals = []string{store.StatsByMonth, store.StatsByWeek, store.Sta
 // comparePreviousYear is the (only) compare value of statistics.
 const comparePreviousYear = "previous_year"
 
+// addTool registers a tool; tools/list returns them in registration order.
+func (s *server) addTool(annotations map[string]any, name, title, desc string, schema map[string]any, run func(context.Context, json.RawMessage) (toolResult, error)) {
+	s.order = append(s.order, name)
+	s.tools[name] = tool{
+		def: map[string]any{"name": name, "title": title, "description": desc, "inputSchema": schema, "annotations": annotations},
+		run: run,
+	}
+}
+
 func newServer(d web.Deps) *server {
 	s := &server{d: d, log: newLogger(d), tools: map[string]tool{}, sqlSem: make(chan struct{}, 2), now: time.Now}
 	readOnly := map[string]any{"readOnlyHint": true, "destructiveHint": false, "idempotentHint": true, "openWorldHint": false}
 	add := func(name, title, desc string, schema map[string]any, run func(context.Context, json.RawMessage) (toolResult, error)) {
-		s.order = append(s.order, name)
-		s.tools[name] = tool{
-			def: map[string]any{"name": name, "title": title, "description": desc, "inputSchema": schema, "annotations": readOnly},
-			run: run,
-		}
+		s.addTool(readOnly, name, title, desc, schema, run)
 	}
 	dateProp := func(desc string) map[string]any {
 		return map[string]any{"type": "string", "description": desc + " Format YYYY-MM-DD (DD.MM.YYYY is accepted too)."}
