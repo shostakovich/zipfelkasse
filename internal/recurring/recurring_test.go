@@ -2,6 +2,7 @@ package recurring
 
 import (
 	"context"
+	"encoding/base64"
 	"errors"
 	"io"
 	"log/slog"
@@ -520,6 +521,82 @@ func TestMaterializeRuleChangedMeanwhile(t *testing.T) {
 				t.Errorf("next_date = %s, want %s", got, tt.next)
 			}
 		})
+	}
+}
+
+// flash returns the flash message set by the response.
+func flash(rec *httptest.ResponseRecorder) string {
+	for _, c := range rec.Result().Cookies() {
+		if b, err := base64.RawURLEncoding.DecodeString(c.Value); err == nil && c.Value != "" {
+			return string(b)
+		}
+	}
+	return ""
+}
+
+// The flash after creating or resuming a rule counts only that rule's
+// expenses, not those of other due rules.
+func TestFlashCountsOnlyTheRule(t *testing.T) {
+	e := newEnv(t)
+	other, _ := e.rule(e.expense("Strom", "2026-08-02", 5000), domain.FreqMonthly) // 2 Sep is due
+	eid, err := e.st.CreateExpense(e.ctx, e.anna.ID, e.expense("Miete", "2026-08-31", 100000))
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec := e.do("POST", "/einstellungen/wiederkehrend/neu", url.Values{"ausgabe": {strconv.FormatInt(eid, 10)}, "haeufigkeit": {"monthly"}})
+	if got := flash(rec); got != "„Miete“ wiederholt sich jetzt monatlich. 1 Ausgabe nachgetragen." {
+		t.Errorf("flash after create = %q", got)
+	}
+	if got := e.dates(other); got != "2026-08-02" {
+		t.Errorf("other rule caught up by the request: %s", got)
+	}
+
+	if err := e.st.SetRecurringActive(e.ctx, other, false, day("2026-08-03")); err != nil {
+		t.Fatal(err)
+	}
+	weekly, _ := e.rule(e.expense("Putzen", "2026-09-25", 4000), domain.FreqWeekly) // 2 Oct is due
+	// Resumed on 2 Oct: the occurrence of that day is created.
+	rec = e.do("POST", "/einstellungen/wiederkehrend/"+strconv.FormatInt(other, 10)+"/fortsetzen", nil)
+	if got := flash(rec); got != "Fortgesetzt. 1 Ausgabe angelegt." {
+		t.Errorf("flash after resume = %q", got)
+	}
+	if got := e.dates(weekly); got != "2026-09-25" {
+		t.Errorf("other rule caught up by the request: %s", got)
+	}
+}
+
+// The preview says honestly how many missed occurrences are created right
+// away and when the rest follows.
+func TestFreqOptionNote(t *testing.T) {
+	for _, tt := range []struct {
+		o    freqOption
+		want string
+	}{
+		{freqOption{}, ""},
+		{freqOption{Missed: 1}, "1 verpasster Termin wird sofort eingetragen"},
+		{freqOption{Missed: 4, Existing: 1}, "3 verpasste Termine werden sofort eingetragen; 1 bereits als Ausgabe vorhandener Termin wird übersprungen"},
+		{freqOption{Missed: 2, Existing: 2}, "2 bereits als Ausgabe vorhandene Termine werden übersprungen"},
+		{freqOption{Missed: 400}, "400 verpasste Termine werden sofort eingetragen"},
+		{freqOption{Missed: 610, Existing: 10}, "600 verpasste Termine werden eingetragen – die ersten 400 Termine sofort, der Rest in den nächsten Stunden; " +
+			"10 bereits als Ausgabe vorhandene Termine werden übersprungen"},
+		{freqOption{Missed: 1001}, "mehr als 1000 verpasste Termine werden eingetragen – die ersten 400 Termine sofort, der Rest in den nächsten Stunden"},
+		{freqOption{Missed: 1001, Existing: 3}, "mehr als 1000 verpasste Termine werden eingetragen – die ersten 400 Termine sofort, der Rest in den nächsten Stunden; " +
+			"mindestens 3 bereits als Ausgabe vorhandene Termine werden übersprungen"},
+	} {
+		if got := tt.o.Note(); got != tt.want {
+			t.Errorf("%+v: Note() = %q, want %q", tt.o, got, tt.want)
+		}
+	}
+
+	e := newEnv(t)
+	eid, err := e.st.CreateExpense(e.ctx, e.anna.ID, e.expense("Putzen", "2000-01-03", 100))
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec := e.do("GET", "/einstellungen/wiederkehrend/neu?ausgabe="+strconv.FormatInt(eid, 10), nil)
+	if body := rec.Body.String(); !strings.Contains(body, "mehr als 1000 verpasste Termine") ||
+		!strings.Contains(body, "der Rest in den nächsten Stunden") {
+		t.Errorf("preview: %s", body)
 	}
 }
 

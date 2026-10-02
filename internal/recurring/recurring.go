@@ -87,6 +87,31 @@ func (s *Service) Materialize(ctx context.Context, today time.Time) (int, error)
 	return n, errors.Join(errs...)
 }
 
+// MaterializeRule is Materialize for the rule id only (e.g. right after it
+// was created or resumed) and returns the count of its new instances. Other
+// due rules are left to the next run. Unknown, paused or not yet due rules
+// create nothing.
+func (s *Service) MaterializeRule(ctx context.Context, id int64, today time.Time) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	today = domain.DateOf(today)
+	r, err := s.d.Store.GetRecurring(ctx, id)
+	if errors.Is(err, store.ErrNotFound) {
+		return 0, nil
+	}
+	if err != nil {
+		return 0, err
+	}
+	if !r.Active || r.NextDate.After(today) {
+		return 0, nil
+	}
+	n, err := s.materializeRule(ctx, r, today)
+	if err != nil {
+		return n, fmt.Errorf("recurring rule %d (%q): %w", r.ID, r.Template.Title, err)
+	}
+	return n, nil
+}
+
 func (s *Service) materializeRule(ctx context.Context, r store.Recurring, today time.Time) (int, error) {
 	if !r.Frequency.Valid() {
 		return 0, fmt.Errorf("unknown frequency %q", r.Frequency)

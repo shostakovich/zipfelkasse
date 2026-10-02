@@ -133,9 +133,11 @@ func (s *Service) handleSetActive(active bool) http.HandlerFunc {
 		s.d.LogSettings(r, ruleLabel(rule)+" "+verb)
 		if active {
 			msg = "Fortgesetzt."
-			if n, err := s.Materialize(r.Context(), s.today()); err != nil {
+			n, err := s.MaterializeRule(r.Context(), id, s.today())
+			if err != nil {
 				s.d.Log.Error("recurring expenses", "err", err)
-			} else if n > 0 {
+			}
+			if n > 0 {
 				msg += fmt.Sprintf(" %s angelegt.", countText(n))
 			}
 		}
@@ -198,25 +200,38 @@ type freqOption struct {
 	Value    domain.Frequency
 	Label    string
 	Next     time.Time // first occurrence after the template
-	Missed   int       // occurrences up to today that are caught up right away
+	Missed   int       // occurrences up to today (counted up to maxMissedCount+1)
 	Existing int       // of these, occurrences skipped as an equal expense exists
 	Checked  bool
 }
 
 // Note describes what happens to the missed occurrences, e.g. "3 verpasste
 // Termine werden sofort eingetragen; 1 bereits als Ausgabe vorhandener Termin
-// wird übersprungen"; "" if there are none.
+// wird übersprungen"; "" if there are none. Materialize processes at most
+// maxInstancesPerRun occurrences per run, the rest in the next (hourly) runs.
 func (o freqOption) Note() string {
+	capped := o.Missed > maxMissedCount
+	when := "sofort eingetragen"
+	if o.Missed > maxInstancesPerRun {
+		when = fmt.Sprintf("eingetragen – die ersten %d Termine sofort, der Rest in den nächsten Stunden", maxInstancesPerRun)
+	}
 	var parts []string
-	if n := o.Missed - o.Existing; n == 1 {
-		parts = append(parts, "1 verpasster Termin wird sofort eingetragen")
-	} else if n > 1 {
-		parts = append(parts, fmt.Sprintf("%d verpasste Termine werden sofort eingetragen", n))
+	switch n := o.Missed - o.Existing; {
+	case capped:
+		parts = append(parts, fmt.Sprintf("mehr als %d verpasste Termine werden %s", maxMissedCount, when))
+	case n == 1:
+		parts = append(parts, "1 verpasster Termin wird "+when)
+	case n > 1:
+		parts = append(parts, fmt.Sprintf("%d verpasste Termine werden %s", n, when))
+	}
+	atLeast := ""
+	if capped {
+		atLeast = "mindestens "
 	}
 	if o.Existing == 1 {
-		parts = append(parts, "1 bereits als Ausgabe vorhandener Termin wird übersprungen")
+		parts = append(parts, atLeast+"1 bereits als Ausgabe vorhandener Termin wird übersprungen")
 	} else if o.Existing > 1 {
-		parts = append(parts, fmt.Sprintf("%d bereits als Ausgabe vorhandene Termine werden übersprungen", o.Existing))
+		parts = append(parts, fmt.Sprintf("%s%d bereits als Ausgabe vorhandene Termine werden übersprungen", atLeast, o.Existing))
 	}
 	return strings.Join(parts, "; ")
 }
@@ -227,7 +242,8 @@ type newData struct {
 	Existing int64 // the expense already belongs to this recurring rule
 }
 
-// maxMissedCount caps counting missed occurrences for the preview.
+// maxMissedCount caps counting missed occurrences for the preview: beyond
+// it, the preview says "mehr als 1000".
 const maxMissedCount = 1000
 
 func (s *Service) newData(ctx context.Context, e store.Expense, selected domain.Frequency) (newData, error) {
@@ -243,7 +259,7 @@ func (s *Service) newData(ctx context.Context, e store.Expense, selected domain.
 	}
 	for _, f := range domain.Frequencies {
 		o := freqOption{Value: f, Label: f.Label(), Next: domain.NextDate(f, e.Date, e.Date), Checked: f == selected}
-		for d := o.Next; !d.After(today) && o.Missed < maxMissedCount; d = domain.NextDate(f, e.Date, d) {
+		for d := o.Next; !d.After(today) && o.Missed <= maxMissedCount; d = domain.NextDate(f, e.Date, d) {
 			o.Missed++
 			if existing[d] {
 				o.Existing++
@@ -303,7 +319,7 @@ func (s *Service) handleCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	freq := domain.Frequency(r.FormValue("haeufigkeit"))
-	_, err := s.d.Store.CreateRecurringFromExpense(r.Context(), actorID(r), e.ID, freq)
+	id, err := s.d.Store.CreateRecurringFromExpense(r.Context(), actorID(r), e.ID, freq)
 	var ve domain.ValidationError
 	switch {
 	case errors.As(err, &ve):
@@ -322,9 +338,11 @@ func (s *Service) handleCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	msg := fmt.Sprintf("„%s“ wiederholt sich jetzt %s.", e.Title, adverb(freq))
-	if n, err := s.Materialize(r.Context(), s.today()); err != nil {
+	n, err := s.MaterializeRule(r.Context(), id, s.today())
+	if err != nil {
 		s.d.Log.Error("recurring expenses", "err", err)
-	} else if n > 0 {
+	}
+	if n > 0 {
 		msg += fmt.Sprintf(" %s nachgetragen.", countText(n))
 	}
 	web.SetFlash(w, msg)
