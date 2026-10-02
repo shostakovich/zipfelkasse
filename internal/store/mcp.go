@@ -519,20 +519,12 @@ func FillPeriods(rows []StatRow, groupBy string, first, last time.Time) []StatRo
 		have[r.Period] = r
 	}
 	var out []StatRow
-	add := func(p string) {
+	for _, p := range Periods(groupBy, first, last) {
 		if r, ok := have[p]; ok {
 			out = append(out, r)
 			delete(have, p)
 		} else {
 			out = append(out, StatRow{Period: p})
-		}
-	}
-	end := PeriodOf(groupBy, last)
-	for d := periodStart(groupBy, first); ; d = nextPeriod(groupBy, d) {
-		p := PeriodOf(groupBy, d)
-		add(p)
-		if p >= end {
-			break
 		}
 	}
 	// Rows outside first…last stay.
@@ -542,6 +534,21 @@ func FillPeriods(rows []StatRow, groupBy string, first, last time.Time) []StatRo
 		}
 	}
 	slices.SortStableFunc(out, func(a, b StatRow) int { return strings.Compare(a.Period, b.Period) })
+	return out
+}
+
+// Periods lists the periods of a time grouping from the one containing
+// first to the one containing last (sorted; empty if last is before first).
+func Periods(groupBy string, first, last time.Time) []string {
+	var out []string
+	end := PeriodOf(groupBy, last)
+	for d := periodStart(groupBy, first); !last.Before(first); d = nextPeriod(groupBy, d) {
+		p := PeriodOf(groupBy, d)
+		out = append(out, p)
+		if p >= end {
+			break
+		}
+	}
 	return out
 }
 

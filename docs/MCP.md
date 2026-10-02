@@ -11,8 +11,10 @@ values from the database (names, titles, categories, notes) are returned as ente
 | Tool | Purpose |
 |---|---|
 | `balances` | balance per person and a settlement proposal |
+| `balance_history` | balance per person at the end of each month, week or year |
 | `search_expenses` | individual expenses, filtered by date, category, people, text, amount and `reimbursements`, sortable, compact or with shares (`detail`) |
 | `statistics` | totals by `group_by` = `category`, `title`, `year`, `month`, `week`, `person` or `category_month`. Either total amounts or – with `share_of` – only one person's share, optionally compared with the previous year. Reimbursements never count |
+| `activity` | the activity log: who created, changed or deleted what when |
 | `schema` | explains tables and columns, lists people and categories, returns the CREATE statements |
 | `sql_query` | any `SELECT`/`WITH` (SQLite) as `query`, at most 500 rows, aborted after 5 s |
 
@@ -33,6 +35,11 @@ Parameters in detail:
     each period with the same period a year earlier. `category`, `title` and `person` compare `from`…`to` (`to`
     defaults to today) with the same range a year earlier and need `from`; groups that only existed a year earlier
     appear with 0.
+- `balance_history`: `interval` (`month` = default, `week`, `year`), `from` (default: the first expense), `to`
+  (default: today), `person`. Computed from the current data by expense date, so later edits and deletions apply
+  retroactively; expenses before `from` are the opening balance. At most 500 periods.
+- `activity`: `from`, `to` (days in the server time zone), `person` (who made the change), `action`, `expense_id`,
+  `before_id` (paging), `limit` (1–500, default 50).
 
 `category: "none"` selects expenses without a category, both in `search_expenses` and in `statistics` (which labels
 them "No category"; that label is accepted as input too). A real category with that name takes precedence. The
@@ -54,6 +61,10 @@ Main output keys:
   `person`, `count`, `amount`, `amount_cents`, with `group_by=person` also `paid`, `paid_cents`, with `compare` also
   `previous`, `previous_cents`, `change`, `change_cents`, `change_percent`), `rows_total`, `truncated`, `total`,
   `total_cents`, with `compare` also `previous_period`, `previous_total`, `previous_total_cents`, `note`.
+- `balance_history`: `interval`, `period`, `rows[]` (`month`/`week`/`year`, `balances[]` as in `balances`), `note`.
+- `activity`: `entries[]` (`id`, `at` in the server time zone, `actor` (`system` for automatic changes), `action`,
+  `expense_id`, `title`, `amount`, `amount_cents`, `changes[]` (`field`, `old`, `new`, as shown in the app), `text`),
+  `shown`, `more`, and `note` with the next `before_id` when there are more.
 - `sql_query`: `columns`, `rows`, `row_count`, `truncated`, and `note` when truncated.
 
 **Protection in `sql_query`:** the query does not run on the real database. It runs on a fresh in-memory copy. The
@@ -160,6 +171,8 @@ Questions can be asked in any language; Claude maps them to the English tools.
 - "Which category grew the most compared to last year?"
 - "Show all expenses in USD with their exchange rate."
 - "Who paid how much up front and how much did each person consume?"
+- "How did Ben's balance develop this year?"
+- "Who changed the dinner expense last week, and what was changed?"
 
 ## Testing with curl
 

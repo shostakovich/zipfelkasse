@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -278,11 +279,11 @@ func TestLegacyProtocol(t *testing.T) {
 			t.Errorf("tool incomplete: %v", m)
 		}
 	}
-	if strings.Join(names, ",") != "balances,search_expenses,statistics,schema,sql_query" {
+	if strings.Join(names, ",") != "balances,balance_history,search_expenses,statistics,activity,schema,sql_query" {
 		t.Errorf("Tools = %v", names)
 	}
 	r = e.send("POST", "/mcp/"+testSecret, "", nil, `{"jsonrpc":"2.0","id":2,"method":"tools/list"}`)
-	if r.status != 200 || len(r.result(t)["tools"].([]any)) != 5 {
+	if r.status != 200 || len(r.result(t)["tools"].([]any)) != 7 {
 		t.Errorf("tools/list without header: %d %s", r.status, r.raw)
 	}
 	// Unsupported version in the header → 400 with list.
@@ -349,7 +350,7 @@ func TestModernProtocol(t *testing.T) {
 		t.Errorf("serverInfo missing: %v", res)
 	}
 	res = e.modern("tools/list", nil, nil).result(t)
-	if res["resultType"] != "complete" || res["ttlMs"] == nil || len(res["tools"].([]any)) != 5 {
+	if res["resultType"] != "complete" || res["ttlMs"] == nil || len(res["tools"].([]any)) != 7 {
 		t.Errorf("tools/list: %v", res)
 	}
 	res = e.modern("tools/call", map[string]any{"name": "balances", "arguments": map[string]any{}}, nil).result(t)
@@ -772,5 +773,122 @@ func TestStatisticsOptions(t *testing.T) {
 	if len(r) != 3 || got["Lebensmittel"] != [2]float64{6000, 3000} || got["No category"] != [2]float64{1500, 0} || got["Restaurant"] != [2]float64{0, 1000} ||
 		sc["previous_period"] != "2025-01-01 to 2025-12-31" {
 		t.Errorf("compare categories: %v %v", got, sc["previous_period"])
+	}
+}
+
+func TestBalanceHistory(t *testing.T) {
+	e := newEnv(t)
+	e.expense("Rewe", 3000, "2026-01-10", "Anna", "Lebensmittel", "Anna", "Ben", "Cleo")
+	e.expense("Kino", 2000, "2026-03-05", "Ben", "", "Anna", "Ben")
+	d, _ := domain.ParseDate("2026-03-20")
+	if _, err := e.st.CreateExpense(context.Background(), e.ids["Ben"], store.ExpenseInput{Title: "Rückzahlung", Date: d, PaidBy: e.ids["Ben"],
+		AmountCents: 1000, IsReimbursement: true, Parts: []domain.Part{{ParticipantID: e.ids["Anna"]}}}); err != nil {
+		t.Fatal(err)
+	}
+	history := func(args map[string]any) []map[string]float64 {
+		t.Helper()
+		sc, text, isErr := e.call("balance_history", args)
+		if isErr {
+			t.Fatalf("%v: %s", args, text)
+		}
+		var out []map[string]float64
+		for _, r := range sc["rows"].([]any) {
+			m := map[string]float64{}
+			for _, b := range r.(map[string]any)["balances"].([]any) {
+				b := b.(map[string]any)
+				m[b["person"].(string)] = b["balance_cents"].(float64)
+			}
+			out = append(out, m)
+		}
+		return out
+	}
+	rows := history(map[string]any{"from": "2025-12-01", "to": "2026-03-31"})
+	want := []map[string]float64{
+		{"Anna": 0, "Ben": 0, "Cleo": 0},
+		{"Anna": 2000, "Ben": -1000, "Cleo": -1000},
+		{"Anna": 2000, "Ben": -1000, "Cleo": -1000},
+		{"Anna": 0, "Ben": 1000, "Cleo": -1000},
+	}
+	if fmt.Sprint(rows) != fmt.Sprint(want) {
+		t.Errorf("months = %v", rows)
+	}
+	// A later first period starts with the opening balance; person narrows down.
+	rows = history(map[string]any{"interval": "year", "from": "2026-02-01", "to": "2026-12-31", "person": "ben"})
+	if len(rows) != 1 || len(rows[0]) != 1 || rows[0]["Ben"] != 1000 {
+		t.Errorf("year Ben = %v", rows)
+	}
+	sc, _, _ := e.call("balance_history", map[string]any{"interval": "week", "from": "2026-03-02", "to": "2026-03-15"})
+	if r := sc["rows"].([]any); len(r) != 2 || r[0].(map[string]any)["week"] != "2026-W10" {
+		t.Errorf("weeks = %v", r)
+	}
+	for _, args := range []map[string]any{{"interval": "day"}, {"person": "Dora"}, {"interval": "week", "from": "2000-01-01", "to": "2026-01-01"}} {
+		if _, text, isErr := e.call("balance_history", args); !isErr || strings.Contains(text, "Internal error") {
+			t.Errorf("%v: isError=%v %s", args, isErr, text)
+		}
+	}
+}
+
+func TestActivity(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	e.expense("Rewe", 3000, "2026-01-10", "Anna", "Lebensmittel", "Anna", "Ben")
+	e.expense("Kino", 2000, "2026-03-05", "Ben", "", "Anna", "Ben")
+	es, _ := e.st.ListExpenses(ctx, store.ExpenseFilter{Text: "Kino"})
+	kino := es[0]
+	in := kino.ExpenseInput
+	in.Title, in.AmountCents = "Kino & Popcorn", 2500
+	if err := e.st.UpdateExpense(ctx, e.ids["Cleo"], kino.ID, in); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.st.AddActivity(ctx, 0, store.ActionSettingsUpdated, 0, store.ActivityDetails{Text: "Kategorie angelegt"}); err != nil {
+		t.Fatal(err)
+	}
+	entries := func(args map[string]any) ([]map[string]any, map[string]any) {
+		t.Helper()
+		sc, text, isErr := e.call("activity", args)
+		if isErr {
+			t.Fatalf("%v: %s", args, text)
+		}
+		var out []map[string]any
+		for _, x := range sc["entries"].([]any) {
+			out = append(out, x.(map[string]any))
+		}
+		return out, sc
+	}
+	all, _ := entries(nil)
+	if len(all) != 4 || all[0]["actor"] != "system" || all[0]["text"] != "Kategorie angelegt" || all[1]["actor"] != "Cleo" ||
+		all[1]["action"] != "expense_updated" || all[1]["title"] != "Kino & Popcorn" || all[1]["changes"] == nil ||
+		all[3]["amount"] != "30.00" || all[3]["expense_id"] == nil {
+		t.Errorf("all = %v", all)
+	}
+	if got, _ := entries(map[string]any{"person": "cleo"}); len(got) != 1 || got[0]["action"] != "expense_updated" {
+		t.Errorf("person = %v", got)
+	}
+	if got, _ := entries(map[string]any{"action": "expense_created"}); len(got) != 2 {
+		t.Errorf("action = %v", got)
+	}
+	if got, _ := entries(map[string]any{"expense_id": kino.ID}); len(got) != 2 {
+		t.Errorf("expense_id = %v", got)
+	}
+	got, sc := entries(map[string]any{"limit": 3})
+	if len(got) != 3 || sc["more"] != true || !strings.Contains(sc["note"].(string), "before_id") {
+		t.Errorf("limit = %v", sc)
+	}
+	if got, _ = entries(map[string]any{"before_id": got[2]["id"]}); len(got) != 1 {
+		t.Errorf("before_id = %v", got)
+	}
+	// The log was written just now (real clock): today is in, yesterday is not.
+	today := time.Now().In(time.Local).Format(domain.DateLayout)
+	yesterday := time.Now().In(time.Local).AddDate(0, 0, -1).Format(domain.DateLayout)
+	if got, _ := entries(map[string]any{"from": today, "to": today}); len(got) != 4 {
+		t.Errorf("today = %d", len(got))
+	}
+	if got, _ := entries(map[string]any{"to": yesterday}); len(got) != 0 {
+		t.Errorf("until yesterday = %d", len(got))
+	}
+	for _, args := range []map[string]any{{"person": "Dora"}, {"limit": 0.5}, {"from": "gestern"}, {"expense_id": -1}} {
+		if _, text, isErr := e.call("activity", args); !isErr || strings.Contains(text, "Internal error") {
+			t.Errorf("%v: isError=%v %s", args, isErr, text)
+		}
 	}
 }
