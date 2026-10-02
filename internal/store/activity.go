@@ -55,9 +55,12 @@ type Activity struct {
 
 // ActivityFilter narrows ListActivity.
 type ActivityFilter struct {
-	ExpenseID int64 // only entries for this expense
-	BeforeID  int64 // for paging: only entries with a smaller ID
-	Limit     int   // 0 = 100
+	ExpenseID    int64     // only entries for this expense
+	ActorID      int64     // only entries by this person
+	Action       string    // only entries with this action
+	Since, Until time.Time // only entries at or after Since and before Until (zero = open)
+	BeforeID     int64     // for paging: only entries with a smaller ID
+	Limit        int       // 0 = 100
 }
 
 func (s *Store) insertActivity(ctx context.Context, tx *sql.Tx, actorID int64, action string, expenseID int64, d ActivityDetails) error {
@@ -84,6 +87,23 @@ func (s *Store) ListActivity(ctx context.Context, f ActivityFilter) ([]Activity,
 	if f.ExpenseID != 0 {
 		where = append(where, "a.expense_id = ?")
 		args = append(args, f.ExpenseID)
+	}
+	if f.ActorID != 0 {
+		where = append(where, "a.actor_id = ?")
+		args = append(args, f.ActorID)
+	}
+	if f.Action != "" {
+		where = append(where, "a.action = ?")
+		args = append(args, f.Action)
+	}
+	// at is RFC 3339 in UTC, so it compares as text.
+	if !f.Since.IsZero() {
+		where = append(where, "a.at >= ?")
+		args = append(args, f.Since.UTC().Format(timeLayout))
+	}
+	if !f.Until.IsZero() {
+		where = append(where, "a.at < ?")
+		args = append(args, f.Until.UTC().Format(timeLayout))
 	}
 	if f.BeforeID != 0 {
 		where = append(where, "a.id < ?")
