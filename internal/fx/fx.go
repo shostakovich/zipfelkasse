@@ -117,7 +117,7 @@ func (s *Service) Rate(ctx context.Context, currency string, date time.Time) (do
 	if cur == "EUR" {
 		return domain.FXRate{Currency: "EUR", Date: date, Rate: 1, Source: domain.FXSourceFixed}, nil
 	}
-	if !store.ValidCurrencyCode(cur) {
+	if !domain.ValidCurrencyCode(cur) {
 		if cur == "" {
 			return domain.FXRate{}, domain.ValidationError{Msg: "Bitte eine Währung angeben."}
 		}

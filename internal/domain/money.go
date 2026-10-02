@@ -41,10 +41,10 @@ func FormatCentsInput(c int64) string {
 // FormatMoney formats an amount given in the currency's smallest unit:
 // (1234, "USD") → "12,34 USD", EUR or "" → "12,34 €".
 func FormatMoney(minor int64, currency string) string {
-	currency = strings.ToUpper(strings.TrimSpace(currency))
-	if currency == "" || currency == "EUR" {
+	if IsEUR(currency) {
 		return FormatCents(minor)
 	}
+	currency = strings.ToUpper(strings.TrimSpace(currency))
 	return formatFixed(minor, CurrencyDecimals(currency), true) + " " + currency
 }
 
@@ -295,6 +295,27 @@ func formatSep(v int64, decimals int, sep byte, group bool) string {
 		out = "-" + out
 	}
 	return out
+}
+
+// ValidCurrencyCode reports whether s is a three-letter upper-case code
+// (ISO 4217 format; whether the currency exists is not checked).
+func ValidCurrencyCode(s string) bool {
+	if len(s) != 3 {
+		return false
+	}
+	for _, c := range s {
+		if c < 'A' || c > 'Z' {
+			return false
+		}
+	}
+	return true
+}
+
+// IsEUR reports whether currency means euros, i.e. no foreign currency: ""
+// or "EUR" (case and surrounding spaces ignored).
+func IsEUR(currency string) bool {
+	c := strings.ToUpper(strings.TrimSpace(currency))
+	return c == "" || c == "EUR"
 }
 
 // CurrencyDecimals returns the number of decimal places of a currency

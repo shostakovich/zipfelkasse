@@ -181,7 +181,7 @@ func (s *Service) instance(ctx context.Context, r store.Recurring, date time.Tim
 	in.Parts = slices.Clone(in.Parts)
 	in.Date, in.RecurringID = date, r.ID
 	cur := in.OriginalCurrency
-	if cur == "" || cur == "EUR" || s.d.FX == nil {
+	if domain.IsEUR(cur) || s.d.FX == nil {
 		return in, nil
 	}
 	rate, err := s.d.FX.Rate(ctx, cur, date)

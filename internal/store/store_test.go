@@ -274,6 +274,12 @@ func TestCreateExpenseValidation(t *testing.T) {
 		}},
 		{"foreign currency without rate", func(in *ExpenseInput) { in.OriginalCurrency = "USD"; in.OriginalAmountMinor = 2200 }},
 		{"foreign currency without amount", func(in *ExpenseInput) { in.OriginalCurrency = "USD"; in.FXRate = 1.1 }},
+		{"invalid currency code", func(in *ExpenseInput) {
+			in.OriginalCurrency, in.OriginalAmountMinor, in.FXRate = "U$D", 2200, 1.1
+		}},
+		{"two-letter currency code", func(in *ExpenseInput) {
+			in.OriginalCurrency, in.OriginalAmountMinor, in.FXRate = "US", 2200, 1.1
+		}},
 		{"reimbursement to two", func(in *ExpenseInput) { in.IsReimbursement = true }},
 		{"reimbursement to oneself", func(in *ExpenseInput) {
 			in.IsReimbursement = true
@@ -349,6 +355,56 @@ func TestForeignCurrency(t *testing.T) {
 	e, _ := f.s.GetExpense(ctx, id)
 	if !e.IsForeign() || e.OriginalCurrency != "USD" || e.AmountCents != 9240 || e.FXRate != 1.0823 || e.FXSource != "ezb" {
 		t.Errorf("Expense = %+v", e)
+	}
+}
+
+// For a foreign currency the store derives the euro amount from the original
+// amount and the rate (domain.ToEURCents); whatever AmountCents the caller
+// passes is ignored, so amount, original amount and rate always fit together.
+func TestForeignCurrencyAmountIsDerived(t *testing.T) {
+	f := newFixture(t)
+	ctx := context.Background()
+	in := f.equal("Diner NYC", 1, "2026-08-01", f.ben, f.anna, f.ben)
+	in.OriginalCurrency, in.OriginalAmountMinor, in.FXRate = "USD", 10000, 1.0823
+	id, err := f.s.CreateExpense(ctx, f.ben, in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	e, _ := f.s.GetExpense(ctx, id)
+	if e.AmountCents != 9240 || e.ShareOf(f.anna)+e.ShareOf(f.ben) != 9240 {
+		t.Errorf("created: %d %v, want 9240", e.AmountCents, e.Shares)
+	}
+	in = e.ExpenseInput
+	in.AmountCents = 1
+	if err := f.s.UpdateExpense(ctx, f.ben, id, in); err != nil {
+		t.Fatal(err)
+	}
+	if e, _ = f.s.GetExpense(ctx, id); e.AmountCents != 9240 {
+		t.Errorf("updated: %d, want 9240", e.AmountCents)
+	}
+}
+
+// By amounts in a foreign currency, the extra euro cent of a tie rotates with
+// the expense ID like in the other modes.
+func TestForeignAmountSharesRotateRemainder(t *testing.T) {
+	f := newFixture(t)
+	ctx := context.Background()
+	people := []int64{f.anna, f.ben}
+	for range 4 {
+		in := f.equal("Taxi", 0, "2026-09-01", f.anna, f.anna, f.ben)
+		// 10,00 USD at 0,999 = 10,01 €, split 5,00 USD : 5,00 USD.
+		in.OriginalCurrency, in.OriginalAmountMinor, in.FXRate = "USD", 1000, 0.999
+		in.SplitMode = domain.SplitAmount
+		in.Parts = []domain.Part{{ParticipantID: f.anna, Weight: 500}, {ParticipantID: f.ben, Weight: 500}}
+		id, err := f.s.CreateExpense(ctx, f.anna, in)
+		if err != nil {
+			t.Fatal(err)
+		}
+		e, _ := f.s.GetExpense(ctx, id)
+		want := people[id%2]
+		if e.AmountCents != 1001 || e.ShareOf(want) != 501 {
+			t.Errorf("expense %d: %d %v, want extra cent at person %d", id, e.AmountCents, e.Shares, want)
+		}
 	}
 }
 

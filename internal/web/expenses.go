@@ -380,7 +380,7 @@ func (f expenseForm) titleAndDate() (time.Time, error) {
 // store converts foreign amounts itself; f.EURCents is only for the form.
 func (h handlers) setAmount(r *http.Request, f *expenseForm, in *store.ExpenseInput, existing *store.Expense) error {
 	cur := f.CurrencyCode()
-	if !isCurrencyCode(cur) {
+	if !domain.ValidCurrencyCode(cur) {
 		return invalidf("Ungültige Währung „%s“ – bitte einen dreistelligen ISO-Code wie USD angeben.", cur)
 	}
 	var err error
@@ -528,18 +528,6 @@ func (h handlers) lookupRate(r *http.Request, cur string, date time.Time) (domai
 		rate.Source = domain.FXSourceECB
 	}
 	return rate, nil
-}
-
-func isCurrencyCode(s string) bool {
-	if len(s) != 3 {
-		return false
-	}
-	for _, c := range s {
-		if c < 'A' || c > 'Z' {
-			return false
-		}
-	}
-	return true
 }
 
 func invalidf(format string, args ...any) error {

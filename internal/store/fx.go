@@ -17,19 +17,6 @@ import (
 // other. Manual rates take precedence in the lookup (fx.Service.Rate), so
 // deleting a manual rate brings back the ECB rate of that day.
 
-// ValidCurrencyCode reports whether s is a three-letter upper-case code.
-func ValidCurrencyCode(s string) bool {
-	if len(s) != 3 {
-		return false
-	}
-	for _, c := range s {
-		if c < 'A' || c > 'Z' {
-			return false
-		}
-	}
-	return true
-}
-
 // LookupFXRate returns the most recent rate from source (domain.FXSourceECB
 // or domain.FXSourceManual) for currency with notBefore ≤ date of rate ≤ date.
 // Zero notBefore = no lower bound. No match: ErrNotFound.
@@ -65,7 +52,7 @@ func (s *Store) SaveECBRates(ctx context.Context, rates []domain.FXRate) error {
 		}
 		defer stmt.Close()
 		for _, r := range rates {
-			if !(r.Rate > 0) || math.IsInf(r.Rate, 0) || !ValidCurrencyCode(r.Currency) {
+			if !(r.Rate > 0) || math.IsInf(r.Rate, 0) || !domain.ValidCurrencyCode(r.Currency) {
 				continue
 			}
 			if _, err := stmt.ExecContext(ctx, formatDate(r.Date), r.Currency, r.Rate); err != nil {
@@ -84,7 +71,7 @@ func (s *Store) SetManualFXRate(ctx context.Context, currency string, date time.
 	switch {
 	case currency == "EUR":
 		return invalid("Für Euro braucht es keinen Kurs.")
-	case !ValidCurrencyCode(currency):
+	case !domain.ValidCurrencyCode(currency):
 		return invalid("Bitte einen dreistelligen Währungscode angeben (z. B. USD).")
 	case date.IsZero():
 		return invalid("Bitte ein Datum angeben.")

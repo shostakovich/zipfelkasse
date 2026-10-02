@@ -177,12 +177,12 @@ func (s *Store) ExpenseDatesLike(ctx context.Context, in ExpenseInput, from, to 
 	q := `SELECT DISTINCT date FROM expenses
 		WHERE deleted_at IS NULL AND date BETWEEN ? AND ? AND title = ? AND paid_by = ? AND original_currency = ?`
 	args := []any{formatDate(from), formatDate(to), strings.Join(strings.Fields(in.Title), " "), in.PaidBy}
-	if cur := strings.ToUpper(strings.TrimSpace(in.OriginalCurrency)); cur == "" || cur == "EUR" {
+	if domain.IsEUR(in.OriginalCurrency) {
 		q += " AND amount_cents = ?"
 		args = append(args, "EUR", in.AmountCents)
 	} else {
 		q += " AND original_amount_minor = ?"
-		args = append(args, cur, in.OriginalAmountMinor)
+		args = append(args, strings.ToUpper(strings.TrimSpace(in.OriginalCurrency)), in.OriginalAmountMinor)
 	}
 	rows, err := s.db.QueryContext(ctx, q, args...)
 	if err != nil {

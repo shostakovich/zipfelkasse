@@ -175,6 +175,28 @@ func TestFormatMoney(t *testing.T) {
 	}
 }
 
+func TestValidCurrencyCode(t *testing.T) {
+	for s, want := range map[string]bool{
+		"USD": true, "EUR": true, "JPY": true,
+		"usd": false, "U$D": false, "US": false, "USDD": false, "": false, " USD": false, "ÄBC": false,
+	} {
+		if got := ValidCurrencyCode(s); got != want {
+			t.Errorf("ValidCurrencyCode(%q) = %v, want %v", s, got, want)
+		}
+	}
+}
+
+func TestIsEUR(t *testing.T) {
+	for s, want := range map[string]bool{
+		"": true, "EUR": true, "eur": true, " EUR ": true,
+		"USD": false, "EU": false,
+	} {
+		if got := IsEUR(s); got != want {
+			t.Errorf("IsEUR(%q) = %v, want %v", s, got, want)
+		}
+	}
+}
+
 func TestToEURCents(t *testing.T) {
 	tests := []struct {
 		minor    int64

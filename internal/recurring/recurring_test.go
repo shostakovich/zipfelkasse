@@ -306,6 +306,23 @@ func TestMaterializeForeignCurrency(t *testing.T) {
 	}
 }
 
+// A rate entered by hand in the template is not carried over either: each
+// occurrence uses the rate of its date.
+func TestMaterializeForeignManualTemplateRate(t *testing.T) {
+	e := newEnv(t)
+	in := e.expense("Cloud", "2026-01-05", 0)
+	in.OriginalCurrency, in.OriginalAmountMinor, in.FXRate, in.FXSource = "USD", 10000, 1.3, domain.FXSourceManual
+	rid, _ := e.rule(in, domain.FreqMonthly)
+	if got := e.instances(rid)[0]; got.AmountCents != 7692 || got.FXRate != 1.3 {
+		t.Errorf("first occurrence = %+v", got.ExpenseInput)
+	}
+	e.fx.rates["USD"] = 1.25
+	e.materialize("2026-02-05", 1)
+	if got := e.instances(rid)[1]; got.AmountCents != 8000 || got.FXRate != 1.25 || got.FXSource != domain.FXSourceECB {
+		t.Errorf("with the day's rate = %+v", got.ExpenseInput)
+	}
+}
+
 // By amounts in a foreign currency: the amounts stay in USD, the euro shares
 // follow the rate of the occurrence date.
 func TestMaterializeForeignFixedAmounts(t *testing.T) {

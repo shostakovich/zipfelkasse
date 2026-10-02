@@ -46,7 +46,7 @@ func (s *Service) handleRate(w http.ResponseWriter, r *http.Request) {
 	case cur == "":
 		jsonError(w, http.StatusBadRequest, "Bitte eine Währung angeben.")
 		return
-	case cur != "EUR" && !store.ValidCurrencyCode(cur):
+	case cur != "EUR" && !domain.ValidCurrencyCode(cur):
 		jsonError(w, http.StatusBadRequest, "Ungültige Währung „"+q.Get("waehrung")+"“.")
 		return
 	}

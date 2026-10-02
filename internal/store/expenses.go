@@ -75,7 +75,7 @@ type Expense struct {
 func (e Expense) Deleted() bool { return !e.DeletedAt.IsZero() }
 
 // IsForeign reports whether the expense was entered in a foreign currency.
-func (e Expense) IsForeign() bool { return e.OriginalCurrency != "EUR" }
+func (e Expense) IsForeign() bool { return !domain.IsEUR(e.OriginalCurrency) }
 
 // ShareOf returns participantID's share (cents), 0 if not involved.
 func (e Expense) ShareOf(participantID int64) int64 {
@@ -131,13 +131,13 @@ func normalize(in ExpenseInput) (ExpenseInput, error) {
 		}
 		in.SplitMode = domain.SplitEqual
 	}
-	cur := strings.ToUpper(strings.TrimSpace(in.OriginalCurrency))
-	if cur == "" || cur == "EUR" {
+	if domain.IsEUR(in.OriginalCurrency) {
 		in.OriginalCurrency, in.OriginalAmountMinor, in.FXRate, in.FXSource = "EUR", in.AmountCents, 1, ""
 	} else {
+		cur := strings.ToUpper(strings.TrimSpace(in.OriginalCurrency))
 		in.OriginalCurrency = cur
 		switch {
-		case len(cur) != 3:
+		case !domain.ValidCurrencyCode(cur):
 			return in, invalid("Ungültige Währung „%s“.", cur)
 		case in.OriginalAmountMinor <= 0:
 			return in, invalid("Bitte den Betrag in %s angeben.", cur)
@@ -592,11 +592,10 @@ func diffExpense(ctx context.Context, tx *sql.Tx, old Expense, in ExpenseInput, 
 // rateSummary describes the exchange rate: "1 € = 1,0857 USD (EZB)", or "–"
 // without foreign currency.
 func rateSummary(in ExpenseInput) string {
-	cur := strings.ToUpper(in.OriginalCurrency)
-	if cur == "" || cur == "EUR" {
+	if domain.IsEUR(in.OriginalCurrency) {
 		return "–"
 	}
-	s := "1 € = " + domain.FormatRate(in.FXRate) + " " + cur
+	s := "1 € = " + domain.FormatRate(in.FXRate) + " " + strings.ToUpper(in.OriginalCurrency)
 	switch in.FXSource {
 	case "":
 	case domain.FXSourceECB:
