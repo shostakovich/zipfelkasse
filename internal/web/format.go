@@ -1,7 +1,6 @@
 package web
 
 import (
-	"math"
 	"math/big"
 	"strconv"
 	"strings"
@@ -78,19 +77,6 @@ func rateInput(rate float64) string {
 		return ""
 	}
 	return strings.Replace(strconv.FormatFloat(rate, 'f', -1, 64), ".", ",", 1)
-}
-
-// parseRate liest einen Wechselkurs wie „1,0876“ oder „1.0876“.
-func parseRate(s string) (float64, error) {
-	s = strings.ReplaceAll(strings.TrimSpace(s), " ", "")
-	if strings.Count(s, ",") == 1 && !strings.Contains(s, ".") {
-		s = strings.Replace(s, ",", ".", 1)
-	}
-	v, err := strconv.ParseFloat(s, 64)
-	if err != nil || v <= 0 || math.IsInf(v, 0) || math.IsNaN(v) {
-		return 0, domain.ValidationError{Msg: "Ungültiger Wechselkurs „" + s + "“."}
-	}
-	return v, nil
 }
 
 // allocate verteilt total proportional zu weights (größter Rest, bei

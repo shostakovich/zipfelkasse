@@ -586,3 +586,92 @@ func TestActivityPaging(t *testing.T) {
 		t.Error("zweite Seite falsch")
 	}
 }
+
+// Kurse mit Tausenderpunkt: „17.000“ heißt 17000 (wie bei Beträgen).
+func TestExpenseRateWithThousands(t *testing.T) {
+	g := newGroup(t, fakeFX{})
+	v := g.form()
+	v.Set("waehrung", "IDR")
+	v.Set("betrag", "170.000")
+	v.Set("kurs", "17.000")
+	e := g.create(v)
+	if e.OriginalAmountMinor != 170000 || e.FXRate != 17000 || e.AmountCents != 1000 {
+		t.Errorf("IDR: %+v", e.ExpenseInput)
+	}
+	v.Set("kurs", "17.000,5")
+	if e := g.create(v); e.FXRate != 17000.5 {
+		t.Errorf("17.000,5: %v", e.FXRate)
+	}
+	v.Set("kurs", "0")
+	if status, _, body := g.post("/ausgaben/neu", v); status != http.StatusUnprocessableEntity || !strings.Contains(errorOf(body), "Wechselkurs") {
+		t.Errorf("Kurs 0: %d %q", status, errorOf(body))
+	}
+}
+
+// Gleichstand beim Cent „Nach Beträgen“ in Fremdwährung: wie in der
+// JS-Vorschau bekommt die kleinere ID den Cent, egal in welcher Reihenfolge
+// die Personen im Formular stehen (alphabetisch: Adam vor Zoe).
+func TestExpenseForeignAmountsTieBreak(t *testing.T) {
+	g := newGroup(t, fakeFX{})
+	ctx := context.Background()
+	zoe, _ := g.d.Store.CreateParticipant(ctx, "Zoe")
+	adam, _ := g.d.Store.CreateParticipant(ctx, "Adam")
+	v := g.form()
+	v.Set("bezahlt_von", id(zoe))
+	v.Set("waehrung", "USD")
+	v.Set("betrag", "10,00")
+	v.Set("kurs", "1,0857")
+	v.Set("aufteilung", "amount")
+	v["teil"] = []string{id(adam), id(zoe)}
+	v.Set("wert_"+id(zoe), "5,00")
+	v.Set("wert_"+id(adam), "5,00")
+	e := g.create(v)
+	if e.AmountCents != 921 || shares(e)[zoe] != 461 || shares(e)[adam] != 460 {
+		t.Errorf("Anteile: %d %v (Zoe %d, Adam %d)", e.AmountCents, shares(e), zoe, adam)
+	}
+}
+
+// Ändert man nur Kurs, Kursquelle oder Gewichte, wird das gespeichert und
+// im Verlauf protokolliert.
+func TestExpenseUpdateOnlyRate(t *testing.T) {
+	g := newGroup(t, fakeFX{})
+	v := g.form()
+	v.Set("waehrung", "USD")
+	v.Set("betrag", "10,00")
+	v.Set("kurs", "1,25")
+	e := g.create(v)
+	v.Set("kurs", "1,2501") // gleiche Euro-Cent, anderer Kurs
+	if status, _, body := g.post("/ausgaben/"+id(e.ID), v); status != http.StatusSeeOther {
+		t.Fatalf("speichern: %d %q", status, errorOf(body))
+	}
+	got, _ := g.d.Store.GetExpense(context.Background(), e.ID)
+	if got.FXRate != 1.2501 || got.AmountCents != 800 {
+		t.Errorf("Kurs nicht gespeichert: %+v", got.ExpenseInput)
+	}
+	if _, body := g.get("/ausgaben/" + id(e.ID)); !strings.Contains(body, "Kurs") || !strings.Contains(body, "1,2501") {
+		t.Error("Verlauf zeigt die Kursänderung nicht")
+	}
+}
+
+// Eine Instanz auf den Termin einer anderen Instanz derselben Wiederholung
+// zu legen, ergibt eine Meldung im Formular statt 500.
+func TestExpenseUpdateRecurringCollision(t *testing.T) {
+	g := newGroup(t, nil)
+	ctx := context.Background()
+	first := g.create(g.form())
+	rid, err := g.d.Store.CreateRecurringFromExpense(ctx, g.anna, first.ID, domain.FreqMonthly)
+	if err != nil {
+		t.Fatal(err)
+	}
+	in := first.ExpenseInput
+	in.Date, in.RecurringID = first.Date.AddDate(0, 1, 0), rid
+	second, err := g.d.Store.CreateExpense(ctx, 0, in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	v := g.form() // Datum = Termin der ersten Instanz
+	status, _, body := g.post("/ausgaben/"+id(second), v)
+	if status != http.StatusUnprocessableEntity || !strings.Contains(errorOf(body), "Für diesen Termin gibt es schon eine Ausgabe dieser Wiederholung.") {
+		t.Errorf("Kollision: %d %q", status, errorOf(body))
+	}
+}

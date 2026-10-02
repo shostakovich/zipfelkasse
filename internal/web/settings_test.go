@@ -317,16 +317,6 @@ func TestFormatHelpers(t *testing.T) {
 			t.Errorf("minorInput(%s) = %q, want %q", in, got, want)
 		}
 	}
-	for in, want := range map[string]float64{"1,0876": 1.0876, "1.0876": 1.0876, " 160 ": 160} {
-		if got, err := parseRate(in); err != nil || got != want {
-			t.Errorf("parseRate(%q) = %v, %v", in, got, err)
-		}
-	}
-	for _, in := range []string{"", "0", "-1", "abc", "1,2,3"} {
-		if _, err := parseRate(in); err == nil {
-			t.Errorf("parseRate(%q) ohne Fehler", in)
-		}
-	}
 	if rateInput(1.0876) != "1,0876" || rateInput(0) != "" {
 		t.Error("rateInput")
 	}

@@ -24,7 +24,15 @@ func Today(loc *time.Location) time.Time {
 	return DateOf(time.Now().In(loc))
 }
 
-// ParseDate liest „2006-01-02“ oder „02.01.2006“ (auch „2.1.2006“).
+// Plausible Jahre für Kalenderdaten. Schützt vor Tippfehlern („0026“) und
+// vor riesigen Schleifen bei Wiederholungen ab einem absurden Startdatum.
+const (
+	MinYear = 2000
+	MaxYear = 2100
+)
+
+// ParseDate liest „2006-01-02“ oder „02.01.2006“ (auch „2.1.2006“). Jahre
+// außerhalb MinYear–MaxYear werden abgelehnt.
 func ParseDate(s string) (time.Time, error) {
 	s = strings.TrimSpace(s)
 	if s == "" {
@@ -32,6 +40,9 @@ func ParseDate(s string) (time.Time, error) {
 	}
 	for _, layout := range []string{DateLayout, "02.01.2006", "2.1.2006"} {
 		if t, err := time.Parse(layout, s); err == nil {
+			if y := t.Year(); y < MinYear || y > MaxYear {
+				return time.Time{}, invalid("Das Datum „%s“ liegt nicht zwischen %d und %d.", s, MinYear, MaxYear)
+			}
 			return t, nil
 		}
 	}

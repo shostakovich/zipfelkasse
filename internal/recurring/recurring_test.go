@@ -408,3 +408,18 @@ func TestHandlers(t *testing.T) {
 		t.Errorf("Activity = %+v", acts)
 	}
 }
+
+// Ein sehr altes Startdatum erzeugt nicht Tausende Instanzen auf einmal:
+// höchstens maxInstancesPerRun je Regel und Lauf, der Rest beim nächsten Lauf.
+func TestMaterializeCapPerRun(t *testing.T) {
+	e := newEnv(t)
+	rid, _ := e.rule(e.expense("Putzen", "2000-01-03", 100), domain.FreqWeekly)
+	e.materialize("2026-10-02", 400)
+	if got, want := e.next(rid), domain.Occurrence(domain.FreqWeekly, day("2000-01-03"), 401).Format(domain.DateLayout); got != want {
+		t.Errorf("next_date = %s, want %s", got, want)
+	}
+	e.materialize("2026-10-02", 400)
+	if n := len(e.instances(rid)); n != 801 {
+		t.Errorf("%d Instanzen", n)
+	}
+}

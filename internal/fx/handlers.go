@@ -2,7 +2,6 @@ package fx
 
 import (
 	"errors"
-	"math"
 	"net/http"
 	"strconv"
 	"strings"
@@ -129,20 +128,6 @@ func rows(rates []domain.FXRate) []rateRow {
 	return out
 }
 
-// parseRate liest „1,0868“, „1.0868“ oder „20.274,71“.
-func parseRate(s string) (float64, error) {
-	s = strings.ReplaceAll(strings.TrimSpace(s), " ", "")
-	if strings.Contains(s, ",") {
-		s = strings.ReplaceAll(s, ".", "")
-		s = strings.Replace(s, ",", ".", 1)
-	}
-	f, err := strconv.ParseFloat(s, 64)
-	if s == "" || err != nil || !(f > 0) || math.IsInf(f, 0) {
-		return 0, domain.ValidationError{Msg: "Bitte einen Kurs größer als 0 angeben (Einheiten der Währung pro 1 €)."}
-	}
-	return f, nil
-}
-
 func (s *Service) renderPage(w http.ResponseWriter, r *http.Request, status int, form manualForm, errMsg string) {
 	ctx := r.Context()
 	st := s.d.Store
@@ -200,7 +185,7 @@ func (s *Service) handleSaveManual(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			return err
 		}
-		rate, err := parseRate(form.Rate)
+		rate, err := domain.ParseRate(form.Rate)
 		if err != nil {
 			return err
 		}

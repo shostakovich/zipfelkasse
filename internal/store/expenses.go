@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -14,7 +15,9 @@ import (
 )
 
 // ErrRecurringExists: Für diese Wiederholung gibt es an diesem Datum schon
-// eine Ausgabe (Unique-Index auf recurring_id, date).
+// eine Ausgabe (Unique-Index auf recurring_id, date). Nur CreateExpense
+// liefert ihn (recurring.Materialize überspringt den Termin dann);
+// UpdateExpense meldet denselben Fall als domain.ValidationError.
 var ErrRecurringExists = errors.New("ausgabe für diesen termin existiert bereits")
 
 // ExpenseInput sind die vom Nutzer (oder einer Wiederholung) gelieferten
@@ -250,7 +253,8 @@ func (s *Store) UpdateExpense(ctx context.Context, actorID, id int64, in Expense
 			string(in.SplitMode), in.AmountCents, in.OriginalAmountMinor, in.OriginalCurrency, in.FXRate,
 			in.FXSource, s.nowString(), id)
 		if isUniqueViolation(err) {
-			return ErrRecurringExists
+			// Unique-Index (recurring_id, date): Hier ist das ein Eingabefehler.
+			return invalid("Für diesen Termin gibt es schon eine Ausgabe dieser Wiederholung.")
 		}
 		if err != nil {
 			return err
@@ -506,8 +510,52 @@ func diffExpense(ctx context.Context, tx *sql.Tx, old Expense, in ExpenseInput, 
 	}
 	add("Bezahlt von", names[old.PaidBy], names[in.PaidBy])
 	add("Notiz", old.Notes, in.Notes)
-	add("Aufteilung", splitSummary(old.SplitMode, old.Shares, names), splitSummary(in.SplitMode, shares, names))
+	add("Kurs", rateSummary(old.ExpenseInput), rateSummary(in))
+	oldSplit, newSplit := splitSummary(old.SplitMode, old.Shares, names), splitSummary(in.SplitMode, shares, names)
+	add("Aufteilung", oldSplit, newSplit)
+	if oldSplit == newSplit {
+		// gleiche Cent, aber andere Gewichte (z. B. Anteile 1:1 → 2:2)
+		label := map[domain.SplitMode]string{domain.SplitShares: "Anteile", domain.SplitPercent: "Prozente",
+			domain.SplitAmount: "Beträge"}[in.SplitMode]
+		add(cmp.Or(label, "Gewichte"), weightSummary(old.SplitMode, old.Shares, names), weightSummary(in.SplitMode, shares, names))
+	}
 	return changes, nil
+}
+
+// rateSummary beschreibt den Wechselkurs: „1 € = 1,0857 USD (EZB)“, ohne
+// Fremdwährung „–“.
+func rateSummary(in ExpenseInput) string {
+	cur := strings.ToUpper(in.OriginalCurrency)
+	if cur == "" || cur == "EUR" {
+		return "–"
+	}
+	s := "1 € = " + strings.Replace(strconv.FormatFloat(in.FXRate, 'f', -1, 64), ".", ",", 1) + " " + cur
+	switch in.FXSource {
+	case "":
+	case domain.FXSourceECB:
+		s += " (EZB)"
+	default:
+		s += " (" + in.FXSource + ")"
+	}
+	return s
+}
+
+// weightSummary listet die Gewichte je Person im Format des Modus.
+func weightSummary(mode domain.SplitMode, shares []domain.Share, names map[int64]string) string {
+	parts := make([]string, len(shares))
+	for i, sh := range shares {
+		var w string
+		switch mode {
+		case domain.SplitPercent:
+			w = domain.FormatBasisPoints(sh.Weight)
+		case domain.SplitAmount:
+			w = domain.FormatCents(sh.Weight)
+		default:
+			w = strconv.FormatInt(sh.Weight, 10)
+		}
+		parts[i] = names[sh.ParticipantID] + " " + w
+	}
+	return strings.Join(parts, ", ")
 }
 
 func splitSummary(mode domain.SplitMode, shares []domain.Share, names map[int64]string) string {

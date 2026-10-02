@@ -26,6 +26,11 @@ import (
 //go:embed templates/*.html
 var templatesFS embed.FS
 
+// maxInstancesPerRun begrenzt die Termine, die Materialize je Regel und Lauf
+// abarbeitet (z. B. bei einem sehr alten Startdatum). Den Rest holt der
+// nächste Lauf nach (stündlich).
+const maxInstancesPerRun = 400
+
 // Service erzeugt fällige Instanzen wiederkehrender Ausgaben.
 type Service struct {
 	d     web.Deps
@@ -53,8 +58,8 @@ func (s *Service) today() time.Time {
 	return domain.DateOf(s.now().In(loc))
 }
 
-// Materialize legt alle bis einschließlich today fälligen Instanzen an und
-// liefert deren Anzahl. Mehrfacher Aufruf erzeugt keine Duplikate (Unique-Index
+// Materialize legt alle bis einschließlich today fälligen Instanzen an (je
+// Regel höchstens maxInstancesPerRun) und liefert deren Anzahl. Mehrfacher Aufruf erzeugt keine Duplikate (Unique-Index
 // auf recurring_id, date). Fehler einer Regel halten die anderen nicht auf;
 // alle Fehler kommen gesammelt zurück.
 func (s *Service) Materialize(ctx context.Context, today time.Time) (int, error) {
@@ -85,7 +90,12 @@ func (s *Service) materializeRule(ctx context.Context, r store.Recurring, today 
 		return 0, fmt.Errorf("unbekannte häufigkeit %q", r.Frequency)
 	}
 	n := 0
-	for d := r.NextDate; !d.After(today); {
+	for i, d := 0, r.NextDate; !d.After(today); i++ {
+		if i == maxInstancesPerRun {
+			s.d.Log.Info("wiederkehrende Ausgaben: Obergrenze je Lauf erreicht, Rest folgt beim nächsten Lauf",
+				"regel", r.ID, "naechster_termin", d.Format(domain.DateLayout), "grenze", maxInstancesPerRun)
+			break
+		}
 		_, err := s.d.Store.CreateExpense(ctx, 0, s.instance(ctx, r, d))
 		switch {
 		case err == nil:

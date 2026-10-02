@@ -362,6 +362,65 @@ func TestUpdateExpense(t *testing.T) {
 	}
 }
 
+// Änderungen nur an Kurs, Kursquelle oder Gewichten (bei gleichen Cent)
+// werden gespeichert und protokolliert.
+func TestUpdateExpenseRateAndWeights(t *testing.T) {
+	f := newFixture(t)
+	ctx := context.Background()
+	in := f.equal("Diner", domain.ToEURCents(1000, "USD", 1.25), "2026-08-01", f.ben, f.anna, f.ben)
+	in.OriginalCurrency, in.OriginalAmountMinor, in.FXRate, in.FXSource = "USD", 1000, 1.25, domain.FXSourceECB
+	in.SplitMode = domain.SplitShares
+	in.Parts = []domain.Part{{ParticipantID: f.anna, Weight: 1}, {ParticipantID: f.ben, Weight: 1}}
+	id, err := f.s.CreateExpense(ctx, f.ben, in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	changes := func() map[string]FieldChange {
+		t.Helper()
+		acts, _ := f.s.ListActivity(ctx, ActivityFilter{ExpenseID: id, Limit: 1})
+		m := map[string]FieldChange{}
+		if len(acts) == 1 && acts[0].Action == ActionExpenseUpdated {
+			for _, c := range acts[0].Details.Changes {
+				m[c.Field] = c
+			}
+		}
+		return m
+	}
+
+	in.FXRate = 1.2501 // gleiche Euro-Cent
+	if err := f.s.UpdateExpense(ctx, f.anna, id, in); err != nil {
+		t.Fatal(err)
+	}
+	if e, _ := f.s.GetExpense(ctx, id); e.FXRate != 1.2501 {
+		t.Errorf("Kurs nicht gespeichert: %v", e.FXRate)
+	}
+	if c := changes()["Kurs"]; c.Old != "1 € = 1,25 USD (EZB)" || c.New != "1 € = 1,2501 USD (EZB)" {
+		t.Errorf("Kurs-Änderung = %+v", changes())
+	}
+
+	in.FXSource = domain.FXSourceManual
+	if err := f.s.UpdateExpense(ctx, f.anna, id, in); err != nil {
+		t.Fatal(err)
+	}
+	if e, _ := f.s.GetExpense(ctx, id); e.FXSource != domain.FXSourceManual {
+		t.Errorf("Quelle nicht gespeichert: %v", e.FXSource)
+	}
+	if c := changes()["Kurs"]; c.New != "1 € = 1,2501 USD (manuell)" {
+		t.Errorf("Quellen-Änderung = %+v", changes())
+	}
+
+	in.Parts = []domain.Part{{ParticipantID: f.anna, Weight: 2}, {ParticipantID: f.ben, Weight: 2}}
+	if err := f.s.UpdateExpense(ctx, f.anna, id, in); err != nil {
+		t.Fatal(err)
+	}
+	if e, _ := f.s.GetExpense(ctx, id); e.Parts[0].Weight != 2 {
+		t.Errorf("Gewichte nicht gespeichert: %+v", e.Parts)
+	}
+	if c := changes()["Anteile"]; c.Old != "Anna 1, Ben 1" || c.New != "Anna 2, Ben 2" {
+		t.Errorf("Anteile-Änderung = %+v", changes())
+	}
+}
+
 func TestDeleteExpense(t *testing.T) {
 	f := newFixture(t)
 	ctx := context.Background()
@@ -504,6 +563,35 @@ func TestRecurringDuplicate(t *testing.T) {
 	acts, _ := f.s.ListActivity(ctx, ActivityFilter{})
 	if len(acts) != 1 || acts[0].ActorID != 0 || acts[0].ActorName != "" {
 		t.Errorf("System-Activity = %+v", acts)
+	}
+}
+
+// Verschiebt man eine Instanz auf den Termin einer anderen Instanz derselben
+// Wiederholung, ist das ein Eingabefehler (kein 500).
+func TestUpdateRecurringDateCollision(t *testing.T) {
+	f := newFixture(t)
+	ctx := context.Background()
+	res, err := f.s.db.Exec(`INSERT INTO recurring (template_json, frequency, start_date, next_date, created_at, updated_at)
+		VALUES ('{}', 'monthly', '2026-01-31', '2026-03-31', 'x', 'x')`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rid, _ := res.LastInsertId()
+	in := f.equal("Miete", 100000, "2026-01-31", f.anna, f.anna, f.ben)
+	in.RecurringID = rid
+	if _, err := f.s.CreateExpense(ctx, 0, in); err != nil {
+		t.Fatal(err)
+	}
+	in.Date = date("2026-02-28")
+	second, err := f.s.CreateExpense(ctx, 0, in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	in.Date = date("2026-01-31")
+	err = f.s.UpdateExpense(ctx, f.anna, second, in)
+	var ve domain.ValidationError
+	if !errors.As(err, &ve) || !strings.Contains(ve.Msg, "Termin") {
+		t.Errorf("UpdateExpense = %v, want ValidationError", err)
 	}
 }
 

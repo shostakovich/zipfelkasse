@@ -570,6 +570,13 @@ func TestSettingsPage(t *testing.T) {
 	if r, _ := st.LookupFXRate(ctx, "IDR", domain.FXSourceManual, day("2026-10-01"), time.Time{}); r.Rate != 20274.71 {
 		t.Errorf("IDR = %v", r.Rate)
 	}
+	// Tausenderpunkt wie bei Beträgen: „17.000“ = 17000, auch englisch „17,000.5“.
+	for in, want := range map[string]float64{"17.000": 17000, "17,000.5": 17000.5} {
+		rec = do(mux, "POST", "/einstellungen/kurse", url.Values{"waehrung": {"VND"}, "datum": {"2026-09-03"}, "kurs": {in}})
+		if r, _ := st.LookupFXRate(ctx, "VND", domain.FXSourceManual, day("2026-10-01"), time.Time{}); rec.Code != http.StatusSeeOther || r.Rate != want {
+			t.Errorf("VND %q: %d, %v", in, rec.Code, r.Rate)
+		}
+	}
 
 	for _, bad := range []url.Values{
 		{"waehrung": {"TH"}, "datum": {"2026-09-01"}, "kurs": {"38"}},

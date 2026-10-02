@@ -184,3 +184,34 @@ func TestToEURCents(t *testing.T) {
 		}
 	}
 }
+
+func TestParseRate(t *testing.T) {
+	tests := []struct {
+		in   string
+		want float64
+	}{
+		{"1,0857", 1.0857},
+		{"1.0857", 1.0857},
+		{"17000", 17000},
+		{"17.000,5", 17000.5},
+		{"17,000.5", 17000.5},
+		{"17.000", 17000}, // Punkt vor genau drei Ziffern = Tausender (wie bei Beträgen)
+		{"1.234.567,25", 1234567.25},
+		{" 0,8653 ", 0.8653},
+		{"162,45", 162.45},
+		{"1,5", 1.5},
+	}
+	for _, tt := range tests {
+		got, err := ParseRate(tt.in)
+		if err != nil || got != tt.want {
+			t.Errorf("ParseRate(%q) = %v, %v; want %v", tt.in, got, err, tt.want)
+		}
+	}
+	for _, in := range []string{"", "0", "0,0", "-1,2", "abc", "1,2,3", "1.2.3", "17.00.0", "1e5", "NaN", "Inf", "1,", ",5x"} {
+		if v, err := ParseRate(in); err == nil {
+			t.Errorf("ParseRate(%q) = %v, want Fehler", in, v)
+		} else if _, ok := err.(ValidationError); !ok {
+			t.Errorf("ParseRate(%q): %T", in, err)
+		}
+	}
+}

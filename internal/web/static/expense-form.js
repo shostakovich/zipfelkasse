@@ -34,10 +34,11 @@
     return 2;
   }
 
-  // parseMinor liest „12,34“, „12.34“, „1.234,56“ wie domain.ParseMinor;
-  // Ergebnis als BigInt in der kleinsten Einheit oder null.
-  function parseMinor(s, dec) {
-    s = String(s || "").replace(/[\s €%]/g, "");
+  // splitNumber zerlegt eine Zahl wie domain.splitNumber in Vorzeichen,
+  // Ganzzahl- und Nachkommaziffern ({neg, int, frac}) oder liefert null.
+  // dotThousands: ein einzelner Punkt vor genau drei Ziffern ist ein
+  // Tausenderpunkt („17.000“ = 17000).
+  function splitNumber(s, dotThousands) {
     if (!s) return null;
     var neg = false;
     if (s[0] === "-" || s[0] === "+") { neg = s[0] === "-"; s = s.slice(1); }
@@ -52,7 +53,7 @@
       thousands = commas > 0 ? "," : ".";
     } else if (dots + commas === 1) {
       var p = Math.max(s.lastIndexOf("."), s.lastIndexOf(","));
-      if (s[p] === "." && s.length - p - 1 === 3 && dec < 3 && p > 0) {
+      if (s[p] === "." && s.length - p - 1 === 3 && dotThousands && p > 0) {
         thousands = ".";
       } else {
         intPart = s.slice(0, p); frac = s.slice(p + 1);
@@ -64,16 +65,25 @@
       if (!groups[0] || groups[0].length > 3 || groups.slice(1).some(function (g) { return g.length !== 3; })) return null;
       intPart = groups.join("");
     }
-    if (/[.,]/.test(intPart + frac) || frac.length > dec) return null;
-    var v = BigInt((intPart || "0") + frac + "0".repeat(dec - frac.length));
-    return neg ? -v : v;
+    if (/[.,]/.test(intPart + frac)) return null;
+    return { neg: neg, int: intPart || "0", frac: frac };
   }
 
+  // parseMinor liest „12,34“, „12.34“, „1.234,56“ wie domain.ParseMinor;
+  // Ergebnis als BigInt in der kleinsten Einheit oder null.
+  function parseMinor(s, dec) {
+    var n = splitNumber(String(s || "").replace(/[\s €%]/g, ""), dec < 3);
+    if (!n || n.frac.length > dec) return null;
+    var v = BigInt(n.int + n.frac + "0".repeat(dec - n.frac.length));
+    return n.neg ? -v : v;
+  }
+
+  // parseRate liest einen Kurs wie domain.ParseRate („1,0857“, „17.000“ = 17000).
   function parseRate(s) {
-    s = String(s || "").replace(/\s/g, "");
-    if (s.indexOf(",") >= 0 && s.indexOf(".") < 0) s = s.replace(",", ".");
-    var v = Number(s);
-    return s && isFinite(v) && v > 0 ? v : null;
+    var n = splitNumber(String(s || "").replace(/\s/g, ""), true);
+    if (!n || n.neg) return null;
+    var v = Number(n.int + "." + n.frac + "0");
+    return isFinite(v) && v > 0 ? v : null;
   }
 
   var eurFmt = new Intl.NumberFormat("de-DE", { style: "currency", currency: "EUR" });

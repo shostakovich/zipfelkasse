@@ -86,13 +86,45 @@ func ParseMinor(s string, decimals int) (int64, error) {
 }
 
 func parseFixed(s string, decimals int) (int64, error) {
-	s = strings.ReplaceAll(s, " ", "")
 	s = strings.ReplaceAll(s, " ", "")
-	bad := invalid("Ungültiger Betrag „%s“.", s)
+	s = strings.ReplaceAll(s, " ", "")
 	if s == "" {
 		return 0, invalid("Bitte einen Betrag eingeben.")
 	}
-	neg := false
+	neg, intPart, frac, ok := splitNumber(s, decimals < 3)
+	if !ok {
+		return 0, invalid("Ungültiger Betrag „%s“.", s)
+	}
+	if len(frac) > decimals {
+		if decimals == 0 {
+			return 0, invalid("Dieser Betrag darf keine Nachkommastellen haben.")
+		}
+		return 0, invalid("Höchstens %d Nachkommastellen erlaubt.", decimals)
+	}
+	if len(intPart) > 15 {
+		return 0, invalid("Der Betrag ist zu groß.")
+	}
+	digits := intPart + frac + strings.Repeat("0", decimals-len(frac))
+	v, err := strconv.ParseInt(digits, 10, 64)
+	if err != nil {
+		return 0, invalid("Ungültiger Betrag „%s“.", s)
+	}
+	if neg {
+		v = -v
+	}
+	return v, nil
+}
+
+// splitNumber zerlegt eine Zahl mit Komma oder Punkt als Dezimaltrenner
+// und optionalen Tausendertrennern in Vorzeichen, Ganzzahl- und
+// Nachkommaziffern (ohne Trenner; intPart mindestens "0"). Kommen beide
+// Trenner vor, ist der letzte der Dezimaltrenner; mehrfach dieselbe Sorte
+// sind Tausendertrenner. Ein einzelner Punkt vor genau drei Ziffern gilt als
+// Tausendertrenner, wenn dotThousands gesetzt ist („17.000“ = 17000).
+func splitNumber(s string, dotThousands bool) (neg bool, intPart, frac string, ok bool) {
+	if s == "" {
+		return false, "", "", false
+	}
 	switch s[0] {
 	case '-':
 		neg, s = true, s[1:]
@@ -100,15 +132,15 @@ func parseFixed(s string, decimals int) (int64, error) {
 		s = s[1:]
 	}
 	if s == "" {
-		return 0, bad
+		return false, "", "", false
 	}
 	for _, r := range s {
 		if (r < '0' || r > '9') && r != '.' && r != ',' {
-			return 0, bad
+			return false, "", "", false
 		}
 	}
 
-	intPart, frac := s, ""
+	intPart = s
 	lastDot, lastComma := strings.LastIndexByte(s, '.'), strings.LastIndexByte(s, ',')
 	dots, commas := strings.Count(s, "."), strings.Count(s, ",")
 	var thousands byte
@@ -118,12 +150,12 @@ func parseFixed(s string, decimals int) (int64, error) {
 		if s[dec] == '.' {
 			thousands = ','
 			if dots > 1 {
-				return 0, bad
+				return false, "", "", false
 			}
 		} else {
 			thousands = '.'
 			if commas > 1 {
-				return 0, bad
+				return false, "", "", false
 			}
 		}
 		intPart, frac = s[:dec], s[dec+1:]
@@ -138,52 +170,55 @@ func parseFixed(s string, decimals int) (int64, error) {
 		// Genau ein Trenner.
 		pos := max(lastDot, lastComma)
 		after := len(s) - pos - 1
-		if s[pos] == '.' && after == 3 && decimals < 3 && pos > 0 {
+		if s[pos] == '.' && after == 3 && dotThousands && pos > 0 {
 			thousands = '.'
 		} else {
 			intPart, frac = s[:pos], s[pos+1:]
 			if frac == "" {
-				return 0, bad
+				return false, "", "", false
 			}
 		}
 	}
 	if strings.ContainsAny(frac, ".,") {
-		return 0, bad
+		return false, "", "", false
 	}
 	if thousands != 0 {
 		groups := strings.Split(intPart, string(thousands))
 		if len(groups[0]) == 0 || len(groups[0]) > 3 {
-			return 0, bad
+			return false, "", "", false
 		}
 		for _, g := range groups[1:] {
 			if len(g) != 3 {
-				return 0, bad
+				return false, "", "", false
 			}
 		}
 		intPart = strings.Join(groups, "")
 	}
 	if strings.ContainsAny(intPart, ".,") {
-		return 0, bad
-	}
-	if len(frac) > decimals {
-		if decimals == 0 {
-			return 0, invalid("Dieser Betrag darf keine Nachkommastellen haben.")
-		}
-		return 0, invalid("Höchstens %d Nachkommastellen erlaubt.", decimals)
+		return false, "", "", false
 	}
 	if intPart == "" {
 		intPart = "0"
 	}
-	if len(intPart) > 15 {
-		return 0, invalid("Der Betrag ist zu groß.")
-	}
-	digits := intPart + frac + strings.Repeat("0", decimals-len(frac))
-	v, err := strconv.ParseInt(digits, 10, 64)
-	if err != nil {
+	return neg, intPart, frac, true
+}
+
+// ParseRate liest einen Wechselkurs (Einheiten der Währung pro 1 €) wie
+// „1,0857“, „1.0857“, „17000“, „17.000,5“ oder „17,000.5“. Trenner wie bei
+// Beträgen (ParseMinor): Ein einzelner Punkt vor genau drei Ziffern ist ein
+// Tausenderpunkt („17.000“ = 17000, „1.085“ = 1085); Nachkommastellen also
+// mit Komma oder mit mehr/weniger als drei Ziffern angeben. Kurse ≤ 0 sind ungültig.
+func ParseRate(s string) (float64, error) {
+	s = strings.ReplaceAll(strings.TrimSpace(s), " ", "")
+	s = strings.ReplaceAll(s, " ", "")
+	bad := invalid("Ungültiger Wechselkurs „%s“ – bitte eine Zahl größer als 0 angeben (Einheiten der Währung pro 1 €).", s)
+	neg, intPart, frac, ok := splitNumber(s, true)
+	if !ok || neg || len(intPart) > 12 || len(frac) > 12 {
 		return 0, bad
 	}
-	if neg {
-		v = -v
+	v, err := strconv.ParseFloat(intPart+"."+frac+"0", 64)
+	if err != nil || !(v > 0) || math.IsInf(v, 0) {
+		return 0, bad
 	}
 	return v, nil
 }

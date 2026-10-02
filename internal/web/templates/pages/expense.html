@@ -84,6 +84,7 @@
               {{- else if eq $f.RateSource "ezb"}}Referenzkurs der EZB.
               {{- else}}Leer lassen: Der EZB-Kurs vom Ausgabedatum wird beim Speichern eingesetzt. Für den echten Kartenkurs einfach überschreiben.{{end -}}
             </p>
+            <p class="help">Nachkommastellen mit Komma (1,0857). Ein Punkt vor genau drei Ziffern ist ein Tausenderpunkt: 17.000 = 17000.</p>
             <button class="btn btn-link btn-sm" type="button" id="kurs-laden" hidden>{{icon "refresh"}} EZB-Kurs laden</button>
           </div>
           <div class="field fx-preview">

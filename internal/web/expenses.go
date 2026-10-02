@@ -1,6 +1,7 @@
 package web
 
 import (
+	"cmp"
 	"errors"
 	"fmt"
 	"net/http"
@@ -385,7 +386,7 @@ func (h handlers) toInput(r *http.Request, f *expenseForm) (store.ExpenseInput, 
 		}
 		in.OriginalCurrency = cur
 		if f.Rate != "" {
-			if in.FXRate, err = parseRate(f.Rate); err != nil {
+			if in.FXRate, err = domain.ParseRate(f.Rate); err != nil {
 				return in, err
 			}
 			in.FXSource = domain.FXSourceManual
@@ -475,6 +476,10 @@ func (h handlers) toInput(r *http.Request, f *expenseForm) (store.ExpenseInput, 
 			return in, invalidf("Die Beträge müssen zusammen %s ergeben (aktuell %s).",
 				domain.FormatMoney(in.OriginalAmountMinor, cur), domain.FormatMoney(origSum, cur))
 		}
+		// Nach ID sortieren: Gleichstand beim Rest → kleinere ID, wie in
+		// domain.Split und in der JS-Vorschau (unabhängig von der
+		// Reihenfolge im Formular).
+		slices.SortFunc(in.Parts, func(a, b domain.Part) int { return cmp.Compare(a.ParticipantID, b.ParticipantID) })
 		w := make([]int64, len(in.Parts))
 		for i, p := range in.Parts {
 			w[i] = p.Weight

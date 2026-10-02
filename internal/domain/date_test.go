@@ -1,6 +1,7 @@
 package domain
 
 import (
+	"strings"
 	"testing"
 	"time"
 )
@@ -80,6 +81,12 @@ func TestParseDate(t *testing.T) {
 		{"", "", true},
 		{"2026-02-30", "", true},
 		{"gestern", "", true},
+		{"2000-01-01", "2000-01-01", false},
+		{"2100-12-31", "2100-12-31", false},
+		{"1999-12-31", "", true},
+		{"2101-01-01", "", true},
+		{"0026-10-02", "", true},
+		{"9999-12-31", "", true},
 	}
 	for _, tt := range tests {
 		got, err := ParseDate(tt.in)
@@ -114,5 +121,12 @@ func TestToday(t *testing.T) {
 	got := DateOf(now.In(loc))
 	if got.Format(DateLayout) != "2026-10-02" || got.Location() != time.UTC {
 		t.Errorf("DateOf = %v", got)
+	}
+}
+
+func TestParseDateRangeMessage(t *testing.T) {
+	_, err := ParseDate("0026-10-02")
+	if err == nil || !strings.Contains(err.Error(), "2000") || !strings.Contains(err.Error(), "2100") {
+		t.Errorf("Meldung = %v", err)
 	}
 }
