@@ -617,7 +617,7 @@ Tables:
     fx_rate (units of foreign currency per 1 EUR, ECB format), fx_source ('ezb' = ECB reference rate, 'manuell' = entered manually, or '' for EUR). amount_cents is already converted.
   * recurring_id: created automatically from a recurring rule. created_at/updated_at: timestamps.
 - expense_shares: split of each expense across people. amount_cents = this person's share in cents (sum per expense = expenses.amount_cents).
-  weight depends on split_mode: equal 1, shares the share count, percent basis points (sum 10000), amount cents.
+  weight depends on split_mode: equal 1, shares the share count, percent basis points (sum 10000), amount the amount in the smallest unit of original_currency (sum = original_amount_minor; cents for EUR).
 - recurring: rules for recurring expenses (template_json = template as JSON, frequency weekly|monthly|yearly, start_date, next_date, active).
 - activity: change log (at, actor_id NULL = system, action expense_created|expense_updated|expense_deleted, expense_id, details_json).
 - fx_rates: exchange rates per currency and date (foreign currency per 1 EUR), source 'ezb' or 'manuell'.

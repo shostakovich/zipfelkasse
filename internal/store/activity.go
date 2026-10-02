@@ -21,6 +21,9 @@ const (
 	// ActionSharesRecalculated: a migration recomputed the cent shares of
 	// existing expenses (system, Details.Text).
 	ActionSharesRecalculated = "shares_recalculated"
+	// ActionWeightsConverted: a migration converted the weights of existing
+	// expenses (system, Details.Text).
+	ActionWeightsConverted = "weights_converted"
 )
 
 // ActivityDetails is the content of activity.details_json.

@@ -293,24 +293,6 @@ func TestExpensePeriod(t *testing.T) {
 }
 
 func TestFormatHelpers(t *testing.T) {
-	for _, tt := range []struct {
-		total   int64
-		weights []int64
-		want    []int64
-	}{
-		{667, []int64{600, 400}, []int64{400, 267}},
-		{100, []int64{1, 1, 1}, []int64{34, 33, 33}},
-		{1_000_000_000_000, []int64{999_999_999_999_999, 1}, []int64{1_000_000_000_000, 0}},
-		{5, []int64{0, 0}, []int64{0, 0}},
-	} {
-		got := allocate(tt.total, tt.weights)
-		for i := range got {
-			if got[i] != tt.want[i] {
-				t.Errorf("allocate(%d, %v) = %v, want %v", tt.total, tt.weights, got, tt.want)
-				break
-			}
-		}
-	}
 	for in, want := range map[[2]string]string{
 		{"123456", "USD"}: "1234,56", {"500", "JPY"}: "500", {"1234", "KWD"}: "1,234", {"5", "EUR"}: "0,05",
 	} {

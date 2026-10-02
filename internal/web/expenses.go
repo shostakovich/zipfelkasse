@@ -1,7 +1,6 @@
 package web
 
 import (
-	"cmp"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -239,16 +238,6 @@ func formFromExpense(e store.Expense, people []store.Participant) expenseForm {
 	} else {
 		f.Amount = domain.FormatCentsInput(e.AmountCents)
 	}
-	// For "by amounts" in a foreign currency, the form holds amounts in the
-	// foreign currency; euro cents are stored → convert back proportionally.
-	var origWeights []int64
-	if e.IsForeign() && e.SplitMode == domain.SplitAmount {
-		w := make([]int64, len(e.Shares))
-		for i, sh := range e.Shares {
-			w[i] = sh.Weight
-		}
-		origWeights = allocate(e.OriginalAmountMinor, w)
-	}
 	shareIdx := map[int64]int{}
 	for i, sh := range e.Shares {
 		shareIdx[sh.ParticipantID] = i
@@ -267,12 +256,8 @@ func formFromExpense(e store.Expense, people []store.Participant) expenseForm {
 				row.Value = strconv.FormatInt(sh.Weight, 10)
 			case domain.SplitPercent:
 				row.Value = strings.TrimSuffix(domain.FormatBasisPoints(sh.Weight), " %")
-			case domain.SplitAmount:
-				if origWeights != nil {
-					row.Value = minorInput(origWeights[i], cur)
-				} else {
-					row.Value = domain.FormatCentsInput(sh.Weight)
-				}
+			case domain.SplitAmount: // amount in the original currency
+				row.Value = minorInput(sh.Weight, cur)
 			}
 		}
 		f.Rows = append(f.Rows, row)
@@ -382,6 +367,9 @@ func (h handlers) toInput(r *http.Request, f *expenseForm, existing *store.Expen
 		if in.AmountCents, err = domain.ParseCents(f.Amount); err != nil {
 			return in, err
 		}
+		if in.AmountCents <= 0 {
+			return in, invalidf("Der Betrag muss größer als 0 sein.")
+		}
 	} else {
 		dec := domain.CurrencyDecimals(cur)
 		if in.OriginalAmountMinor, err = domain.ParseMinor(f.Amount, dec); err != nil {
@@ -394,14 +382,8 @@ func (h handlers) toInput(r *http.Request, f *expenseForm, existing *store.Expen
 		if in.FXRate, in.FXSource, err = h.formRate(r, f, cur, date, existing); err != nil {
 			return in, err
 		}
-		in.AmountCents = domain.ToEURCents(in.OriginalAmountMinor, cur, in.FXRate)
-		if in.AmountCents <= 0 {
-			return in, invalidf("Umgerechnet ergibt der Betrag 0 € – bitte Betrag und Kurs prüfen.")
-		}
-		f.EURCents = in.AmountCents
-	}
-	if in.AmountCents <= 0 {
-		return in, invalidf("Der Betrag muss größer als 0 sein.")
+		// The store converts the amount itself; this is only for the form.
+		f.EURCents = domain.ToEURCents(in.OriginalAmountMinor, cur, in.FXRate)
 	}
 
 	// Split.
@@ -422,8 +404,6 @@ func (h handlers) toInput(r *http.Request, f *expenseForm, existing *store.Expen
 	if len(rows) == 0 {
 		return in, invalidf("Bitte mindestens eine Person ankreuzen, für die bezahlt wurde.")
 	}
-	foreignAmounts := cur != "EUR" && in.SplitMode == domain.SplitAmount
-	var origSum int64
 	for _, row := range rows {
 		p := domain.Part{ParticipantID: row.ID}
 		v := row.Value
@@ -442,16 +422,11 @@ func (h handlers) toInput(r *http.Request, f *expenseForm, existing *store.Expen
 				v = "0"
 			}
 			p.Weight, err = domain.ParseBasisPoints(v)
-		case domain.SplitAmount:
+		case domain.SplitAmount: // amounts in the original currency
 			if v == "" {
 				v = "0"
 			}
-			if foreignAmounts {
-				p.Weight, err = domain.ParseMinor(v, domain.CurrencyDecimals(cur))
-				origSum += p.Weight
-			} else {
-				p.Weight, err = domain.ParseCents(v)
-			}
+			p.Weight, err = domain.ParseMinor(v, domain.CurrencyDecimals(cur))
 		}
 		if err != nil {
 			if msg, ok := validationMsg(err); ok && !strings.HasPrefix(msg, row.Name) {
@@ -463,22 +438,6 @@ func (h handlers) toInput(r *http.Request, f *expenseForm, existing *store.Expen
 			return in, invalidf("%s: Negative Werte sind nicht erlaubt.", row.Name)
 		}
 		in.Parts = append(in.Parts, p)
-	}
-	if foreignAmounts {
-		if origSum != in.OriginalAmountMinor {
-			return in, invalidf("Die Beträge müssen zusammen %s ergeben (aktuell %s).",
-				domain.FormatMoney(in.OriginalAmountMinor, cur), domain.FormatMoney(origSum, cur))
-		}
-		// Sort by ID: a tie in the remainder → smaller ID, as in domain.Split
-		// and in the JS preview (independent of the order in the form).
-		slices.SortFunc(in.Parts, func(a, b domain.Part) int { return cmp.Compare(a.ParticipantID, b.ParticipantID) })
-		w := make([]int64, len(in.Parts))
-		for i, p := range in.Parts {
-			w[i] = p.Weight
-		}
-		for i, c := range allocate(in.AmountCents, w) {
-			in.Parts[i].Weight = c
-		}
 	}
 	return in, nil
 }

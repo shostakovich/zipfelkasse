@@ -274,34 +274,23 @@ func TestMaterializeForeignCurrency(t *testing.T) {
 	}
 }
 
+// By amounts in a foreign currency: the amounts stay in USD, the euro shares
+// follow the rate of the occurrence date.
 func TestMaterializeForeignFixedAmounts(t *testing.T) {
 	e := newEnv(t)
-	in := e.expense("Hotel", "2026-01-05", 9091)
+	in := e.expense("Hotel", "2026-01-05", 0)
 	in.OriginalCurrency, in.OriginalAmountMinor, in.FXRate, in.FXSource = "USD", 10000, 1.1, domain.FXSourceECB
 	in.SplitMode = domain.SplitAmount
-	in.Parts = []domain.Part{{ParticipantID: e.anna.ID, Weight: 6000}, {ParticipantID: e.ben.ID, Weight: 3091}}
+	in.Parts = []domain.Part{{ParticipantID: e.anna.ID, Weight: 6000}, {ParticipantID: e.ben.ID, Weight: 4000}}
 	rid, _ := e.rule(in, domain.FreqMonthly)
 	e.fx.rates["USD"] = 1.25
 	e.materialize("2026-02-05", 1)
 	got := e.instances(rid)[1]
-	if got.AmountCents != 8000 || got.ShareOf(e.anna.ID)+got.ShareOf(e.ben.ID) != 8000 || got.ShareOf(e.anna.ID) != 5280 {
+	if got.AmountCents != 8000 || got.ShareOf(e.anna.ID) != 4800 || got.ShareOf(e.ben.ID) != 3200 {
 		t.Errorf("fixed amounts converted = %+v", got.Shares)
 	}
-}
-
-func TestRescale(t *testing.T) {
-	parts := []domain.Part{{ParticipantID: 1, Weight: 1}, {ParticipantID: 2, Weight: 1}, {ParticipantID: 3, Weight: 1}}
-	got := rescale(parts, 100)
-	if got[0].Weight != 34 || got[1].Weight != 33 || got[2].Weight != 33 {
-		t.Errorf("rescale = %+v", got)
-	}
-	if parts[0].Weight != 1 {
-		t.Error("rescale modifies its input")
-	}
-	big := []domain.Part{{ParticipantID: 1, Weight: domain.MaxAmountCents - 1}, {ParticipantID: 2, Weight: 1}}
-	got = rescale(big, domain.MaxAmountCents/2)
-	if got[0].Weight+got[1].Weight != domain.MaxAmountCents/2 {
-		t.Errorf("rescale large = %+v", got)
+	if got.Parts[0].Weight != 6000 || got.Parts[1].Weight != 4000 {
+		t.Errorf("amounts in USD = %+v", got.Parts)
 	}
 }
 

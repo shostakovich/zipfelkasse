@@ -8,12 +8,10 @@
 package recurring
 
 import (
-	"cmp"
 	"context"
 	"embed"
 	"errors"
 	"fmt"
-	"math/bits"
 	"slices"
 	"sync"
 	"time"
@@ -135,48 +133,10 @@ func (s *Service) instance(ctx context.Context, r store.Recurring, date time.Tim
 	if amount <= 0 || amount > domain.MaxAmountCents {
 		return in
 	}
-	if in.SplitMode == domain.SplitAmount && !in.IsReimbursement {
-		in.Parts = rescale(in.Parts, amount)
-	}
+	// For SplitAmount the weights are amounts in cur; the store distributes
+	// the converted amount in proportion to them.
 	in.AmountCents, in.FXRate, in.FXSource = amount, rate.Rate, rate.Source
 	return in
-}
-
-// rescale distributes total proportionally to the previous fixed amounts
-// (largest remainder method, ties go to the smaller ID). For SplitAmount
-// templates whose euro amount changes with the rate.
-func rescale(parts []domain.Part, total int64) []domain.Part {
-	var sum int64
-	for _, p := range parts {
-		sum += p.Weight
-	}
-	if sum <= 0 || sum == total {
-		return parts
-	}
-	out := slices.Clone(parts)
-	rems := make([]uint64, len(out))
-	var allocated int64
-	for i, p := range out {
-		hi, lo := bits.Mul64(uint64(p.Weight), uint64(total))
-		q, rem := bits.Div64(hi, lo, uint64(sum)) // p.Weight ≤ sum → no overflow
-		out[i].Weight, rems[i] = int64(q), rem
-		allocated += int64(q)
-	}
-	order := make([]int, len(out))
-	for i := range order {
-		order[i] = i
-	}
-	slices.SortStableFunc(order, func(a, b int) int {
-		if c := cmp.Compare(rems[b], rems[a]); c != 0 {
-			return c
-		}
-		return cmp.Compare(out[a].ParticipantID, out[b].ParticipantID)
-	})
-	for k := 0; allocated < total; k++ {
-		out[order[k%len(order)]].Weight++
-		allocated++
-	}
-	return out
 }
 
 // Run calls Materialize immediately and then hourly. Blocks until ctx is

@@ -627,9 +627,10 @@ func TestExpenseRateWithThousands(t *testing.T) {
 	}
 }
 
-// A tie for the cent with "by amounts" in a foreign currency: as in the JS
-// preview, the smaller ID gets the cent, regardless of the order of the people
-// in the form (alphabetical: Adam before Zoe).
+// A tie for the cent with "by amounts" in a foreign currency: as in the other
+// modes and in the JS preview, the cent goes round-robin by expense ID over
+// the tied people sorted by ID, regardless of their order in the form
+// (alphabetical: Adam before Zoe).
 func TestExpenseForeignAmountsTieBreak(t *testing.T) {
 	g := newGroup(t, fakeFX{})
 	ctx := context.Background()
@@ -644,9 +645,45 @@ func TestExpenseForeignAmountsTieBreak(t *testing.T) {
 	v["teil"] = []string{id(adam), id(zoe)}
 	v.Set("wert_"+id(zoe), "5,00")
 	v.Set("wert_"+id(adam), "5,00")
+	for range 2 {
+		e := g.create(v)
+		// Zoe has the smaller ID: index expense ID mod 2 gets the cent.
+		want := map[int64]int64{zoe: 460, adam: 460}
+		want[[]int64{zoe, adam}[e.ID%2]] = 461
+		if e.AmountCents != 921 || shares(e)[zoe] != want[zoe] || shares(e)[adam] != want[adam] {
+			t.Errorf("expense %d: %d %v, want %v", e.ID, e.AmountCents, shares(e), want)
+		}
+	}
+}
+
+// "By amounts" in a foreign currency keeps the amounts as entered: the edit
+// form shows them unchanged (no lossy conversion back from euro cents).
+func TestExpenseForeignAmountsRoundTrip(t *testing.T) {
+	g := newGroup(t, fakeFX{})
+	v := g.form()
+	v.Set("waehrung", "USD")
+	v.Set("betrag", "10,00")
+	v.Set("kurs", "1,1")
+	v.Set("aufteilung", "amount")
+	v.Set("wert_"+id(g.anna), "3,33")
+	v.Set("wert_"+id(g.ben), "3,33")
+	v.Set("wert_"+id(g.cleo), "3,34")
 	e := g.create(v)
-	if e.AmountCents != 921 || shares(e)[zoe] != 461 || shares(e)[adam] != 460 {
-		t.Errorf("shares: %d %v (Zoe %d, Adam %d)", e.AmountCents, shares(e), zoe, adam)
+	if e.AmountCents != 909 || shares(e)[g.anna]+shares(e)[g.ben]+shares(e)[g.cleo] != 909 {
+		t.Errorf("shares: %d %v", e.AmountCents, shares(e))
+	}
+	_, body := g.get("/ausgaben/" + id(e.ID))
+	for p, want := range map[int64]string{g.anna: "3,33", g.ben: "3,33", g.cleo: "3,34"} {
+		if !strings.Contains(body, `name="wert_`+id(p)+`" value="`+want+`"`) {
+			t.Errorf("person %d: amount %s not in the form", p, want)
+		}
+	}
+	// Saving the form unchanged changes nothing.
+	if status, _, body := g.post("/ausgaben/"+id(e.ID), v); status != http.StatusSeeOther {
+		t.Fatalf("save: %d %q", status, errorOf(body))
+	}
+	if acts, _ := g.d.Store.ListActivity(context.Background(), store.ActivityFilter{ExpenseID: e.ID}); len(acts) != 1 {
+		t.Errorf("unchanged save logged: %+v", acts[0])
 	}
 }
 

@@ -22,7 +22,9 @@ var ErrRecurringExists = errors.New("expense for this occurrence already exists"
 
 // ExpenseInput is the data of an expense as supplied by the user (or by a
 // recurrence). The store computes the shares in cents itself via
-// domain.Split from SplitMode, AmountCents and Parts.
+// domain.SplitConverted from SplitMode, the amounts and Parts. For
+// SplitAmount, Parts[].Weight are amounts in the smallest unit of
+// OriginalCurrency (cents for EUR) that add up to OriginalAmountMinor.
 type ExpenseInput struct {
 	Title           string           `json:"title"`
 	Date            time.Time        `json:"date"`        // calendar date, see domain.DateOf
@@ -36,8 +38,9 @@ type ExpenseInput struct {
 
 	// Foreign currency. OriginalCurrency "" or "EUR" = no foreign currency; the
 	// store then sets OriginalAmountMinor = AmountCents, FXRate = 1, FXSource = "".
-	// Otherwise OriginalAmountMinor > 0 and FXRate > 0 are required; the caller
-	// computes AmountCents via domain.ToEURCents.
+	// Otherwise OriginalAmountMinor > 0 and FXRate > 0 are required; the store
+	// computes AmountCents itself via domain.ToEURCents (a given value is
+	// ignored).
 	OriginalAmountMinor int64   `json:"original_amount_minor"`
 	OriginalCurrency    string  `json:"original_currency"`
 	FXRate              float64 `json:"fx_rate"`
@@ -134,8 +137,11 @@ func normalize(in ExpenseInput) (ExpenseInput, error) {
 		case in.FXRate <= 0:
 			return in, invalid("Bitte einen Wechselkurs für %s angeben.", cur)
 		}
+		if in.AmountCents = domain.ToEURCents(in.OriginalAmountMinor, cur, in.FXRate); in.AmountCents <= 0 {
+			return in, invalid("Umgerechnet ergibt der Betrag 0 € – bitte Betrag und Kurs prüfen.")
+		}
 	}
-	shares, err := domain.Split(in.SplitMode, in.AmountCents, in.Parts, 0)
+	shares, err := splitShares(in, 0)
 	if err != nil {
 		return in, err
 	}
@@ -149,7 +155,7 @@ func normalize(in ExpenseInput) (ExpenseInput, error) {
 // splitShares computes the cent shares of a validated input (normalize).
 // The expense ID determines who gets the extra cent on ties.
 func splitShares(in ExpenseInput, expenseID int64) ([]domain.Share, error) {
-	return domain.Split(in.SplitMode, in.AmountCents, in.Parts, expenseID)
+	return domain.SplitConverted(in.SplitMode, in.AmountCents, in.OriginalAmountMinor, in.OriginalCurrency, in.Parts, expenseID)
 }
 
 // checkRefs checks that payer, participants and category exist.
@@ -558,7 +564,8 @@ func diffExpense(ctx context.Context, tx *sql.Tx, old Expense, in ExpenseInput, 
 		// same cents but different weights (e.g. shares 1:1 → 2:2)
 		label := map[domain.SplitMode]string{domain.SplitShares: "Anteile", domain.SplitPercent: "Prozente",
 			domain.SplitAmount: "Beträge"}[in.SplitMode]
-		add(cmp.Or(label, "Gewichte"), weightSummary(old.SplitMode, old.Shares, names), weightSummary(in.SplitMode, shares, names))
+		add(cmp.Or(label, "Gewichte"), weightSummary(old.SplitMode, old.OriginalCurrency, old.Shares, names),
+			weightSummary(in.SplitMode, in.OriginalCurrency, shares, names))
 	}
 	return changes, nil
 }
@@ -581,8 +588,9 @@ func rateSummary(in ExpenseInput) string {
 	return s
 }
 
-// weightSummary lists the weights per person in the mode's format.
-func weightSummary(mode domain.SplitMode, shares []domain.Share, names map[int64]string) string {
+// weightSummary lists the weights per person in the mode's format (amounts in
+// currency).
+func weightSummary(mode domain.SplitMode, currency string, shares []domain.Share, names map[int64]string) string {
 	parts := make([]string, len(shares))
 	for i, sh := range shares {
 		var w string
@@ -590,7 +598,7 @@ func weightSummary(mode domain.SplitMode, shares []domain.Share, names map[int64
 		case domain.SplitPercent:
 			w = domain.FormatBasisPoints(sh.Weight)
 		case domain.SplitAmount:
-			w = domain.FormatCents(sh.Weight)
+			w = domain.FormatMoney(sh.Weight, currency)
 		default:
 			w = strconv.FormatInt(sh.Weight, 10)
 		}

@@ -105,10 +105,10 @@
     return bp % 100n === 0n ? (bp / 100n).toString() : formatInput(bp, 2);
   }
 
-  // allocate distributes total proportionally to weights (largest remainder).
-  // weights belong to people in ascending ID order. On ties, precedence among
-  // the tied rotates by rot (like domain.Split with the expense ID); without
-  // rot, the smaller index gets it (like web.allocate).
+  // allocate distributes total proportionally to weights (largest remainder)
+  // like domain.Allocate. weights belong to people in ascending ID order. On
+  // ties, precedence among the tied rotates by rot (the expense ID); without
+  // rot, the smaller index gets it (default values in the form).
   function allocate(total, weights, rot) {
     var sum = weights.reduce(function (a, b) { return a + b; }, 0n);
     if (sum <= 0n) return null;
@@ -234,7 +234,9 @@
         return;
       }
       sumEl.textContent = "Passt: " + formatInput(sum, dec) + unit + ".";
-      shares = cur === "EUR" ? weights : allocate(total, weights);
+      // Amounts in the entered currency: the euro total is distributed in
+      // proportion to them (for euros the shares are exactly the amounts).
+      shares = allocate(total, weights, rotation);
     } else {
       shares = allocate(total, weights, rotation);
     }

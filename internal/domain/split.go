@@ -2,6 +2,7 @@ package domain
 
 import (
 	"cmp"
+	"math/bits"
 	"slices"
 )
 
@@ -13,7 +14,9 @@ const (
 	SplitEqual   SplitMode = "equal"   // evenly; Weight is ignored and stored as 1
 	SplitShares  SplitMode = "shares"  // by shares; Weight = integer shares (>= 0)
 	SplitPercent SplitMode = "percent" // by percentage; Weight = basis points, sum 10000
-	SplitAmount  SplitMode = "amount"  // by amounts; Weight = cents, sum = total amount
+	// by amounts; Weight = amount in the smallest unit of the currency the
+	// expense was entered in (cents for EUR), sum = amount in that currency
+	SplitAmount SplitMode = "amount"
 )
 
 // SplitModes in the order in which they are offered in the form.
@@ -58,15 +61,22 @@ type Share struct {
 	AmountCents   int64 `json:"amount_cents"`
 }
 
-// Split divides total (cents, > 0) among parts according to mode. The result
-// is sorted by ParticipantID and sums to exactly total. Rounding remainders
-// are distributed using the largest-remainder method. On ties, precedence
-// rotates with rotation (the expense ID): the tied people form a circle
-// sorted by ID, the first cent goes to the one at index rotation mod count,
-// the next to the following one, and so on. That way, across many unevenly
-// split expenses, the extra cent does not always land on the same person.
-// The JS preview (static/expense-form.js) computes the same way.
+// Split divides total (euro cents, > 0) of an expense entered in euros among
+// parts according to mode; see SplitConverted.
 func Split(mode SplitMode, total int64, parts []Part, rotation int64) ([]Share, error) {
+	return SplitConverted(mode, total, total, "EUR", parts, rotation)
+}
+
+// SplitConverted divides total (euro cents, > 0) among parts according to
+// mode, for an expense entered as original (smallest unit of currency) and
+// converted to total; for euros original = total. Only SplitAmount depends on
+// it: the weights are amounts in currency and must add up to original; total
+// is distributed in proportion to them (for euros the shares are exactly the
+// weights).
+//
+// The result is sorted by ParticipantID and sums to exactly total; the cents
+// are distributed by Allocate with rotation (the expense ID).
+func SplitConverted(mode SplitMode, total, original int64, currency string, parts []Part, rotation int64) ([]Share, error) {
 	if !mode.Valid() {
 		return nil, invalid("Unbekannte Aufteilungsart „%s“.", mode)
 	}
@@ -122,36 +132,61 @@ func Split(mode SplitMode, total int64, parts []Part, rotation int64) ([]Share, 
 		}
 	case SplitAmount:
 		for _, p := range ps {
-			if p.Weight > MaxAmountCents {
+			s, carry := bits.Add64(uint64(sum), uint64(p.Weight), 0)
+			if carry != 0 || s > 1<<63-1 {
 				return nil, invalid("Der Betrag ist zu groß.")
 			}
-			sum += p.Weight
+			sum = int64(s)
 		}
-		if sum != total {
-			return nil, invalid("Die Beträge müssen zusammen %s ergeben (aktuell %s).", FormatCents(total), FormatCents(sum))
+		if sum != original {
+			return nil, invalid("Die Beträge müssen zusammen %s ergeben (aktuell %s).", FormatMoney(original, currency), FormatMoney(sum, currency))
 		}
-		out := make([]Share, len(ps))
-		for i, p := range ps {
-			out[i] = Share{ParticipantID: p.ParticipantID, Weight: p.Weight, AmountCents: p.Weight}
-		}
-		return out, nil
 	}
 
-	out := make([]Share, len(ps))
-	rems := make([]int64, len(ps))
-	var allocated int64
+	weights := make([]int64, len(ps))
 	for i, p := range ps {
-		prod := total * p.Weight
-		out[i] = Share{ParticipantID: p.ParticipantID, Weight: p.Weight, AmountCents: prod / sum}
-		rems[i] = prod % sum
-		allocated += out[i].AmountCents
+		weights[i] = p.Weight
 	}
-	order := make([]int, len(ps))
+	out := make([]Share, len(ps))
+	for i, c := range Allocate(total, weights, rotation) {
+		out[i] = Share{ParticipantID: ps[i].ParticipantID, Weight: ps[i].Weight, AmountCents: c}
+	}
+	return out, nil
+}
+
+// Allocate distributes total (>= 0) in proportion to weights (>= 0, sum at
+// most MaxInt64) using the largest-remainder method; the result sums to exactly total (all zero if the
+// weights sum to 0). On tied remainders, precedence rotates with rotation
+// (the expense ID): the tied entries form a circle in index order, the first
+// cent goes to the one at index rotation mod count, the next to the
+// following one, and so on. That way, across many unevenly split expenses,
+// the extra cent does not always land on the same person. Callers pass the
+// weights sorted by participant ID. Computes with 128-bit products, so that
+// total · weight cannot overflow. The JS preview (static/expense-form.js)
+// computes the same way.
+func Allocate(total int64, weights []int64, rotation int64) []int64 {
+	var sum uint64
+	for _, w := range weights {
+		sum += uint64(w)
+	}
+	out := make([]int64, len(weights))
+	if sum == 0 {
+		return out
+	}
+	rems := make([]uint64, len(weights))
+	var allocated int64
+	for i, w := range weights {
+		hi, lo := bits.Mul64(uint64(total), uint64(w))
+		q, r := bits.Div64(hi, lo, sum) // w ≤ sum → hi < sum, no overflow
+		out[i], rems[i] = int64(q), r
+		allocated += out[i]
+	}
+	order := make([]int, len(weights))
 	for i := range order {
 		order[i] = i
 	}
-	// Largest remainder first; ties stay sorted by ID (ps is) and are then
-	// rotated by rotation.
+	// Largest remainder first; ties stay in index order and are then rotated
+	// by rotation.
 	slices.SortStableFunc(order, func(a, b int) int { return cmp.Compare(rems[b], rems[a]) })
 	for i := 0; i < len(order); {
 		j := i + 1
@@ -162,12 +197,13 @@ func Split(mode SplitMode, total int64, parts []Part, rotation int64) ([]Share, 
 		rotate(order[i:j], int((rotation%n+n)%n))
 		i = j
 	}
-	// The remainder is smaller than the number of people: at most one cent per person.
+	// The remainder is smaller than the number of entries with a remainder:
+	// at most one cent each.
 	for k := 0; allocated < total; k++ {
-		out[order[k]].AmountCents++
+		out[order[k]]++
 		allocated++
 	}
-	return out, nil
+	return out
 }
 
 // rotate rotates s left by k positions (s[k] ends up first).
