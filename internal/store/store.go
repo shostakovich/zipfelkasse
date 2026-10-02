@@ -95,6 +95,7 @@ func (s *Store) SchemaVersion(ctx context.Context) (int, error) {
 // cannot do. They share the numbering with migrations/*.sql.
 var goMigrations = map[int]func(s *Store, ctx context.Context, tx *sql.Tx) error{
 	2: (*Store).resplitShares,
+	4: (*Store).convertAmountWeights,
 }
 
 // migrate applies all migrations (migrations/NNN_*.sql and goMigrations)

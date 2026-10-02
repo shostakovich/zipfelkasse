@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 )
 
@@ -63,16 +64,59 @@ func TestMoveCategory(t *testing.T) {
 	if err := s.MoveCategory(ctx, 999, true); !errors.Is(err, ErrNotFound) {
 		t.Errorf("unknown: %v", err)
 	}
-	// A new category ends up at the end.
-	cats, _ = s.ListCategories(ctx, false)
-	s.MoveCategory(ctx, cats[len(cats)-1].ID, true)
-	id, err := s.CreateCategory(ctx, "Neu")
-	if err != nil {
+}
+
+// New categories go directly before an active "Sonstiges", also after
+// categories were moved (which renumbers the positions); without one, at the
+// end.
+func TestCreateCategoryAfterMove(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	order := func() []string {
+		cats, err := s.ListCategories(ctx, false)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var out []string
+		for _, c := range cats {
+			out = append(out, c.Name)
+		}
+		return out
+	}
+	create := func(name string) {
+		if _, err := s.CreateCategory(ctx, name); err != nil {
+			t.Fatal(err)
+		}
+	}
+	tail := func(n int) string {
+		o := order()
+		return strings.Join(o[len(o)-n:], ",")
+	}
+	cats, _ := s.ListCategories(ctx, false)
+	if err := s.MoveCategory(ctx, cats[0].ID, false); err != nil {
 		t.Fatal(err)
 	}
+	create("Neu")
+	if got := tail(3); got != "Geschenke,Neu,Sonstiges" {
+		t.Errorf("after moving: %s", got)
+	}
+	// Sonstiges moved up by one: still directly before it.
 	cats, _ = s.ListCategories(ctx, false)
-	if cats[len(cats)-1].ID != id {
-		t.Errorf("new category not at the end: %+v", cats[len(cats)-1])
+	sonstiges := cats[len(cats)-1].ID
+	if err := s.MoveCategory(ctx, sonstiges, true); err != nil {
+		t.Fatal(err)
+	}
+	create("Noch neuer")
+	if got := tail(4); got != "Geschenke,Noch neuer,Sonstiges,Neu" {
+		t.Errorf("Sonstiges not last: %s", got)
+	}
+	// Without an active Sonstiges: at the end.
+	if err := s.SetCategoryArchived(ctx, sonstiges, true); err != nil {
+		t.Fatal(err)
+	}
+	create("Zuletzt")
+	if got := tail(3); got != "Noch neuer,Neu,Zuletzt" {
+		t.Errorf("without Sonstiges: %s", got)
 	}
 }
 

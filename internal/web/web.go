@@ -134,7 +134,7 @@ func (h handlers) whoCreate(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h handlers) serverError(w http.ResponseWriter, r *http.Request, err error) {
-	h.d.Log.Error("request", "method", r.Method, "path", r.URL.Path, "err", err)
+	h.d.Log.Error("request", "method", r.Method, "path", logPath(r.URL.Path), "err", err)
 	h.d.Render.Error(w, r, http.StatusInternalServerError, "Da ist etwas schiefgegangen.")
 }
 

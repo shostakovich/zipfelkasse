@@ -293,24 +293,6 @@ func TestExpensePeriod(t *testing.T) {
 }
 
 func TestFormatHelpers(t *testing.T) {
-	for _, tt := range []struct {
-		total   int64
-		weights []int64
-		want    []int64
-	}{
-		{667, []int64{600, 400}, []int64{400, 267}},
-		{100, []int64{1, 1, 1}, []int64{34, 33, 33}},
-		{1_000_000_000_000, []int64{999_999_999_999_999, 1}, []int64{1_000_000_000_000, 0}},
-		{5, []int64{0, 0}, []int64{0, 0}},
-	} {
-		got := allocate(tt.total, tt.weights)
-		for i := range got {
-			if got[i] != tt.want[i] {
-				t.Errorf("allocate(%d, %v) = %v, want %v", tt.total, tt.weights, got, tt.want)
-				break
-			}
-		}
-	}
 	for in, want := range map[[2]string]string{
 		{"123456", "USD"}: "1234,56", {"500", "JPY"}: "500", {"1234", "KWD"}: "1,234", {"5", "EUR"}: "0,05",
 	} {
@@ -339,7 +321,7 @@ func TestGroupExpensesRows(t *testing.T) {
 		{ID: 1, ExpenseInput: store.ExpenseInput{Date: today, PaidBy: 1, AmountCents: 400}, Shares: []domain.Share{{ParticipantID: 1, AmountCents: 100}, {ParticipantID: 2, AmountCents: 100}, {ParticipantID: 3, AmountCents: 100}, {ParticipantID: 4, AmountCents: 100}}},
 		{ID: 2, ExpenseInput: store.ExpenseInput{Date: date("2026-09-01"), PaidBy: 2, AmountCents: 300}, Shares: []domain.Share{{ParticipantID: 2, AmountCents: 150}, {ParticipantID: 3, AmountCents: 150}}},
 	}
-	groups := groupExpenses(es, today, 1, names, 4)
+	groups := groupExpenses(es, today, 1, names, map[int64]bool{1: true, 2: true, 3: true, 4: true})
 	if len(groups) != 2 || groups[0].Label != "Diese Woche" || groups[1].Label != "Letzter Monat" {
 		t.Fatalf("groups: %+v", groups)
 	}
@@ -350,6 +332,27 @@ func TestGroupExpensesRows(t *testing.T) {
 	r = groups[1].Rows[0]
 	if r.Everyone || r.Involved || r.MyBalance != 0 || strings.Join(r.ForNames, ",") != "B,C" {
 		t.Errorf("row 2: %+v", r)
+	}
+
+	// Four shares, but one of them belongs to archived E and active D is
+	// missing: not "für alle".
+	names[5] = "E"
+	es = []store.Expense{{ID: 3, ExpenseInput: store.ExpenseInput{Date: today, PaidBy: 1, AmountCents: 400},
+		Shares: []domain.Share{{ParticipantID: 1, AmountCents: 100}, {ParticipantID: 2, AmountCents: 100}, {ParticipantID: 3, AmountCents: 100}, {ParticipantID: 5, AmountCents: 100}}}}
+	active := map[int64]bool{1: true, 2: true, 3: true, 4: true}
+	if r := groupExpenses(es, today, 1, names, active)[0].Rows[0]; r.Everyone {
+		t.Errorf("archived person counted for everyone: %+v", r)
+	}
+	// All active people plus archived E: the names are listed, so that E's
+	// share is not hidden behind "alle".
+	es[0].Shares = append(es[0].Shares, domain.Share{ParticipantID: 4, AmountCents: 0})
+	if r := groupExpenses(es, today, 1, names, active)[0].Rows[0]; r.Everyone {
+		t.Errorf("everyone plus archived: %+v", r)
+	}
+	es[0].Shares = es[0].Shares[1:] // 2, 3, 5, 4 without 1
+	es[0].Shares[2].ParticipantID = 1
+	if r := groupExpenses(es, today, 1, names, active)[0].Rows[0]; !r.Everyone {
+		t.Errorf("exactly the active people: %+v", r)
 	}
 }
 

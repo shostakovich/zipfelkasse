@@ -151,7 +151,7 @@ func TestMigrationSeparatesFXRateSources(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer s.Close()
-	if v, _ := s.SchemaVersion(ctx); v != 3 {
+	if v, _ := s.SchemaVersion(ctx); v != latestVersion(t) {
 		t.Errorf("SchemaVersion = %d", v)
 	}
 	if r, err := s.LookupFXRate(ctx, "USD", domain.FXSourceManual, date("2026-10-01"), time.Time{}); err != nil || r.Rate != 1.2 {
