@@ -581,6 +581,9 @@ func TestActivityPage(t *testing.T) {
 		"Heute", "<strong>Anna</strong> hat <em>„Einkauf“</em> angelegt", "<em>„Einkauf groß“</em> geändert",
 		"<em>„Einkauf groß“</em> gelöscht", "Titel: <del>Einkauf</del> → <ins>Einkauf groß</ins>",
 		`href="/ausgaben/` + id(e.ID) + `"`, "<strong>Automatisch</strong>: Regel angelegt",
+		// amount for created and deleted, not for changed (Changes lists it)
+		`„Einkauf“</em> angelegt <span class="amount`, `„Einkauf groß“</em> gelöscht <span class="amount`,
+		`„Einkauf groß“</em> geändert.`,
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("/aktivitaet does not contain %q", want)

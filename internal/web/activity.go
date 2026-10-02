@@ -20,6 +20,9 @@ const activityPageSize = 50
 type activityItem struct {
 	store.Activity
 	Verb string // "angelegt", "geändert", "gelöscht"; "" = other action (Details.Text)
+	// ShowAmount: show Details.AmountCents after the title (created and
+	// deleted; changes of the amount are listed in Details.Changes).
+	ShowAmount bool
 }
 
 func activityItems(acts []store.Activity) []activityItem {
@@ -28,11 +31,11 @@ func activityItems(acts []store.Activity) []activityItem {
 		out[i] = activityItem{Activity: a}
 		switch a.Action {
 		case store.ActionExpenseCreated:
-			out[i].Verb = "angelegt"
+			out[i].Verb, out[i].ShowAmount = "angelegt", a.Details.AmountCents != 0
 		case store.ActionExpenseUpdated:
 			out[i].Verb = "geändert"
 		case store.ActionExpenseDeleted:
-			out[i].Verb = "gelöscht"
+			out[i].Verb, out[i].ShowAmount = "gelöscht", a.Details.AmountCents != 0
 		}
 	}
 	return out
