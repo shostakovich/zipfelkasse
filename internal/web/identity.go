@@ -6,6 +6,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"unicode"
 
 	"teilen/internal/store"
 )
@@ -78,12 +79,26 @@ func identity(st *store.Store, next http.Handler) http.Handler {
 	})
 }
 
-// safeReturn lässt nur lokale Pfade als Rücksprungziel zu.
+// safeReturn lässt nur lokale Pfade als Rücksprungziel zu. Abgelehnt werden
+// Steuerzeichen und Backslashes (Browser entfernen Tabs/Zeilenumbrüche bzw.
+// lesen „\“ als „/“, aus „/\t/evil“ würde so „//evil“), alles mit Scheme
+// oder Host und Pfade, die – auch erst nach dem Dekodieren – mit „//“ beginnen.
 func safeReturn(s string) string {
-	if !strings.HasPrefix(s, "/") || strings.HasPrefix(s, "//") || strings.HasPrefix(s, "/\\") || strings.HasPrefix(s, "/wer") {
+	if strings.ContainsFunc(s, isUnsafeRune) {
+		return "/"
+	}
+	u, err := url.Parse(s)
+	if err != nil || u.Scheme != "" || u.Host != "" || u.Opaque != "" || u.User != nil ||
+		!strings.HasPrefix(s, "/") || strings.HasPrefix(s, "//") ||
+		!strings.HasPrefix(u.Path, "/") || strings.HasPrefix(u.Path, "//") ||
+		strings.ContainsFunc(u.Path, isUnsafeRune) || strings.HasPrefix(u.Path, "/wer") {
 		return "/"
 	}
 	return s
+}
+
+func isUnsafeRune(r rune) bool {
+	return r == '\\' || unicode.IsControl(r)
 }
 
 // securityHeaders setzt Standard-Header. CSP: Skripte nur aus /static
@@ -99,8 +114,26 @@ func securityHeaders(next http.Handler) http.Handler {
 	})
 }
 
-// Wrap legt die gemeinsamen Middlewares (Security-Header, Identität) um den
-// kompletten Mux. main ruft das genau einmal auf.
+// Wrap legt die gemeinsamen Middlewares (Security-Header, CSRF-Schutz,
+// Identität) um den kompletten Mux. main ruft das genau einmal auf.
 func Wrap(d Deps, h http.Handler) http.Handler {
-	return securityHeaders(identity(d.Store, h))
+	return securityHeaders(crossOrigin(d, identity(d.Store, h)))
+}
+
+// crossOrigin lehnt POSTs u. ä. ab, die ein Browser von einer fremden Seite
+// aus schickt (Sec-Fetch-Site bzw. Origin ≠ Host). Anfragen ohne diese Header
+// (curl, MCP-Clients) kommen durch – sie tragen kein Cookie eines Opfers.
+func crossOrigin(d Deps, next http.Handler) http.Handler {
+	cop := http.NewCrossOriginProtection()
+	cop.SetDenyHandler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if d.Log != nil {
+			d.Log.Warn("cross-origin-anfrage abgelehnt", "method", r.Method, "path", r.URL.Path, "origin", r.Header.Get("Origin"))
+		}
+		if strings.HasPrefix(r.URL.Path, "/api/") || strings.HasPrefix(r.URL.Path, "/mcp/") {
+			WriteJSON(w, http.StatusForbidden, map[string]string{"error": "Anfrage von einer fremden Seite abgelehnt."})
+			return
+		}
+		d.Render.Error(w, r, http.StatusForbidden, "Diese Anfrage kam von einer fremden Seite und wurde abgelehnt. Bitte lade die Seite neu und versuche es noch einmal.")
+	}))
+	return cop.Handler(next)
 }

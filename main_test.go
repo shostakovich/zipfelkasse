@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -69,6 +70,35 @@ func TestAppWiring(t *testing.T) {
 		if rec.Code != tt.want {
 			t.Errorf("%s %s: %d, want %d", tt.method, tt.path, rec.Code, tt.want)
 		}
+	}
+}
+
+// TestMCPThroughWrap: Der CSRF-Schutz in web.Wrap lässt MCP-Clients (POST
+// ohne Browser-Header) durch.
+func TestMCPThroughWrap(t *testing.T) {
+	cfg, err := config.FromEnv(func(k string) string {
+		return map[string]string{"MCP_SECRET": "geheim", "MCP_ALLOWED_CIDRS": "192.0.2.0/24"}[k]
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	st, err := store.Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	a, err := newApp(cfg, st, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"test","version":"1"}}}`
+	req := httptest.NewRequest("POST", "/mcp/geheim", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json, text/event-stream")
+	rec := httptest.NewRecorder()
+	a.handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"serverInfo"`) {
+		t.Errorf("MCP initialize: %d %s", rec.Code, rec.Body.String())
 	}
 }
 

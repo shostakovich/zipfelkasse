@@ -223,3 +223,57 @@ func TestRenderTemplateErrorGives500(t *testing.T) {
 		t.Errorf("Template-Fehler: %d %q", rec.Code, rec.Body.String())
 	}
 }
+
+func TestCrossOriginProtection(t *testing.T) {
+	srv, d := newTestServer(t)
+	id, _ := d.Store.CreateParticipant(context.Background(), "Anna")
+	post := func(hdr map[string]string) *http.Response {
+		req := httptest.NewRequest("POST", "/wer", strings.NewReader(url.Values{"id": {strconv.FormatInt(id, 10)}}.Encode()))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		for k, v := range hdr {
+			req.Header.Set(k, v)
+		}
+		return srv.do(req)
+	}
+	// Cross-Site (fremde Seite schickt ein Formular ab) → 403 mit Fehlerseite.
+	res := post(map[string]string{"Sec-Fetch-Site": "cross-site", "Origin": "https://evil.example"})
+	b, _ := io.ReadAll(res.Body)
+	if res.StatusCode != http.StatusForbidden || !strings.Contains(string(b), "fremden Seite") {
+		t.Errorf("cross-site POST: %d %s", res.StatusCode, b)
+	}
+	// Alte Browser ohne Sec-Fetch-Site: Origin passt nicht zum Host → 403.
+	if res := post(map[string]string{"Origin": "https://evil.example"}); res.StatusCode != http.StatusForbidden {
+		t.Errorf("POST mit fremdem Origin: %d", res.StatusCode)
+	}
+	// Gleiche Herkunft → normal (303).
+	if res := post(map[string]string{"Sec-Fetch-Site": "same-origin", "Origin": "http://example.com"}); res.StatusCode != http.StatusSeeOther {
+		t.Errorf("same-origin POST: %d", res.StatusCode)
+	}
+	// Ohne Browser-Header (curl, MCP-Clients) → durchgelassen.
+	if res := post(nil); res.StatusCode != http.StatusSeeOther {
+		t.Errorf("POST ohne Browser-Header: %d", res.StatusCode)
+	}
+}
+
+func TestSafeReturn(t *testing.T) {
+	for in, want := range map[string]string{
+		"/aktivitaet":           "/aktivitaet",
+		"/salden?x=1#a":         "/salden?x=1#a",
+		"/%09/evil.example/x":   "/",
+		"/\t/evil.example/x":    "/",
+		"/\r\n/evil.example":    "/",
+		"//evil":                "/",
+		"/\\evil":               "/",
+		"/a\\b":                 "/",
+		"https://evil":          "/",
+		"evil":                  "/",
+		"/wer?zurueck=/":        "/",
+		"":                      "/",
+		"/%2F/evil.example":     "/",
+		"/ausgaben/neu?von=%2F": "/ausgaben/neu?von=%2F",
+	} {
+		if got := safeReturn(in); got != want {
+			t.Errorf("safeReturn(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
