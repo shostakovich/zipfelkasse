@@ -838,6 +838,45 @@ func TestSyncBackdatedExpenseAfterConnect(t *testing.T) {
 	}
 }
 
+// A backdated expense whose creation had an unclear outcome is looked for
+// from its own date on, not only from the start date – also if it has been
+// deleted in the meantime.
+func TestSyncLostResponseBackdatedNoDuplicate(t *testing.T) {
+	for _, deleted := range []bool{false, true} {
+		e := newEnv(t)
+		clock := time.Date(2026, 9, 20, 10, 0, 0, 0, time.UTC)
+		e.st.SetClock(func() time.Time { return clock })
+		e.connect("2026-09-10")
+		clock = clock.Add(time.Hour)
+		id := e.create(e.input("Nachgetragen", 2000, "2026-09-05", e.ben, e.anna, e.ben))
+		e.fake.lostPost = true
+		if _, err := e.sync(false); !uncertain(err) {
+			t.Fatalf("err = %v", err)
+		}
+		e.now = e.now.Add(6 * time.Minute)
+		e.fake.takeRequests()
+		if !deleted {
+			e.mustSync(false)
+			e.expectRequests("GET /v1/plans/plan-1/accounts/acc-geteilt/transactions", patch)
+			live := e.fake.live()
+			if len(live) != 1 || live[0].Date != "2026-09-05" {
+				t.Fatalf("duplicate: %+v", live)
+			}
+			if r := e.syncRows()[id]; r.TxnID != live[0].ID {
+				t.Errorf("row = %+v", r)
+			}
+			continue
+		}
+		created := e.fake.live()[0].ID
+		e.st.DeleteExpense(e.ctx, e.ben, id)
+		e.mustSync(false)
+		e.expectRequests("GET /v1/plans/plan-1/accounts/acc-geteilt/transactions", "DELETE "+pathTxns+"/"+created)
+		if live := e.fake.live(); len(live) != 0 {
+			t.Errorf("deleted: live = %+v", live)
+		}
+	}
+}
+
 // Date moved before the start: an already transferred expense stays in YNAB
 // (the starting balance does not contain it) and is only updated.
 func TestSyncKeepsExpenseMovedBeforeStart(t *testing.T) {

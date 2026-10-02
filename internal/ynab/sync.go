@@ -287,7 +287,7 @@ func (s *Service) syncParticipant(ctx context.Context, cfg store.YNABConfig, ful
 	}
 	c := s.client(cfg.Token)
 	if len(pending) > 0 {
-		if err := s.resolvePending(ctx, c, cfg, rows, pending); err != nil {
+		if err := s.resolvePending(ctx, c, cfg, wants, rows, pending); err != nil {
 			return res, err
 		}
 	}
@@ -344,8 +344,12 @@ func (s *Service) syncParticipant(ctx context.Context, cfg store.YNABConfig, ful
 // resolvePending resolves creations with an unknown outcome and rows after a
 // change of the target (retargetHash) via the memo marker of the
 // transactions in the account (one request).
-func (s *Service) resolvePending(ctx context.Context, c *client, cfg store.YNABConfig, rows map[int64]store.YNABSync, pending []int64) error {
-	txns, err := c.accountTransactions(ctx, cfg.PlanID, cfg.AccountID, cfg.StartDate)
+func (s *Service) resolvePending(ctx context.Context, c *client, cfg store.YNABConfig, wants map[int64]want, rows map[int64]store.YNABSync, pending []int64) error {
+	since, err := s.pendingSince(ctx, cfg, wants, pending)
+	if err != nil {
+		return err
+	}
+	txns, err := c.accountTransactions(ctx, cfg.PlanID, cfg.AccountID, since)
 	if err != nil {
 		return err
 	}
@@ -366,6 +370,29 @@ func (s *Service) resolvePending(ctx context.Context, c *client, cfg store.YNABC
 		upd = append(upd, r)
 	}
 	return s.d.Store.PutYNABSync(ctx, upd...)
+}
+
+// pendingSince is the date from which resolvePending searches: the start
+// date, or the earliest date of the pending expenses if earlier (backdated
+// expenses belong too, see Selection).
+func (s *Service) pendingSince(ctx context.Context, cfg store.YNABConfig, wants map[int64]want, pending []int64) (time.Time, error) {
+	since := cfg.StartDate
+	for _, id := range pending {
+		w, ok := wants[id]
+		date := w.Date
+		if !ok {
+			// no longer wanted (e.g. deleted): its date from the expense
+			e, err := s.d.Store.GetExpense(ctx, id)
+			if err != nil {
+				return since, err
+			}
+			date = e.Date
+		}
+		if date.Before(since) {
+			since = date
+		}
+	}
+	return since, nil
 }
 
 func (s *Service) row(cfg store.YNABConfig, w want) store.YNABSync {
