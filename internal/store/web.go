@@ -104,3 +104,32 @@ func (s *Store) countBy(ctx context.Context, q string) (map[int64]int, error) {
 	}
 	return out, rows.Err()
 }
+
+// TitleCategory is the title and category of a past expense (for category
+// suggestions).
+type TitleCategory struct {
+	Title      string
+	CategoryID int64
+}
+
+// CategoryHistory returns title and category of all non-deleted expenses
+// with an active category, newest first. Reimbursements are left out.
+func (s *Store) CategoryHistory(ctx context.Context) ([]TitleCategory, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT e.title, e.category_id FROM expenses e
+		JOIN categories c ON c.id = e.category_id
+		WHERE e.deleted_at IS NULL AND e.is_reimbursement = 0 AND c.archived_at IS NULL
+		ORDER BY e.date DESC, e.id DESC`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []TitleCategory
+	for rows.Next() {
+		var tc TitleCategory
+		if err := rows.Scan(&tc.Title, &tc.CategoryID); err != nil {
+			return nil, err
+		}
+		out = append(out, tc)
+	}
+	return out, rows.Err()
+}
