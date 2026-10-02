@@ -67,6 +67,30 @@ Jeder Zugriff wird geloggt: IP, Methode, Tool, Status und Dauer. Der Pfad mit de
 4. Prüfe die Header: Traefik in Pangolin setzt `X-Forwarded-For` und `X-Real-Ip`. Steht in `x_forwarded_for` nichts,
    reicht `X-Real-IP`.
 
+### Mit Caddy zwischen Newt und teilen
+
+Läuft der Weg `Pangolin → Newt → Caddy → teilen`, gibt es zwei Proxy-Hops. Dann gilt:
+
+- **Caddy muss Newt vertrauen**, sonst verwirft es das eingehende `X-Forwarded-For` (mit der Anthropic-IP) und
+  schreibt nur die Newt-Adresse hinein. Im Caddyfile global:
+
+  ```caddyfile
+  {
+  	servers {
+  		trusted_proxies static 172.18.0.5/32  # Adresse des Newt-Containers
+  	}
+  }
+  ```
+
+  Caddy hängt dann die Newt-Adresse an: `X-Forwarded-For: <Anthropic-IP>, <Newt-IP>`.
+- **teilen muss beiden vertrauen:** `TRUSTED_PROXIES=<Caddy-IP>/32,<Newt-IP>/32`. teilen liest von rechts, überspringt
+  Newt und landet bei der Anthropic-IP.
+- Kontrolle wie oben über die Logzeile: `remote=` ist Caddy, `x_forwarded_for=[<Anthropic-IP> <Newt-IP>]`, `ip=` die
+  Anthropic-IP.
+
+Im Heimnetz (direkt über Caddy, ohne Pangolin) steht in `x_forwarded_for` deine LAN-Adresse. Soll Claude Code im
+LAN zugreifen dürfen, nimm dein Netz zusätzlich in `MCP_ALLOWED_CIDRS` auf.
+
 ## Claude verbinden
 
 **Claude (Web/Desktop):** Gehe zu Einstellungen → Connectors → **Custom Connector hinzufügen** und trage ein:
