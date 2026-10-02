@@ -350,96 +350,131 @@ func (h handlers) toInput(r *http.Request, f *expenseForm, existing *store.Expen
 		Title: f.Title, CategoryID: f.Category, PaidBy: f.PaidBy, Notes: f.Notes,
 		IsReimbursement: f.IsReimbursement, SplitMode: f.SplitMode,
 	}
-	if strings.TrimSpace(f.Title) == "" {
-		return in, invalidf("Bitte einen Titel angeben.")
-	}
-	date, err := domain.ParseDate(f.Date)
-	if err != nil {
+	var err error
+	if in.Date, err = f.titleAndDate(); err != nil {
 		return in, err
 	}
-	in.Date = date
+	if err := h.setAmount(r, f, &in, existing); err != nil {
+		return in, err
+	}
+	rows := f.checkedRows()
+	if f.IsReimbursement {
+		in.SplitMode = domain.SplitEqual
+		in.Parts, err = reimbursementParts(rows)
+		return in, err
+	}
+	in.Parts, err = splitParts(in.SplitMode, f.CurrencyCode(), rows)
+	return in, err
+}
 
+// titleAndDate checks that there is a title and parses the date.
+func (f expenseForm) titleAndDate() (time.Time, error) {
+	if strings.TrimSpace(f.Title) == "" {
+		return time.Time{}, invalidf("Bitte einen Titel angeben.")
+	}
+	return domain.ParseDate(f.Date)
+}
+
+// setAmount reads currency and amount into in: euro amounts directly; for a
+// foreign currency the original amount plus rate and source (formRate). The
+// store converts foreign amounts itself; f.EURCents is only for the form.
+func (h handlers) setAmount(r *http.Request, f *expenseForm, in *store.ExpenseInput, existing *store.Expense) error {
 	cur := f.CurrencyCode()
 	if !isCurrencyCode(cur) {
-		return in, invalidf("Ungültige Währung „%s“ – bitte einen dreistelligen ISO-Code wie USD angeben.", cur)
+		return invalidf("Ungültige Währung „%s“ – bitte einen dreistelligen ISO-Code wie USD angeben.", cur)
 	}
+	var err error
 	if cur == "EUR" {
 		if in.AmountCents, err = domain.ParseCents(f.Amount); err != nil {
-			return in, err
+			return err
 		}
 		if in.AmountCents <= 0 {
-			return in, invalidf("Der Betrag muss größer als 0 sein.")
+			return invalidf("Der Betrag muss größer als 0 sein.")
 		}
-	} else {
-		dec := domain.CurrencyDecimals(cur)
-		if in.OriginalAmountMinor, err = domain.ParseMinor(f.Amount, dec); err != nil {
-			return in, err
-		}
-		if in.OriginalAmountMinor <= 0 {
-			return in, invalidf("Der Betrag muss größer als 0 sein.")
-		}
-		in.OriginalCurrency = cur
-		if in.FXRate, in.FXSource, err = h.formRate(r, f, cur, date, existing); err != nil {
-			return in, err
-		}
-		// The store converts the amount itself; this is only for the form.
-		f.EURCents = domain.ToEURCents(in.OriginalAmountMinor, cur, in.FXRate)
+		return nil
 	}
+	if in.OriginalAmountMinor, err = domain.ParseMinor(f.Amount, domain.CurrencyDecimals(cur)); err != nil {
+		return err
+	}
+	if in.OriginalAmountMinor <= 0 {
+		return invalidf("Der Betrag muss größer als 0 sein.")
+	}
+	in.OriginalCurrency = cur
+	if in.FXRate, in.FXSource, err = h.formRate(r, f, cur, in.Date, existing); err != nil {
+		return err
+	}
+	f.EURCents = domain.ToEURCents(in.OriginalAmountMinor, cur, in.FXRate)
+	return nil
+}
 
-	// Split.
+// checkedRows returns the people ticked in the split.
+func (f expenseForm) checkedRows() []splitRow {
 	var rows []splitRow
 	for _, row := range f.Rows {
 		if row.Checked {
 			rows = append(rows, row)
 		}
 	}
-	if f.IsReimbursement {
-		if len(rows) != 1 {
-			return in, invalidf("Eine Rückzahlung geht an genau eine Person – bitte genau einen Empfänger ankreuzen.")
-		}
-		in.SplitMode = domain.SplitEqual
-		in.Parts = []domain.Part{{ParticipantID: rows[0].ID}}
-		return in, nil
+	return rows
+}
+
+// reimbursementParts: a reimbursement goes to exactly one ticked person.
+func reimbursementParts(rows []splitRow) ([]domain.Part, error) {
+	if len(rows) != 1 {
+		return nil, invalidf("Eine Rückzahlung geht an genau eine Person – bitte genau einen Empfänger ankreuzen.")
 	}
+	return []domain.Part{{ParticipantID: rows[0].ID}}, nil
+}
+
+// splitParts reads the values of the ticked people as weights for mode;
+// amounts are in currency cur. Error messages name the person.
+func splitParts(mode domain.SplitMode, cur string, rows []splitRow) ([]domain.Part, error) {
 	if len(rows) == 0 {
-		return in, invalidf("Bitte mindestens eine Person ankreuzen, für die bezahlt wurde.")
+		return nil, invalidf("Bitte mindestens eine Person ankreuzen, für die bezahlt wurde.")
 	}
+	var parts []domain.Part
 	for _, row := range rows {
-		p := domain.Part{ParticipantID: row.ID}
-		v := row.Value
-		var err error
-		switch in.SplitMode {
-		case domain.SplitShares:
-			if v == "" {
-				v = "1"
-			}
-			p.Weight, err = strconv.ParseInt(v, 10, 64)
-			if err != nil {
-				err = invalidf("%s: Anteile müssen ganze Zahlen sein („%s“).", row.Name, v)
-			}
-		case domain.SplitPercent:
-			if v == "" {
-				v = "0"
-			}
-			p.Weight, err = domain.ParseBasisPoints(v)
-		case domain.SplitAmount: // amounts in the original currency
-			if v == "" {
-				v = "0"
-			}
-			p.Weight, err = domain.ParseMinor(v, domain.CurrencyDecimals(cur))
-		}
+		w, err := splitWeight(mode, cur, row)
 		if err != nil {
 			if msg, ok := validationMsg(err); ok && !strings.HasPrefix(msg, row.Name) {
 				err = invalidf("%s: %s", row.Name, msg)
 			}
-			return in, err
+			return nil, err
 		}
-		if p.Weight < 0 {
-			return in, invalidf("%s: Negative Werte sind nicht erlaubt.", row.Name)
+		if w < 0 {
+			return nil, invalidf("%s: Negative Werte sind nicht erlaubt.", row.Name)
 		}
-		in.Parts = append(in.Parts, p)
+		parts = append(parts, domain.Part{ParticipantID: row.ID, Weight: w})
 	}
-	return in, nil
+	return parts, nil
+}
+
+// splitWeight parses a person's value: shares (empty = 1), percent as basis
+// points or an amount in the original currency (empty = 0); 0 for "equal".
+func splitWeight(mode domain.SplitMode, cur string, row splitRow) (int64, error) {
+	v := row.Value
+	switch mode {
+	case domain.SplitShares:
+		if v == "" {
+			v = "1"
+		}
+		w, err := strconv.ParseInt(v, 10, 64)
+		if err != nil {
+			return 0, invalidf("%s: Anteile müssen ganze Zahlen sein („%s“).", row.Name, v)
+		}
+		return w, nil
+	case domain.SplitPercent:
+		if v == "" {
+			v = "0"
+		}
+		return domain.ParseBasisPoints(v)
+	case domain.SplitAmount:
+		if v == "" {
+			v = "0"
+		}
+		return domain.ParseMinor(v, domain.CurrencyDecimals(cur))
+	}
+	return 0, nil
 }
 
 // formRate returns rate and source for a foreign currency expense:
