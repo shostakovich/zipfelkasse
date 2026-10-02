@@ -54,6 +54,11 @@ Every amount appears twice: as locale-neutral text `"1234.56"` (dot as decimal s
 currency sign) and as an integer number of cents (field ending in `_cents`), e.g. `amount`/`amount_cents`,
 `balance`/`balance_cents`, `total`/`total_cents`. Foreign-currency originals look like `"23.40 USD"`.
 
+Tool results are a single text block containing the JSON object (`schema` returns plain text). There is no
+`structuredContent` and no `outputSchema`: a second copy of the same JSON would double the response size. Claude.ai and
+Claude Desktop only pass the text on to the model, Claude Code and VS Code only `structuredContent` when there is one,
+otherwise the text – so the text alone reaches every client.
+
 Main output keys:
 
 - `balances`: `balances[]` (`person`, `balance`, `balance_cents`, `status`), `settlements[]` (`from`, `to`, `amount`,

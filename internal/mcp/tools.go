@@ -110,8 +110,7 @@ type tool struct {
 	run func(ctx context.Context, args json.RawMessage) (toolResult, error)
 }
 
-// toolResult: data becomes structuredContent (and, without text, the text
-// content as JSON).
+// toolResult is either plain text or data that is returned as JSON text.
 type toolResult struct {
 	text string
 	data any

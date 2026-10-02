@@ -164,12 +164,17 @@ func (r reply) errCode() float64 {
 	return 0
 }
 
-// call calls a tool (legacy) and returns structuredContent, the text and isError.
+// call calls a tool (legacy) and returns the text parsed as a JSON object
+// (nil if it is not one), the text and isError.
 func (e *env) call(name string, args map[string]any) (map[string]any, string, bool) {
 	e.t.Helper()
 	res := e.legacy("tools/call", map[string]any{"name": name, "arguments": args}).result(e.t)
 	content := res["content"].([]any)[0].(map[string]any)
-	sc, _ := res["structuredContent"].(map[string]any)
+	if _, ok := res["structuredContent"]; ok {
+		e.t.Errorf("%s: structuredContent duplicates the text", name)
+	}
+	var sc map[string]any
+	_ = json.Unmarshal([]byte(content["text"].(string)), &sc)
 	return sc, content["text"].(string), res["isError"] == true
 }
 
@@ -354,7 +359,8 @@ func TestModernProtocol(t *testing.T) {
 		t.Errorf("tools/list: %v", res)
 	}
 	res = e.modern("tools/call", map[string]any{"name": "balances", "arguments": map[string]any{}}, nil).result(t)
-	if res["resultType"] != "complete" || res["isError"] != false || res["structuredContent"] == nil {
+	if text := res["content"].([]any)[0].(map[string]any)["text"].(string); res["resultType"] != "complete" || res["isError"] != false ||
+		res["structuredContent"] != nil || !strings.HasPrefix(text, `{"balances":`) {
 		t.Errorf("tools/call: %v", res)
 	}
 	// Mcp-Name in Base64 format.
