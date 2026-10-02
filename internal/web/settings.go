@@ -296,6 +296,11 @@ func (h handlers) categoryMove(up bool) http.HandlerFunc {
 			h.serverError(w, r, err)
 			return
 		}
+		dir := "unten"
+		if up {
+			dir = "oben"
+		}
+		h.logSettings(r, fmt.Sprintf("Kategorie „%s“ nach %s verschoben", c.Name, dir))
 		http.Redirect(w, r, "/einstellungen/kategorien#kategorie-"+strconv.FormatInt(c.ID, 10), http.StatusSeeOther)
 	}
 }

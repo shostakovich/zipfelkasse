@@ -386,9 +386,17 @@ func TestHandlers(t *testing.T) {
 	}
 
 	base := "/einstellungen/wiederkehrend/" + strconv.FormatInt(rid, 10)
-	for _, action := range []string{"pausieren", "fortsetzen", "vorlage"} {
+	for action, text := range map[string]string{
+		"pausieren":  "Wiederholung „Miete“ (monatlich) pausiert",
+		"fortsetzen": "Wiederholung „Miete“ (monatlich) fortgesetzt",
+		"vorlage":    "Wiederholung „Miete“ (monatlich): Vorlage aus der letzten Ausgabe übernommen",
+	} {
 		if rec = e.do("POST", base+"/"+action, nil); rec.Code != http.StatusSeeOther {
 			t.Errorf("%s: %d", action, rec.Code)
+		}
+		acts, _ := e.st.ListActivity(e.ctx, store.ActivityFilter{Limit: 1})
+		if len(acts) != 1 || acts[0].Action != store.ActionSettingsUpdated || acts[0].ActorID != e.ben.ID || acts[0].Details.Text != text {
+			t.Errorf("%s: Activity = %+v", action, acts)
 		}
 		if rec = e.do("POST", "/einstellungen/wiederkehrend/999/"+action, nil); rec.Code != http.StatusNotFound {
 			t.Errorf("%s unbekannt: %d", action, rec.Code)

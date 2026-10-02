@@ -2,6 +2,7 @@ package web
 
 import (
 	"errors"
+	"fmt"
 	"io/fs"
 	"net/http"
 	"strconv"
@@ -120,6 +121,12 @@ func (h handlers) whoCreate(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		h.serverError(w, r, err)
 		return
+	}
+	// Akteur ist die neue Person selbst (noch ohne Cookie, also ohne Me).
+	p, _ := h.d.Store.GetParticipant(r.Context(), id)
+	if err := h.d.Store.AddActivity(r.Context(), id, actionSettingsUpdated, 0,
+		store.ActivityDetails{Text: fmt.Sprintf("Person „%s“ hinzugefügt", p.Name)}); err != nil {
+		h.d.Log.Error("aktivität", "err", err)
 	}
 	SetIdentity(w, r, id)
 	SetFlash(w, "Willkommen!")

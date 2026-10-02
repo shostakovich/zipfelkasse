@@ -128,6 +128,11 @@ func TestCreateAndSelectPerson(t *testing.T) {
 	if len(ps) != 1 || ps[0].Name != "Jörg" || who.Value != strconv.FormatInt(ps[0].ID, 10) {
 		t.Fatalf("Person nicht angelegt: %+v / %v", ps, who)
 	}
+	// Protokolliert mit der neuen Person als Akteur.
+	if acts, _ := d.Store.ListActivity(context.Background(), store.ActivityFilter{Limit: 1}); len(acts) != 1 ||
+		acts[0].Action != store.ActionSettingsUpdated || acts[0].ActorID != ps[0].ID || acts[0].Details.Text != "Person „Jörg“ hinzugefügt" {
+		t.Errorf("Aktivität = %+v", acts)
+	}
 
 	res, body := get(t, srv, "/salden", who, flash)
 	if res.StatusCode != 200 {

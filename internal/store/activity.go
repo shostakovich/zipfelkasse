@@ -15,6 +15,9 @@ const (
 	ActionExpenseCreated = "expense_created"
 	ActionExpenseUpdated = "expense_updated"
 	ActionExpenseDeleted = "expense_deleted"
+	// ActionSettingsUpdated: Einstellungen geändert (Personen, Kategorien,
+	// Kurse, Wiederholungen, YNAB …); Details.Text beschreibt die Änderung.
+	ActionSettingsUpdated = "settings_updated"
 )
 
 // ActivityDetails ist der Inhalt von activity.details_json.

@@ -867,3 +867,43 @@ func flashOf(rec *httptest.ResponseRecorder) string {
 	}
 	return ""
 }
+
+// Änderungen an den YNAB-Einstellungen landen im Aktivitätsprotokoll – ohne Token.
+func TestSettingsActivity(t *testing.T) {
+	e := newEnv(t)
+	last := func() string {
+		t.Helper()
+		acts, _ := e.st.ListActivity(e.ctx, store.ActivityFilter{Limit: 1})
+		if len(acts) != 1 || acts[0].Action != store.ActionSettingsUpdated || acts[0].ActorID != e.anna {
+			t.Errorf("Activity = %+v", acts)
+			return ""
+		}
+		if strings.Contains(acts[0].Details.Text, testToken) {
+			t.Fatal("Token im Aktivitätsprotokoll!")
+		}
+		return acts[0].Details.Text
+	}
+	steps := []struct {
+		path string
+		form url.Values
+		want string
+	}{
+		{"/einstellungen/ynab/token", url.Values{"token": {testToken}}, "YNAB verbunden (Token gesetzt)"},
+		{"/einstellungen/ynab/token", url.Values{"token": {testToken}}, "YNAB-Token ersetzt"},
+		{"/einstellungen/ynab/konto", url.Values{"ziel": {"plan-1|acc-geteilt"}, "start": {"2026-09-01"}},
+			"YNAB: Konto „Geteilt“ im Plan „Haushalt“ gewählt, Startdatum 01.09.2026"},
+		{"/einstellungen/ynab/konto", url.Values{"ziel": {"plan-1|acc-geteilt"}, "start": {"2026-09-15"}},
+			"YNAB: Startdatum 01.09.2026 → 15.09.2026"},
+		{"/einstellungen/ynab/kategorien", url.Values{"kat-" + strconv.FormatInt(e.food, 10): {"c-food"}},
+			"YNAB: Kategorie-Zuordnung geändert (Lebensmittel → Lebensmittel & Drogerie)"},
+		{"/einstellungen/ynab/trennen", nil, "YNAB-Verbindung getrennt"},
+	}
+	for _, s := range steps {
+		if rec := e.post(s.path, s.form); rec.Code != http.StatusSeeOther {
+			t.Fatalf("%s: %d %s", s.path, rec.Code, rec.Body)
+		}
+		if got := last(); got != s.want {
+			t.Errorf("%s: Aktivität = %q, want %q", s.path, got, s.want)
+		}
+	}
+}

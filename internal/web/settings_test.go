@@ -146,6 +146,11 @@ func TestSettingsCategories(t *testing.T) {
 	if cats[0].ID != second.ID || cats[1].Name != "Essen & Trinken" {
 		t.Errorf("Reihenfolge: %s, %s", cats[0].Name, cats[1].Name)
 	}
+	if acts, _ := g.d.Store.ListActivity(ctx, store.ActivityFilter{Limit: 1}); len(acts) != 1 ||
+		acts[0].Action != store.ActionSettingsUpdated || acts[0].ActorID != g.anna ||
+		acts[0].Details.Text != "Kategorie „"+second.Name+"“ nach oben verschoben" {
+		t.Errorf("Aktivität = %+v", acts)
+	}
 	if status, _, _ := g.post("/einstellungen/kategorien/"+id(second.ID)+"/runter", nil); status != http.StatusSeeOther {
 		t.Errorf("runter: %d", status)
 	}

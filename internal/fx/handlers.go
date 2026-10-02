@@ -2,6 +2,7 @@ package fx
 
 import (
 	"errors"
+	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
@@ -180,6 +181,7 @@ func (s *Service) handleSaveManual(w http.ResponseWriter, r *http.Request) {
 		Date:     strings.TrimSpace(r.FormValue("datum")),
 		Rate:     strings.TrimSpace(r.FormValue("kurs")),
 	}
+	var logText string
 	err := func() error {
 		date, err := domain.ParseDate(form.Date)
 		if err != nil {
@@ -189,6 +191,8 @@ func (s *Service) handleSaveManual(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			return err
 		}
+		logText = fmt.Sprintf("Manueller Kurs für %s ab %s gespeichert: 1 € = %s %s",
+			form.Currency, domain.FormatDate(date), formatRate(rate), form.Currency)
 		return s.d.Store.SetManualFXRate(r.Context(), form.Currency, date, rate)
 	}()
 	var ve domain.ValidationError
@@ -200,6 +204,7 @@ func (s *Service) handleSaveManual(w http.ResponseWriter, r *http.Request) {
 		s.serverError(w, r, err)
 		return
 	}
+	s.d.LogSettings(r, logText)
 	web.SetFlash(w, "Kurs für "+form.Currency+" gespeichert.")
 	http.Redirect(w, r, "/einstellungen/kurse", http.StatusSeeOther)
 }
@@ -219,6 +224,7 @@ func (s *Service) handleDeleteManual(w http.ResponseWriter, r *http.Request) {
 		s.serverError(w, r, err)
 		return
 	}
+	s.d.LogSettings(r, fmt.Sprintf("Manueller Kurs für %s ab %s gelöscht", cur, domain.FormatDate(date)))
 	web.SetFlash(w, "Manueller Kurs für "+cur+" gelöscht.")
 	http.Redirect(w, r, "/einstellungen/kurse", http.StatusSeeOther)
 }

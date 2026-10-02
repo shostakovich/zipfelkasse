@@ -11,7 +11,7 @@ import (
 
 // actionSettingsUpdated protokolliert Änderungen an Gruppenname, Personen und
 // Kategorien (Details.Text beschreibt die Änderung).
-const actionSettingsUpdated = "settings_updated"
+const actionSettingsUpdated = store.ActionSettingsUpdated
 
 // activityPageSize ist die Zahl der Einträge pro Seite der Aktivitätsliste.
 const activityPageSize = 50
@@ -79,10 +79,16 @@ func (h handlers) activity(w http.ResponseWriter, r *http.Request) {
 	h.d.Render.Page(w, r, http.StatusOK, "activity.html", Page{Title: "Aktivität", Nav: NavActivity, Data: data})
 }
 
-// logSettings schreibt einen Eintrag „Einstellungen geändert“. Fehler werden
-// nur protokolliert – die eigentliche Änderung ist bereits gespeichert.
-func (h handlers) logSettings(r *http.Request, text string) {
-	if err := h.d.Store.AddActivity(r.Context(), me(r).ID, actionSettingsUpdated, 0, store.ActivityDetails{Text: text}); err != nil {
-		h.d.Log.Error("aktivität", "err", err)
+// logSettings schreibt einen Eintrag „Einstellungen geändert“ (siehe
+// Deps.LogSettings).
+func (h handlers) logSettings(r *http.Request, text string) { h.d.LogSettings(r, text) }
+
+// LogSettings schreibt für die aktuelle Person (Me) einen Eintrag
+// „Einstellungen geändert“ (store.ActionSettingsUpdated) mit text. Fehler
+// werden nur geloggt – die eigentliche Änderung ist bereits gespeichert.
+func (d Deps) LogSettings(r *http.Request, text string) {
+	p, _ := Me(r.Context())
+	if err := d.Store.AddActivity(r.Context(), p.ID, actionSettingsUpdated, 0, store.ActivityDetails{Text: text}); err != nil {
+		d.Log.Error("aktivität", "err", err)
 	}
 }

@@ -547,8 +547,16 @@ func TestAPIRate(t *testing.T) {
 func TestSettingsPage(t *testing.T) {
 	st := newTestStore(t)
 	s, f := newTestService(t, st)
-	mux := newMux(s)
 	ctx := context.Background()
+	annaID, err := st.CreateParticipant(ctx, "Anna")
+	if err != nil {
+		t.Fatal(err)
+	}
+	anna, _ := st.GetParticipant(ctx, annaID)
+	inner := newMux(s)
+	mux := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		inner.ServeHTTP(w, r.WithContext(web.WithMe(r.Context(), anna)))
+	})
 
 	rec := do(mux, "GET", "/einstellungen/kurse", nil)
 	if rec.Code != 200 || !strings.Contains(rec.Body.String(), "Manuelle Kurse") ||
@@ -595,9 +603,15 @@ func TestSettingsPage(t *testing.T) {
 		t.Errorf("Liste ohne manuellen Kurs: %s", rec.Body)
 	}
 
+	if text := lastActivity(t, st); text != "Manueller Kurs für VND ab 03.09.2026 gespeichert: 1 € = 17000,5 VND" {
+		t.Errorf("Aktivität = %q", text)
+	}
 	rec = do(mux, "POST", "/einstellungen/kurse/loeschen", url.Values{"waehrung": {"THB"}, "datum": {"2026-09-01"}})
 	if rec.Code != http.StatusSeeOther {
 		t.Errorf("Löschen: %d", rec.Code)
+	}
+	if text := lastActivity(t, st); text != "Manueller Kurs für THB ab 01.09.2026 gelöscht" {
+		t.Errorf("Aktivität = %q", text)
 	}
 	rec = do(mux, "POST", "/einstellungen/kurse/loeschen", url.Values{"waehrung": {"THB"}, "datum": {"2026-09-01"}})
 	if rec.Code != http.StatusNotFound {
@@ -618,4 +632,16 @@ func TestSettingsPage(t *testing.T) {
 	if rec.Code != http.StatusBadGateway || !strings.Contains(rec.Body.String(), "nicht geladen werden") {
 		t.Errorf("Aktualisieren mit Fehler: %d", rec.Code)
 	}
+}
+
+// lastActivity liefert den Text des jüngsten Aktivitätseintrags
+// („settings_updated“, sonst "").
+func lastActivity(t *testing.T, st *store.Store) string {
+	t.Helper()
+	acts, err := st.ListActivity(context.Background(), store.ActivityFilter{Limit: 1})
+	if err != nil || len(acts) != 1 || acts[0].Action != store.ActionSettingsUpdated || acts[0].ActorID == 0 {
+		t.Errorf("Activity = %+v, %v", acts, err)
+		return ""
+	}
+	return acts[0].Details.Text
 }

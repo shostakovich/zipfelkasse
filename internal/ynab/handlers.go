@@ -1,7 +1,9 @@
 package ynab
 
 import (
+	"cmp"
 	"errors"
+	"fmt"
 	"net/http"
 	"slices"
 	"strconv"
@@ -255,9 +257,19 @@ func (s *Service) saveToken(w http.ResponseWriter, r *http.Request) {
 		s.render(w, r, http.StatusUnprocessableEntity, msg, false)
 		return
 	}
+	old, err := s.d.Store.GetYNABConfig(ctx, me.ID)
+	if err != nil && !errors.Is(err, store.ErrNotFound) {
+		s.serverError(w, r, err)
+		return
+	}
 	if err := s.d.Store.SetYNABToken(ctx, me.ID, token); err != nil {
 		s.serverError(w, r, err)
 		return
+	}
+	if old.Token != "" {
+		s.d.LogSettings(r, "YNAB-Token ersetzt")
+	} else {
+		s.d.LogSettings(r, "YNAB verbunden (Token gesetzt)")
 	}
 	// neuer Token: Sperren und alte Fehler zurücksetzen
 	st := s.loadStatus(ctx, me.ID)
@@ -276,6 +288,7 @@ func (s *Service) disconnect(w http.ResponseWriter, r *http.Request) {
 		s.serverError(w, r, err)
 		return
 	}
+	s.d.LogSettings(r, "YNAB-Verbindung getrennt")
 	s.done(w, r, "YNAB-Verbindung getrennt. Die Buchungen in YNAB bleiben erhalten.")
 }
 
@@ -310,8 +323,31 @@ func (s *Service) saveTarget(w http.ResponseWriter, r *http.Request) {
 		s.serverError(w, r, err)
 		return
 	}
+	switch {
+	case planID != cfg.PlanID || accountID != cfg.AccountID:
+		plan, account := targetNames(plans, planID, accountID)
+		s.d.LogSettings(r, fmt.Sprintf("YNAB: Konto „%s“ im Plan „%s“ gewählt, Startdatum %s", account, plan, domain.FormatDate(start)))
+	case !start.Equal(cfg.StartDate):
+		s.d.LogSettings(r, fmt.Sprintf("YNAB: Startdatum %s → %s", cmp.Or(domain.FormatDate(cfg.StartDate), "–"), domain.FormatDate(start)))
+	}
 	s.Trigger(0)
 	s.done(w, r, "Gespeichert.")
+}
+
+// targetNames liefert die Namen von Plan und Konto (für das Protokoll).
+func targetNames(plans []apiPlan, planID, accountID string) (plan, account string) {
+	for _, p := range plans {
+		if p.ID != planID {
+			continue
+		}
+		for _, a := range p.Accounts {
+			if a.ID == accountID {
+				return p.Name, a.Name
+			}
+		}
+		return p.Name, accountID
+	}
+	return planID, accountID
 }
 
 func accountExists(plans []apiPlan, planID, accountID string) bool {
@@ -379,8 +415,48 @@ func (s *Service) saveCategories(w http.ResponseWriter, r *http.Request) {
 		s.serverError(w, r, err)
 		return
 	}
+	if text, err := s.mappingChanges(r, old, m, groups); err != nil {
+		s.d.Log.Error("aktivität", "err", err)
+	} else if text != "" {
+		s.d.LogSettings(r, "YNAB: Kategorie-Zuordnung geändert ("+text+")")
+	}
 	s.Trigger(0)
 	s.done(w, r, "Kategorie-Zuordnung gespeichert.")
+}
+
+// mappingChanges beschreibt die Unterschiede zwischen alter und neuer
+// Kategorie-Zuordnung: „Lebensmittel → Lebensmittel & Drogerie, Kino →
+// unkategorisiert“ (in der Reihenfolge der App-Kategorien).
+func (s *Service) mappingChanges(r *http.Request, old, now map[int64]string, groups []apiCategoryGroup) (string, error) {
+	cats, err := s.d.Store.ListCategories(r.Context(), true)
+	if err != nil {
+		return "", err
+	}
+	names := map[string]string{}
+	for _, g := range groups {
+		for _, c := range g.Categories {
+			names[c.ID] = c.Name
+		}
+	}
+	ynabName := func(id string) string {
+		if id == "" {
+			return "unkategorisiert"
+		}
+		return cmp.Or(names[id], "(nicht mehr vorhanden)")
+	}
+	var parts []string
+	for _, c := range cats {
+		o, n := old[c.ID], now[c.ID]
+		if o == n {
+			continue
+		}
+		p := c.Name + " → " + ynabName(n)
+		if o != "" {
+			p += " (vorher " + ynabName(o) + ")"
+		}
+		parts = append(parts, p)
+	}
+	return strings.Join(parts, ", "), nil
 }
 
 // syncNow stößt einen vollständigen Abgleich im Hintergrund an und leitet
