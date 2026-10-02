@@ -1,0 +1,57 @@
+{{define "content"}}
+<section class="card">
+  <div class="card-header">
+    <h1 class="card-title">Wiederkehrende Ausgabe anlegen</h1>
+    {{- with .Data.Expense}}
+    <p class="card-description">Die Ausgabe dient als Vorlage und ist der erste Termin. Weitere Termine werden
+      automatisch mit denselben Angaben eingetragen.</p>
+    {{- end}}
+  </div>
+  {{- with .Data.Expense}}
+  <div class="card-content stack">
+    <div class="table-wrap"><table><tbody>
+      <tr><th scope="row">Titel</th><td><strong>{{.Title}}</strong></td></tr>
+      <tr><th scope="row">Betrag</th><td>
+        {{- if .IsForeign}}{{money .OriginalAmountMinor .OriginalCurrency}} ({{eur .AmountCents}}; künftig zum Kurs des jeweiligen Tages)
+        {{- else}}{{eur .AmountCents}}{{end}}</td></tr>
+      <tr><th scope="row">Bezahlt von</th><td>{{.PaidByName}}</td></tr>
+      {{- with .CategoryName}}
+      <tr><th scope="row">Kategorie</th><td>{{.}}</td></tr>
+      {{- end}}
+      <tr><th scope="row">Aufteilung</th><td>{{.SplitMode.Label}}</td></tr>
+      {{- with .Notes}}
+      <tr><th scope="row">Notiz</th><td>{{.}}</td></tr>
+      {{- end}}
+      <tr><th scope="row">Erster Termin</th><td>{{date .Date}}</td></tr>
+    </tbody></table></div>
+  </div>
+  {{- end}}
+  <div class="card-content">
+  {{- if not .Data.Expense}}
+    <p class="muted">Öffne zuerst die Ausgabe, die sich wiederholen soll, und wähle dort „Wiederkehrend machen“.</p>
+    <p><a href="/">Zu den Ausgaben</a></p>
+  {{- else if .Data.Existing}}
+    <p>Diese Ausgabe gehört schon zu einer wiederkehrenden Ausgabe.</p>
+    <p><a href="/einstellungen/wiederkehrend">Zu den wiederkehrenden Ausgaben</a></p>
+  {{- else}}
+    <form class="form" method="post" action="/einstellungen/wiederkehrend/neu">
+      <input type="hidden" name="ausgabe" value="{{.Data.Expense.ID}}">
+      <fieldset class="stack-sm">
+        <legend>Wie oft?</legend>
+        {{- range .Data.Options}}
+        <label class="row">
+          <input type="radio" name="haeufigkeit" value="{{.Value}}" required{{if .Checked}} checked{{end}}>
+          <span>{{.Label}} <span class="muted">– nächster Termin {{date .Next}}
+            {{- if .Missed}}; {{if eq .Missed 1}}1 verpasster Termin wird{{else}}{{.Missed}} verpasste Termine werden{{end}} sofort eingetragen{{end}}</span></span>
+        </label>
+        {{- end}}
+      </fieldset>
+      <div class="row">
+        <button class="btn btn-primary" type="submit">Wiederkehrend machen</button>
+        <a class="btn btn-ghost" href="/ausgaben/{{.Data.Expense.ID}}">Abbrechen</a>
+      </div>
+    </form>
+  {{- end}}
+  </div>
+</section>
+{{end}}

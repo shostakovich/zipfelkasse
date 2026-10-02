@@ -2,9 +2,62 @@
 <section class="card">
   <div class="card-header">
     <h1 class="card-title">Wiederkehrende Ausgaben</h1>
+    <p class="card-description">Eine wiederkehrende Ausgabe legst du bei einer bestehenden Ausgabe über
+      „Wiederkehrend machen“ an. Fällige Termine werden automatisch als Ausgaben eingetragen – auch verpasste.
+      Pausierte Termine werden beim Fortsetzen nicht nachgeholt.</p>
   </div>
   <div class="card-content">
-    <p class="muted">Noch nicht verfügbar.</p>
+    {{- with .Data.Rules}}
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr><th>Ausgabe</th><th>Betrag</th><th>Nächster Termin</th><th><span class="sr-only">Aktionen</span></th></tr>
+        </thead>
+        <tbody>
+        {{- range .}}
+          <tr>
+            <td>
+              <div class="stack-sm">
+                <strong>{{.Template.Title}}</strong>
+                <span class="muted">{{.Frequency.Label}} seit {{date .StartDate}}{{with .PaidByName}} · zahlt {{.}}{{end}}</span>
+              </div>
+            </td>
+            <td class="amount">
+              {{- if eq .Template.OriginalCurrency "EUR"}}{{eur .Template.AmountCents}}
+              {{- else}}{{money .Template.OriginalAmountMinor .Template.OriginalCurrency}}{{end -}}
+            </td>
+            <td>{{if .Active}}{{date .NextDate}}{{else}}<span class="muted">pausiert</span>{{end}}</td>
+            <td>
+              <div class="row">
+                {{- if .Active}}
+                <form method="post" action="/einstellungen/wiederkehrend/{{.ID}}/pausieren">
+                  <button class="btn btn-outline btn-sm" type="submit">Pausieren</button>
+                </form>
+                {{- else}}
+                <form method="post" action="/einstellungen/wiederkehrend/{{.ID}}/fortsetzen">
+                  <button class="btn btn-outline btn-sm" type="submit">Fortsetzen</button>
+                </form>
+                {{- end}}
+                <form method="post" action="/einstellungen/wiederkehrend/{{.ID}}/vorlage">
+                  <button class="btn btn-ghost btn-sm" type="submit" title="Betrag, Aufteilung usw. der zuletzt eingetragenen Ausgabe dieser Wiederholung übernehmen">Vorlage aktualisieren</button>
+                </form>
+                <details>
+                  <summary class="btn btn-ghost btn-sm">Löschen…</summary>
+                  <form class="stack-sm" method="post" action="/einstellungen/wiederkehrend/{{.ID}}/loeschen">
+                    <p class="help">Bereits eingetragene Ausgaben bleiben erhalten.</p>
+                    <button class="btn btn-destructive btn-sm" type="submit">Wiederholung löschen</button>
+                  </form>
+                </details>
+              </div>
+            </td>
+          </tr>
+        {{- end}}
+        </tbody>
+      </table>
+    </div>
+    {{- else}}
+    <p class="muted">Noch keine wiederkehrenden Ausgaben.</p>
+    {{- end}}
   </div>
 </section>
 {{end}}
