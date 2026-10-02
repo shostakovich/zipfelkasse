@@ -302,8 +302,8 @@
         } else {
           rateEl.value = String(r.data.rate).replace(".", ",");
           rateSourceEl.value = r.data.source || "ezb";
-          rateHint.textContent = (r.data.source === "manuell" ? "Hinterlegter manueller Kurs" : "EZB-Referenzkurs") +
-            " vom " + isoToDE(r.data.date) + ". Für den echten Kartenkurs einfach überschreiben.";
+          rateHint.textContent = (r.data.source === "manuell" ? "Manueller Kurs" : "EZB-Kurs") +
+            " vom " + isoToDE(r.data.date) + ".";
         }
         rateReload.hidden = true;
         updatePreview();
