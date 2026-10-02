@@ -100,7 +100,11 @@ func TestRecurringPauseResumeDelete(t *testing.T) {
 		t.Errorf("unknown rule: %v", err)
 	}
 
-	if err := f.s.SetRecurringNextDate(ctx, rid, date("2026-03-23")); err != nil {
+	// next_date only advances from the expected value.
+	if err := f.s.SetRecurringNextDate(ctx, rid, date("2026-03-09"), date("2026-03-23")); !errors.Is(err, ErrRecurringChanged) {
+		t.Errorf("advance from a stale next_date: %v", err)
+	}
+	if err := f.s.SetRecurringNextDate(ctx, rid, date("2026-03-16"), date("2026-03-23")); err != nil {
 		t.Fatal(err)
 	}
 	list, _ := f.s.ListRecurring(ctx)
@@ -108,8 +112,27 @@ func TestRecurringPauseResumeDelete(t *testing.T) {
 		t.Errorf("ListRecurring = %+v", list)
 	}
 
+	// A paused rule neither advances nor gets instances.
+	f.s.SetRecurringActive(ctx, rid, false, date("2026-03-23"))
+	if err := f.s.SetRecurringNextDate(ctx, rid, date("2026-03-23"), date("2026-03-30")); !errors.Is(err, ErrRecurringChanged) {
+		t.Errorf("advance a paused rule: %v", err)
+	}
+	in := f.equal("Kino", 2000, "2026-03-23", f.anna, f.anna, f.ben)
+	in.RecurringID = rid
+	if _, err := f.s.CreateExpense(ctx, 0, in); !errors.Is(err, ErrRecurringChanged) {
+		t.Errorf("instance of a paused rule: %v", err)
+	}
+	f.s.SetRecurringActive(ctx, rid, true, date("2026-03-23"))
+
 	if err := f.s.DeleteRecurring(ctx, f.ben, rid); err != nil {
 		t.Fatal(err)
+	}
+	// A deleted rule: no foreign key error, but ErrRecurringChanged.
+	if _, err := f.s.CreateExpense(ctx, 0, in); !errors.Is(err, ErrRecurringChanged) {
+		t.Errorf("instance of a deleted rule: %v", err)
+	}
+	if err := f.s.SetRecurringNextDate(ctx, rid, date("2026-03-23"), date("2026-03-30")); !errors.Is(err, ErrRecurringChanged) {
+		t.Errorf("advance a deleted rule: %v", err)
 	}
 	if _, err := f.s.GetRecurring(ctx, rid); !errors.Is(err, ErrNotFound) {
 		t.Errorf("after delete: %v", err)

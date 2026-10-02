@@ -50,8 +50,8 @@ func TestOpenMigratesAndSeeds(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
 	v, err := s.SchemaVersion(ctx)
-	if err != nil || v != 2 {
-		t.Fatalf("SchemaVersion = %d, %v; want 2", v, err)
+	if err != nil || v != 3 {
+		t.Fatalf("SchemaVersion = %d, %v; want 3", v, err)
 	}
 	if acts, _ := s.ListActivity(ctx, ActivityFilter{}); len(acts) != 0 {
 		t.Errorf("empty database: activity %+v", acts)
@@ -596,7 +596,7 @@ func TestMigrationResplitsShares(t *testing.T) {
 		if s, err = Open(path); err != nil {
 			t.Fatal(err)
 		}
-		if v, _ := s.SchemaVersion(ctx); v != 2 {
+		if v, _ := s.SchemaVersion(ctx); v != 3 {
 			t.Errorf("round %d: SchemaVersion = %d", round, v)
 		}
 		for _, id := range ids {

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/shostakovich/zipfelkasse/internal/domain"
@@ -165,11 +166,57 @@ func (s *Store) DueRecurring(ctx context.Context, today time.Time) ([]Recurring,
 		formatDate(today))
 }
 
-// SetRecurringNextDate advances the next due occurrence.
-func (s *Store) SetRecurringNextDate(ctx context.Context, id int64, next time.Time) error {
-	res, err := s.db.ExecContext(ctx, "UPDATE recurring SET next_date = ?, updated_at = ? WHERE id = ?",
-		formatDate(next), s.nowString(), id)
-	return checkAffected(res, err)
+// ExpenseDatesLike returns the dates in [from, to] on which a non-deleted
+// expense like in exists: same title, same payer and same amount (for a
+// foreign currency the original amount and currency, since the euro amount
+// depends on the rate; otherwise amount_cents). Recurrences skip such
+// occurrences, e.g. after a rule was deleted (its expenses lose their
+// recurring_id) and created again, or when the expense was entered by hand.
+// The map keys are dates as returned by domain.DateOf.
+func (s *Store) ExpenseDatesLike(ctx context.Context, in ExpenseInput, from, to time.Time) (map[time.Time]bool, error) {
+	q := `SELECT DISTINCT date FROM expenses
+		WHERE deleted_at IS NULL AND date BETWEEN ? AND ? AND title = ? AND paid_by = ? AND original_currency = ?`
+	args := []any{formatDate(from), formatDate(to), strings.Join(strings.Fields(in.Title), " "), in.PaidBy}
+	if cur := strings.ToUpper(strings.TrimSpace(in.OriginalCurrency)); cur == "" || cur == "EUR" {
+		q += " AND amount_cents = ?"
+		args = append(args, "EUR", in.AmountCents)
+	} else {
+		q += " AND original_amount_minor = ?"
+		args = append(args, cur, in.OriginalAmountMinor)
+	}
+	rows, err := s.db.QueryContext(ctx, q, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[time.Time]bool{}
+	for rows.Next() {
+		var d string
+		if err := rows.Scan(&d); err != nil {
+			return nil, err
+		}
+		t, err := parseDate(d)
+		if err != nil {
+			return nil, err
+		}
+		out[domain.DateOf(t)] = true
+	}
+	return out, rows.Err()
+}
+
+// SetRecurringNextDate advances the next due occurrence from `from` to next,
+// but only if the rule is still active and its next_date is still from
+// (optimistic locking: a catch-up works on a snapshot of the rule). Otherwise
+// the rule was paused, resumed, deleted or advanced meanwhile:
+// ErrRecurringChanged.
+func (s *Store) SetRecurringNextDate(ctx context.Context, id int64, from, next time.Time) error {
+	res, err := s.db.ExecContext(ctx,
+		"UPDATE recurring SET next_date = ?, updated_at = ? WHERE id = ? AND active = 1 AND next_date = ?",
+		formatDate(next), s.nowString(), id, formatDate(from))
+	if err = checkAffected(res, err); errors.Is(err, ErrNotFound) {
+		return ErrRecurringChanged
+	}
+	return err
 }
 
 // SetRecurringActive pauses or resumes a recurrence. On resume, occurrences

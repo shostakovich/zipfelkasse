@@ -20,6 +20,13 @@ import (
 // the same case as a domain.ValidationError.
 var ErrRecurringExists = errors.New("expense for this occurrence already exists")
 
+// ErrRecurringChanged: the recurrence was paused, deleted or advanced since
+// it was read. CreateExpense returns it for an instance (RecurringID set) of
+// a paused or deleted recurrence, SetRecurringNextDate if next_date is no
+// longer the expected one; recurring.Materialize then stops catching up on
+// this recurrence.
+var ErrRecurringChanged = errors.New("recurring rule was paused, deleted or advanced meanwhile")
+
 // ExpenseInput is the data of an expense as supplied by the user (or by a
 // recurrence). The store computes the shares in cents itself via
 // domain.Split from SplitMode, AmountCents and Parts.
@@ -194,6 +201,18 @@ func (s *Store) CreateExpense(ctx context.Context, actorID int64, in ExpenseInpu
 	err = s.inTx(ctx, func(tx *sql.Tx) error {
 		if err := checkRefs(ctx, tx, in); err != nil {
 			return err
+		}
+		if in.RecurringID != 0 {
+			// Same transaction as the insert: a recurrence paused or deleted
+			// meanwhile gets no instance (instead of a foreign key error).
+			var active bool
+			err := tx.QueryRowContext(ctx, "SELECT active FROM recurring WHERE id = ?", in.RecurringID).Scan(&active)
+			if errors.Is(err, sql.ErrNoRows) || (err == nil && !active) {
+				return ErrRecurringChanged
+			}
+			if err != nil {
+				return err
+			}
 		}
 		now := s.nowString()
 		res, err := tx.ExecContext(ctx, `INSERT INTO expenses

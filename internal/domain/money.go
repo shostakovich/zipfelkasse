@@ -121,7 +121,9 @@ func parseFixed(s string, decimals int) (int64, error) {
 // occur, the last one is the decimal separator; repeated occurrences of the
 // same kind are thousands separators. A single dot before exactly three
 // digits counts as a thousands separator if dotThousands is set
-// ("17.000" = 17000).
+// ("17.000" = 17000), unless the digits before it are only zeros: then it is
+// a decimal point ("0.856" = 0,856), since no number starts with a zero
+// thousands group.
 func splitNumber(s string, dotThousands bool) (neg bool, intPart, frac string, ok bool) {
 	if s == "" {
 		return false, "", "", false
@@ -171,7 +173,7 @@ func splitNumber(s string, dotThousands bool) (neg bool, intPart, frac string, o
 		// Exactly one separator.
 		pos := max(lastDot, lastComma)
 		after := len(s) - pos - 1
-		if s[pos] == '.' && after == 3 && dotThousands && pos > 0 {
+		if s[pos] == '.' && after == 3 && dotThousands && strings.Trim(s[:pos], "0") != "" {
 			thousands = '.'
 		} else {
 			intPart, frac = s[:pos], s[pos+1:]
@@ -207,8 +209,9 @@ func splitNumber(s string, dotThousands bool) (neg bool, intPart, frac string, o
 // ParseRate parses an exchange rate (units of the currency per 1 €) such as
 // "1,0857", "1.0857", "17000", "17.000,5" or "17,000.5". Separators work as
 // for amounts (ParseMinor): a single dot before exactly three digits is a
-// thousands separator ("17.000" = 17000, "1.085" = 1085), so decimals must be
-// given with a comma or with more/fewer than three digits. Rates ≤ 0 are invalid.
+// thousands separator ("17.000" = 17000, "1.085" = 1085), except after a
+// leading zero ("0.856" = 0,856); otherwise decimals must be given with a
+// comma or with more/fewer than three digits. Rates ≤ 0 are invalid.
 func ParseRate(s string) (float64, error) {
 	s = strings.ReplaceAll(strings.TrimSpace(s), " ", "")
 	s = strings.ReplaceAll(s, " ", "")
