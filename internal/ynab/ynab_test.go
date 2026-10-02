@@ -929,6 +929,73 @@ func TestSyncDeletesAfterFailedPatch(t *testing.T) {
 	}
 }
 
+// A token of another YNAB user does not know the chosen plan: plan and account
+// are reset so that they are chosen anew.
+func TestSaveTokenOfOtherYNABUser(t *testing.T) {
+	e := newEnv(t)
+	e.connect("2026-09-01")
+	// The same YNAB user: the target stays.
+	if rec := e.post("/einstellungen/ynab/token", url.Values{"token": {testToken}}); rec.Code != http.StatusSeeOther {
+		t.Fatalf("token: %d %s", rec.Code, rec.Body)
+	}
+	if cfg, _ := e.st.GetYNABConfig(e.ctx, e.anna); cfg.PlanID != testPlan || cfg.AccountID != testAccount {
+		t.Errorf("same user: cfg = %+v", cfg)
+	}
+	rec := e.post("/einstellungen/ynab/token", url.Values{"token": {otherToken}})
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("token: %d %s", rec.Code, rec.Body)
+	}
+	if msg := flashOf(rec); !strings.Contains(msg, "neu wählen") {
+		t.Errorf("Flash = %q", msg)
+	}
+	cfg, _ := e.st.GetYNABConfig(e.ctx, e.anna)
+	if cfg.Token != otherToken || cfg.PlanID != "" || cfg.AccountID != "" || cfg.Ready() {
+		t.Errorf("other user: cfg = %+v", cfg)
+	}
+}
+
+// If plan or account are unknown to YNAB (e.g. token of another YNAB user),
+// the 404 for single transactions must not be taken as "transaction gone":
+// the run stops, the sync state stays as it is.
+func TestSyncPlanNotAccessible(t *testing.T) {
+	e := newEnv(t)
+	e.connect("2026-09-01")
+	a := e.create(e.input("A", 1000, "2026-09-20", e.anna, e.anna, e.ben))
+	b := e.create(e.input("B", 2000, "2026-09-21", e.anna, e.anna, e.ben))
+	e.mustSync(false)
+	before := e.syncRows()
+	if err := e.st.SetYNABToken(e.ctx, e.anna, otherToken); err != nil {
+		t.Fatal(err)
+	}
+	check := func(step string) {
+		t.Helper()
+		if _, err := e.sync(false); statusOf(err) != http.StatusNotFound {
+			t.Errorf("%s: err = %v", step, err)
+		}
+		if st := e.svc.loadStatus(e.ctx, e.anna); !strings.Contains(st.Error, "Plan oder Konto") {
+			t.Errorf("%s: status = %+v", step, st)
+		}
+		rows := e.syncRows()
+		if rows[a].TxnID != before[a].TxnID || rows[b].TxnID != before[b].TxnID {
+			t.Errorf("%s: rows = %+v", step, rows)
+		}
+	}
+	e.st.DeleteExpense(e.ctx, e.anna, b)
+	check("delete")
+	e.st.UpdateExpense(e.ctx, e.anna, a, e.input("A2", 1000, "2026-09-20", e.anna, e.anna, e.ben))
+	check("update")
+
+	if err := e.st.SetYNABToken(e.ctx, e.anna, testToken); err != nil {
+		t.Fatal(err)
+	}
+	if res := e.mustSync(false); res.Updated != 1 || res.Deleted != 1 || res.Created != 0 {
+		t.Errorf("res = %+v", res)
+	}
+	if live := e.fake.live(); len(live) != 1 || str(live[0].PayeeName) != "A2" {
+		t.Errorf("live = %+v", live)
+	}
+}
+
 // "Jetzt synchronisieren" does not wait for YNAB.
 func TestSyncNowDoesNotBlock(t *testing.T) {
 	e := newEnv(t)

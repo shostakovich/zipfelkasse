@@ -238,7 +238,9 @@ func (s *Service) done(w http.ResponseWriter, r *http.Request, msg string) {
 	http.Redirect(w, r, pagePath, http.StatusSeeOther)
 }
 
-// saveToken checks the token with a request to YNAB and stores it.
+// saveToken checks the token with a request to YNAB and stores it. If the
+// chosen plan is not among the token's plans (token of another YNAB user),
+// plan and account are reset and have to be chosen anew.
 func (s *Service) saveToken(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	me, _ := web.Me(ctx)
@@ -251,7 +253,8 @@ func (s *Service) saveToken(w http.ResponseWriter, r *http.Request) {
 		s.render(w, r, http.StatusUnprocessableEntity, "Das sieht nicht wie ein YNAB-Token aus.", false)
 		return
 	}
-	if _, err := s.plans(ctx, token, true); err != nil {
+	plans, err := s.plans(ctx, token, true)
+	if err != nil {
 		msg := s.apiMessage(err, token)
 		if statusOf(err) == http.StatusUnauthorized {
 			msg = "YNAB kennt diesen Token nicht. Bitte prüfen und neu kopieren."
@@ -260,7 +263,8 @@ func (s *Service) saveToken(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var old store.YNABConfig
-	err := s.changeConnection(func() error {
+	var resetTarget bool
+	err = s.changeConnection(func() error {
 		var err error
 		old, err = s.d.Store.GetYNABConfig(ctx, me.ID)
 		if err != nil && !errors.Is(err, store.ErrNotFound) {
@@ -268,6 +272,12 @@ func (s *Service) saveToken(w http.ResponseWriter, r *http.Request) {
 		}
 		if err := s.d.Store.SetYNABToken(ctx, me.ID, token); err != nil {
 			return err
+		}
+		resetTarget = old.PlanID != "" && !slices.ContainsFunc(plans, func(p apiPlan) bool { return p.ID == old.PlanID })
+		if resetTarget {
+			if err := s.d.Store.SetYNABTarget(ctx, me.ID, "", "", old.StartDate); err != nil {
+				return err
+			}
 		}
 		// new token: reset locks and old errors
 		st := s.loadStatus(ctx, me.ID)
@@ -278,9 +288,14 @@ func (s *Service) saveToken(w http.ResponseWriter, r *http.Request) {
 		s.serverError(w, r, err)
 		return
 	}
-	if old.Token != "" {
+	switch {
+	case resetTarget:
+		s.d.LogSettings(r, "YNAB-Token ersetzt (Plan und Konto zurückgesetzt)")
+		s.done(w, r, "Token gespeichert. Der bisher gewählte Plan ist mit diesem Token nicht erreichbar – bitte Plan und Konto neu wählen.")
+		return
+	case old.Token != "":
 		s.d.LogSettings(r, "YNAB-Token ersetzt")
-	} else {
+	default:
 		s.d.LogSettings(r, "YNAB verbunden (Token gesetzt)")
 	}
 	s.Trigger(0)

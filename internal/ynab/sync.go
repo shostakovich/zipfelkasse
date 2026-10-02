@@ -592,8 +592,10 @@ func (s *Service) updateEach(ctx context.Context, c *client, cfg store.YNABConfi
 				return err
 			}
 		case statusOf(err) == http.StatusNotFound:
-			// The transaction no longer exists in YNAB: create it again. (If
-			// the whole plan is gone, creating then fails with a clear error.)
+			// The transaction no longer exists in YNAB: create it again.
+			if err := s.confirmTarget(ctx, c, cfg); err != nil {
+				return err
+			}
 			succeeded = true
 			res.Again = true
 			if err := s.d.Store.PutYNABSync(ctx, s.row(cfg, w)); err != nil {
@@ -614,7 +616,8 @@ func (s *Service) updateEach(ctx context.Context, c *client, cfg store.YNABConfi
 	return nil
 }
 
-// remove deletes transactions that are gone (one by one; 404 counts as done).
+// remove deletes transactions that are gone (one by one; 404 counts as done
+// if plan and account exist).
 func (s *Service) remove(ctx context.Context, c *client, cfg store.YNABConfig, rows []store.YNABSync, res *syncResult) error {
 	for i, r := range rows {
 		if i >= maxDeletesPerRun {
@@ -622,8 +625,14 @@ func (s *Service) remove(ctx context.Context, c *client, cfg store.YNABConfig, r
 			return nil
 		}
 		err := c.deleteTransaction(ctx, cfg.PlanID, r.TxnID)
+		if statusOf(err) == http.StatusNotFound {
+			if err := s.confirmTarget(ctx, c, cfg); err != nil {
+				return err
+			}
+			err = nil // already deleted in YNAB
+		}
 		switch {
-		case err == nil || statusOf(err) == http.StatusNotFound:
+		case err == nil:
 			res.Deleted++
 			if err := s.d.Store.DeleteYNABSync(ctx, cfg.ParticipantID, r.ExpenseID); err != nil {
 				return err
@@ -638,6 +647,28 @@ func (s *Service) remove(ctx context.Context, c *client, cfg store.YNABConfig, r
 			}
 		}
 	}
+	return nil
+}
+
+// confirmTarget checks – once per run, with one request – that plan and
+// account exist before a 404 for a single transaction is taken as "the
+// transaction is gone". YNAB answers 404 for every transaction as well if the
+// whole plan is gone or invisible to the token (token of another YNAB user);
+// dropping transaction IDs or counting DELETEs as done would then lead to
+// duplicates and leftovers once the setup is corrected. Its error stops the
+// run (404: "Plan oder Konto gibt es nicht").
+func (s *Service) confirmTarget(ctx context.Context, c *client, cfg store.YNABConfig) error {
+	if c.targetOK {
+		return nil
+	}
+	a, err := c.account(ctx, cfg.PlanID, cfg.AccountID)
+	if err == nil && a.Deleted {
+		err = &APIError{Status: http.StatusNotFound, Detail: "Konto gelöscht"}
+	}
+	if err != nil {
+		return err
+	}
+	c.targetOK = true
 	return nil
 }
 
