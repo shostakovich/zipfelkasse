@@ -27,13 +27,14 @@ func serverInfo() map[string]any {
 
 // instructionsText explains the server to the model (initialize,
 // server/discover); instructions() appends today's date.
-const instructionsText = `Zipfelkasse manages the shared expenses of a single group (like Splitwise/Spliit). All tools are read-only.
+const instructionsText = `Zipfelkasse manages the shared expenses of a single group (like Splitwise/Spliit). All tools are read-only except create_expense and create_reimbursement, which add entries (nothing can be changed or deleted via MCP).
 Amounts are in euros. Every amount in a result appears twice: as text with a dot as decimal separator and no thousands separator ("1234.56") and as an integer in cents (field ending in _cents).
 Balance: positive = is owed money by the others, negative = owes money.
 Reimbursements are settlement payments between two people, not expenses; they count for balances, not for expense statistics.
 Dates use the format YYYY-MM-DD. Refer to people and categories by name (case-insensitive). Names, titles, categories and notes are stored as entered (often in German).
 How to proceed: balances and settlement → balances; their development over time → balance_history. Finding individual expenses → search_expenses. Totals by category, merchant, period or person, also compared with the previous year → statistics. Who changed what when → activity.
-Anything else → read schema first, then sql_query (SQLite, SELECT only).`
+Anything else → read schema first, then sql_query (SQLite, SELECT only).
+Entering an expense → create_expense; a settlement payment between two people → create_reimbursement. Confirm unclear details with the user first and report what was created.`
 
 // categoryHint explains the category value for expenses without a category.
 const categoryHint = `Use "` + noCategoryArg + `" for expenses without a category (statistics labels them "` + store.NoCategory + `").`
@@ -280,6 +281,7 @@ func newServer(d web.Deps) *server {
 			"additionalProperties": false,
 		},
 		s.sqlQuery)
+	s.registerWriteTools(dateProp)
 	return s
 }
 

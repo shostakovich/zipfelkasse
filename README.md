@@ -22,7 +22,7 @@ One group, no login ("Wer bist du?" – who are you?), SQLite, a single binary.
 - Recurring expenses, activity log, search
 - Foreign currencies with ECB reference rates (or a manual rate)
 - Export as CSV/JSON/OFX, optional sync to [YNAB](https://www.ynab.com/)
-- Read-only MCP server for asking an AI about your expenses: [docs/MCP.md](docs/MCP.md)
+- MCP server for asking an AI about your expenses and letting it enter new ones: [docs/MCP.md](docs/MCP.md)
 - Installable as a PWA, works on desktop and phone
 
 ## Quick start
