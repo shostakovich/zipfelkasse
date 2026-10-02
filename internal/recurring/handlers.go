@@ -35,11 +35,6 @@ func (s *Service) Register(mux *http.ServeMux) {
 
 const listPath = "/einstellungen/wiederkehrend"
 
-func (s *Service) serverError(w http.ResponseWriter, r *http.Request, err error) {
-	s.d.Log.Error("request", "method", r.Method, "path", r.URL.Path, "err", err)
-	s.d.Render.Error(w, r, http.StatusInternalServerError, "Da ist etwas schiefgegangen.")
-}
-
 func (s *Service) notFound(w http.ResponseWriter, r *http.Request) {
 	s.d.Render.Error(w, r, http.StatusNotFound, "Wiederkehrende Ausgabe nicht gefunden.")
 }
@@ -66,12 +61,12 @@ func (s *Service) handleList(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	rules, err := s.d.Store.ListRecurring(ctx)
 	if err != nil {
-		s.serverError(w, r, err)
+		s.d.ServerError(w, r, err)
 		return
 	}
 	names, err := s.participantNames(r)
 	if err != nil {
-		s.serverError(w, r, err)
+		s.d.ServerError(w, r, err)
 		return
 	}
 	data := listData{Rules: make([]ruleRow, len(rules))}
@@ -122,7 +117,7 @@ func (s *Service) handleSetActive(active bool) http.HandlerFunc {
 			s.notFound(w, r)
 			return
 		case err != nil:
-			s.serverError(w, r, err)
+			s.d.ServerError(w, r, err)
 			return
 		}
 		msg := "Pausiert."
@@ -158,7 +153,7 @@ func (s *Service) handleRefreshTemplate(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	if err != nil {
-		s.serverError(w, r, err)
+		s.d.ServerError(w, r, err)
 		return
 	}
 	err = s.d.Store.UpdateRecurringTemplateFromLatest(r.Context(), id)
@@ -166,7 +161,7 @@ func (s *Service) handleRefreshTemplate(w http.ResponseWriter, r *http.Request) 
 	case errors.Is(err, store.ErrNotFound):
 		web.SetFlash(w, "Es gibt keine Ausgabe dieser Wiederholung mehr, aus der die Vorlage übernommen werden könnte.")
 	case err != nil:
-		s.serverError(w, r, err)
+		s.d.ServerError(w, r, err)
 		return
 	default:
 		s.d.LogSettings(r, ruleLabel(rule)+": Vorlage aus der letzten Ausgabe übernommen")
@@ -187,7 +182,7 @@ func (s *Service) handleDelete(w http.ResponseWriter, r *http.Request) {
 		s.notFound(w, r)
 		return
 	case err != nil:
-		s.serverError(w, r, err)
+		s.d.ServerError(w, r, err)
 		return
 	}
 	web.SetFlash(w, "Wiederholung gelöscht. Bereits angelegte Ausgaben bleiben erhalten.")
@@ -290,7 +285,7 @@ func (s *Service) loadExpense(w http.ResponseWriter, r *http.Request) (store.Exp
 		return e, false
 	}
 	if err != nil {
-		s.serverError(w, r, err)
+		s.d.ServerError(w, r, err)
 		return e, false
 	}
 	return e, true
@@ -307,7 +302,7 @@ func (s *Service) handleNew(w http.ResponseWriter, r *http.Request) {
 	}
 	data, err := s.newData(r.Context(), e, domain.FreqMonthly)
 	if err != nil {
-		s.serverError(w, r, err)
+		s.d.ServerError(w, r, err)
 		return
 	}
 	s.renderNew(w, r, http.StatusOK, data, "")
@@ -325,7 +320,7 @@ func (s *Service) handleCreate(w http.ResponseWriter, r *http.Request) {
 	case errors.As(err, &ve):
 		data, err := s.newData(r.Context(), e, freq)
 		if err != nil {
-			s.serverError(w, r, err)
+			s.d.ServerError(w, r, err)
 			return
 		}
 		s.renderNew(w, r, http.StatusUnprocessableEntity, data, ve.Msg)
@@ -334,7 +329,7 @@ func (s *Service) handleCreate(w http.ResponseWriter, r *http.Request) {
 		s.d.Render.Error(w, r, http.StatusNotFound, "Ausgabe nicht gefunden.")
 		return
 	case err != nil:
-		s.serverError(w, r, err)
+		s.d.ServerError(w, r, err)
 		return
 	}
 	msg := fmt.Sprintf("„%s“ wiederholt sich jetzt %s.", e.Title, adverb(freq))

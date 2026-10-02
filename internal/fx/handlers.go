@@ -155,15 +155,10 @@ func (s *Service) renderPage(w http.ResponseWriter, r *http.Request, status int,
 		data.Currencies, err = st.ListFXCurrencies(ctx)
 	}
 	if err != nil {
-		s.serverError(w, r, err)
+		s.d.ServerError(w, r, err)
 		return
 	}
 	s.pages.Render(w, r, status, "kurse.html", web.Page{Title: "Wechselkurse", Nav: web.NavSettings, Error: errMsg, Data: data})
-}
-
-func (s *Service) serverError(w http.ResponseWriter, r *http.Request, err error) {
-	s.d.Log.Error("request", "method", r.Method, "path", r.URL.Path, "err", err)
-	s.d.Render.Error(w, r, http.StatusInternalServerError, "Da ist etwas schiefgegangen.")
 }
 
 func (s *Service) handlePage(w http.ResponseWriter, r *http.Request) {
@@ -196,7 +191,7 @@ func (s *Service) handleSaveManual(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err != nil {
-		s.serverError(w, r, err)
+		s.d.ServerError(w, r, err)
 		return
 	}
 	s.d.LogSettings(r, logText)
@@ -216,7 +211,7 @@ func (s *Service) handleDeleteManual(w http.ResponseWriter, r *http.Request) {
 		s.renderPage(w, r, http.StatusNotFound, manualForm{}, "Diesen manuellen Kurs gibt es nicht (mehr).")
 		return
 	case err != nil:
-		s.serverError(w, r, err)
+		s.d.ServerError(w, r, err)
 		return
 	}
 	s.d.LogSettings(r, fmt.Sprintf("Manueller Kurs für %s ab %s gelöscht", cur, domain.FormatDate(date)))
@@ -232,7 +227,7 @@ func (s *Service) handleRefresh(w http.ResponseWriter, r *http.Request) {
 		s.renderPage(w, r, http.StatusBadGateway, manualForm{}, fe.Error())
 		return
 	case err != nil:
-		s.serverError(w, r, err)
+		s.d.ServerError(w, r, err)
 		return
 	}
 	web.SetFlash(w, "EZB-Kurse aktualisiert (Stand "+domain.FormatDate(latest)+").")

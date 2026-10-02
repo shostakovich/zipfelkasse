@@ -52,7 +52,7 @@ func (h handlers) activity(w http.ResponseWriter, r *http.Request) {
 	before := formID(r.URL.Query().Get("vor"))
 	acts, err := h.d.Store.ListActivity(r.Context(), store.ActivityFilter{BeforeID: before, Limit: activityPageSize + 1})
 	if err != nil {
-		h.serverError(w, r, err)
+		h.d.ServerError(w, r, err)
 		return
 	}
 	var data activityData

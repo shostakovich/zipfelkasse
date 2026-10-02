@@ -70,22 +70,22 @@ func (h handlers) home(w http.ResponseWriter, r *http.Request) {
 		Text: f.Text, CategoryID: f.CategoryID, ParticipantID: f.ParticipantID, Limit: limit + 1,
 	})
 	if err != nil {
-		h.serverError(w, r, err)
+		h.d.ServerError(w, r, err)
 		return
 	}
 	balances, err := h.d.Store.Balances(ctx)
 	if err != nil {
-		h.serverError(w, r, err)
+		h.d.ServerError(w, r, err)
 		return
 	}
 	people, err := h.d.Store.ListParticipants(ctx, true)
 	if err != nil {
-		h.serverError(w, r, err)
+		h.d.ServerError(w, r, err)
 		return
 	}
 	cats, err := h.d.Store.ListCategories(ctx, true)
 	if err != nil {
-		h.serverError(w, r, err)
+		h.d.ServerError(w, r, err)
 		return
 	}
 	data := homeData{Balance: balances[me.ID], Today: h.d.Today(), Filter: f}
@@ -551,18 +551,18 @@ func (h handlers) renderExpense(w http.ResponseWriter, r *http.Request, status i
 	ctx := r.Context()
 	cats, err := h.d.Store.ListCategories(ctx, true)
 	if err != nil {
-		h.serverError(w, r, err)
+		h.d.ServerError(w, r, err)
 		return
 	}
 	people, err := h.d.Store.ListParticipants(ctx, true)
 	if err != nil {
-		h.serverError(w, r, err)
+		h.d.ServerError(w, r, err)
 		return
 	}
 	p := expensePage{Form: f, Expense: e, Currencies: commonCurrencies, SplitModes: domain.SplitModes, Rotation: f.ID}
 	if p.Rotation == 0 {
 		if p.Rotation, err = h.d.Store.NextExpenseID(ctx); err != nil {
-			h.serverError(w, r, err)
+			h.d.ServerError(w, r, err)
 			return
 		}
 	}
@@ -573,12 +573,12 @@ func (h handlers) renderExpense(w http.ResponseWriter, r *http.Request, status i
 	}
 	hist, err := h.d.Store.CategoryHistory(ctx)
 	if err != nil {
-		h.serverError(w, r, err)
+		h.d.ServerError(w, r, err)
 		return
 	}
 	suggest, err := json.Marshal(suggestCategories(hist))
 	if err != nil {
-		h.serverError(w, r, err)
+		h.d.ServerError(w, r, err)
 		return
 	}
 	p.Suggest = string(suggest)
@@ -592,7 +592,7 @@ func (h handlers) renderExpense(w http.ResponseWriter, r *http.Request, status i
 		title = e.Title
 		acts, err := h.d.Store.ListActivity(ctx, store.ActivityFilter{ExpenseID: e.ID, Limit: 50})
 		if err != nil {
-			h.serverError(w, r, err)
+			h.d.ServerError(w, r, err)
 			return
 		}
 		p.History = activityItems(acts)
@@ -603,7 +603,7 @@ func (h handlers) renderExpense(w http.ResponseWriter, r *http.Request, status i
 func (h handlers) expenseNew(w http.ResponseWriter, r *http.Request) {
 	people, err := h.d.Store.ListParticipants(r.Context(), true)
 	if err != nil {
-		h.serverError(w, r, err)
+		h.d.ServerError(w, r, err)
 		return
 	}
 	f := newExpenseForm(r.URL.Query(), h.d.Today(), me(r).ID, people)
@@ -621,7 +621,7 @@ func (h handlers) expenseShow(w http.ResponseWriter, r *http.Request) {
 	}
 	people, err := h.d.Store.ListParticipants(r.Context(), true)
 	if err != nil {
-		h.serverError(w, r, err)
+		h.d.ServerError(w, r, err)
 		return
 	}
 	h.renderExpense(w, r, http.StatusOK, formFromExpense(e, people), &e, "")
@@ -648,7 +648,7 @@ func (h handlers) saveExpense(w http.ResponseWriter, r *http.Request, existing *
 	}
 	people, err := h.d.Store.ListParticipants(ctx, true)
 	if err != nil {
-		h.serverError(w, r, err)
+		h.d.ServerError(w, r, err)
 		return
 	}
 	var id int64
@@ -673,7 +673,7 @@ func (h handlers) saveExpense(w http.ResponseWriter, r *http.Request, existing *
 		return
 	}
 	if err != nil {
-		h.serverError(w, r, err)
+		h.d.ServerError(w, r, err)
 		return
 	}
 	kind := "Ausgabe"
@@ -699,7 +699,7 @@ func (h handlers) expenseDelete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err != nil {
-		h.serverError(w, r, err)
+		h.d.ServerError(w, r, err)
 		return
 	}
 	SetFlash(w, fmt.Sprintf("„%s“ gelöscht.", e.Title))
@@ -720,7 +720,7 @@ func (h handlers) loadExpense(w http.ResponseWriter, r *http.Request) (store.Exp
 		return e, false
 	}
 	if err != nil {
-		h.serverError(w, r, err)
+		h.d.ServerError(w, r, err)
 		return e, false
 	}
 	return e, true

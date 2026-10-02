@@ -90,7 +90,7 @@ func (s *Service) render(w http.ResponseWriter, r *http.Request, status int, err
 	me, _ := web.Me(ctx)
 	cfg, err := s.d.Store.GetYNABConfig(ctx, me.ID)
 	if err != nil && !errors.Is(err, store.ErrNotFound) {
-		s.serverError(w, r, err)
+		s.d.ServerError(w, r, err)
 		return
 	}
 	data := pageData{TokenSet: cfg.Token != "", StartDate: cfg.StartDate, Ready: cfg.Ready(), HasTarget: cfg.AccountID != ""}
@@ -103,12 +103,12 @@ func (s *Service) render(w http.ResponseWriter, r *http.Request, status int, err
 		data.RetryAt = data.Status.RetryAt
 	}
 	if data.Synced, data.Problems, err = s.d.Store.YNABSyncSummary(ctx, me.ID); err != nil {
-		s.serverError(w, r, err)
+		s.d.ServerError(w, r, err)
 		return
 	}
 	balances, err := s.d.Store.Balances(ctx)
 	if err != nil {
-		s.serverError(w, r, err)
+		s.d.ServerError(w, r, err)
 		return
 	}
 	data.Balance = balances[me.ID]
@@ -129,7 +129,7 @@ func (s *Service) render(w http.ResponseWriter, r *http.Request, status int, err
 	}
 	if data.HasTarget {
 		if data.Categories, err = s.categoryRows(r, me.ID, data.Groups); err != nil {
-			s.serverError(w, r, err)
+			s.d.ServerError(w, r, err)
 			return
 		}
 	}
@@ -228,11 +228,6 @@ func (s *Service) apiMessage(err error, token string) string {
 	return "YNAB ist gerade nicht erreichbar: " + redact(err.Error(), token)
 }
 
-func (s *Service) serverError(w http.ResponseWriter, r *http.Request, err error) {
-	s.d.Log.Error("request", "method", r.Method, "path", r.URL.Path, "err", err)
-	s.d.Render.Error(w, r, http.StatusInternalServerError, "Da ist etwas schiefgegangen.")
-}
-
 func (s *Service) done(w http.ResponseWriter, r *http.Request, msg string) {
 	web.SetFlash(w, msg)
 	http.Redirect(w, r, pagePath, http.StatusSeeOther)
@@ -285,7 +280,7 @@ func (s *Service) saveToken(w http.ResponseWriter, r *http.Request) {
 		return s.saveStatus(ctx, me.ID, st)
 	})
 	if err != nil {
-		s.serverError(w, r, err)
+		s.d.ServerError(w, r, err)
 		return
 	}
 	switch {
@@ -305,7 +300,7 @@ func (s *Service) saveToken(w http.ResponseWriter, r *http.Request) {
 func (s *Service) disconnect(w http.ResponseWriter, r *http.Request) {
 	me, _ := web.Me(r.Context())
 	if err := s.changeConnection(func() error { return s.d.Store.SetYNABToken(r.Context(), me.ID, "") }); err != nil {
-		s.serverError(w, r, err)
+		s.d.ServerError(w, r, err)
 		return
 	}
 	s.d.LogSettings(r, "YNAB-Verbindung getrennt")
@@ -321,7 +316,7 @@ func (s *Service) saveTarget(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err != nil {
-		s.serverError(w, r, err)
+		s.d.ServerError(w, r, err)
 		return
 	}
 	planID, accountID, _ := strings.Cut(r.FormValue("ziel"), "|")
@@ -342,7 +337,7 @@ func (s *Service) saveTarget(w http.ResponseWriter, r *http.Request) {
 	if err := s.changeConnection(func() error {
 		return s.d.Store.SetYNABTarget(ctx, me.ID, planID, accountID, start)
 	}); err != nil {
-		s.serverError(w, r, err)
+		s.d.ServerError(w, r, err)
 		return
 	}
 	switch {
@@ -390,7 +385,7 @@ func (s *Service) saveCategories(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err != nil {
-		s.serverError(w, r, err)
+		s.d.ServerError(w, r, err)
 		return
 	}
 	groups, err := s.categories(ctx, cfg.Token, cfg.PlanID, false)
@@ -401,7 +396,7 @@ func (s *Service) saveCategories(w http.ResponseWriter, r *http.Request) {
 	known := knownCategories(usableGroups(groups))
 	old, err := s.d.Store.YNABCategoryMap(ctx, me.ID)
 	if err != nil {
-		s.serverError(w, r, err)
+		s.d.ServerError(w, r, err)
 		return
 	}
 	if err := r.ParseForm(); err != nil {
@@ -434,7 +429,7 @@ func (s *Service) saveCategories(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err != nil {
-		s.serverError(w, r, err)
+		s.d.ServerError(w, r, err)
 		return
 	}
 	if text, err := s.mappingChanges(r, old, m, groups); err != nil {
@@ -488,7 +483,7 @@ func (s *Service) syncNow(w http.ResponseWriter, r *http.Request) {
 	me, _ := web.Me(r.Context())
 	cfg, err := s.d.Store.GetYNABConfig(r.Context(), me.ID)
 	if err != nil && !errors.Is(err, store.ErrNotFound) {
-		s.serverError(w, r, err)
+		s.d.ServerError(w, r, err)
 		return
 	}
 	if !cfg.Ready() {

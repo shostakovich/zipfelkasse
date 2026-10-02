@@ -34,7 +34,7 @@ func (h handlers) settingsSave(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err != nil {
-		h.serverError(w, r, err)
+		h.d.ServerError(w, r, err)
 		return
 	}
 	if n := h.d.Store.GroupName(r.Context()); n != old {
@@ -65,17 +65,17 @@ func (h handlers) renderParticipants(w http.ResponseWriter, r *http.Request, sta
 	ctx := r.Context()
 	people, err := h.d.Store.ListParticipants(ctx, true)
 	if err != nil {
-		h.serverError(w, r, err)
+		h.d.ServerError(w, r, err)
 		return
 	}
 	balances, err := h.d.Store.Balances(ctx)
 	if err != nil {
-		h.serverError(w, r, err)
+		h.d.ServerError(w, r, err)
 		return
 	}
 	counts, err := h.d.Store.ExpenseCountByParticipant(ctx)
 	if err != nil {
-		h.serverError(w, r, err)
+		h.d.ServerError(w, r, err)
 		return
 	}
 	data := participantsData{Name: name}
@@ -98,7 +98,7 @@ func (h handlers) participantCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err != nil {
-		h.serverError(w, r, err)
+		h.d.ServerError(w, r, err)
 		return
 	}
 	p, _ := h.d.Store.GetParticipant(r.Context(), id)
@@ -118,7 +118,7 @@ func (h handlers) participantRename(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err != nil {
-		h.serverError(w, r, err)
+		h.d.ServerError(w, r, err)
 		return
 	}
 	p, _ := h.d.Store.GetParticipant(r.Context(), old.ID)
@@ -147,7 +147,7 @@ func (h handlers) participantArchive(archive bool) http.HandlerFunc {
 			return
 		}
 		if err != nil {
-			h.serverError(w, r, err)
+			h.d.ServerError(w, r, err)
 			return
 		}
 		verb := "archiviert"
@@ -167,7 +167,7 @@ func (h handlers) loadParticipant(w http.ResponseWriter, r *http.Request) (store
 		return p, false
 	}
 	if err != nil {
-		h.serverError(w, r, err)
+		h.d.ServerError(w, r, err)
 		return p, false
 	}
 	return p, true
@@ -194,12 +194,12 @@ func (h handlers) renderCategories(w http.ResponseWriter, r *http.Request, statu
 	ctx := r.Context()
 	cats, err := h.d.Store.ListCategories(ctx, true)
 	if err != nil {
-		h.serverError(w, r, err)
+		h.d.ServerError(w, r, err)
 		return
 	}
 	counts, err := h.d.Store.ExpenseCountByCategory(ctx)
 	if err != nil {
-		h.serverError(w, r, err)
+		h.d.ServerError(w, r, err)
 		return
 	}
 	data := categoriesData{Name: name}
@@ -225,7 +225,7 @@ func (h handlers) categoryCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err != nil {
-		h.serverError(w, r, err)
+		h.d.ServerError(w, r, err)
 		return
 	}
 	c, _ := h.d.Store.GetCategory(r.Context(), id)
@@ -245,7 +245,7 @@ func (h handlers) categoryRename(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err != nil {
-		h.serverError(w, r, err)
+		h.d.ServerError(w, r, err)
 		return
 	}
 	c, _ := h.d.Store.GetCategory(r.Context(), old.ID)
@@ -263,7 +263,7 @@ func (h handlers) categoryArchive(archive bool) http.HandlerFunc {
 			return
 		}
 		if err := h.d.Store.SetCategoryArchived(r.Context(), c.ID, archive); err != nil {
-			h.serverError(w, r, err)
+			h.d.ServerError(w, r, err)
 			return
 		}
 		verb := "archiviert"
@@ -288,7 +288,7 @@ func (h handlers) categoryMove(up bool) http.HandlerFunc {
 			return
 		}
 		if err != nil {
-			h.serverError(w, r, err)
+			h.d.ServerError(w, r, err)
 			return
 		}
 		dir := "unten"
@@ -307,7 +307,7 @@ func (h handlers) loadCategory(w http.ResponseWriter, r *http.Request) (store.Ca
 		return c, false
 	}
 	if err != nil {
-		h.serverError(w, r, err)
+		h.d.ServerError(w, r, err)
 		return c, false
 	}
 	return c, true

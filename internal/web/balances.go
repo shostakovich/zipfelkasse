@@ -32,12 +32,12 @@ func (h handlers) balances(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	balances, err := h.d.Store.Balances(ctx)
 	if err != nil {
-		h.serverError(w, r, err)
+		h.d.ServerError(w, r, err)
 		return
 	}
 	people, err := h.d.Store.ListParticipants(ctx, true)
 	if err != nil {
-		h.serverError(w, r, err)
+		h.d.ServerError(w, r, err)
 		return
 	}
 	byID := map[int64]store.Participant{}
