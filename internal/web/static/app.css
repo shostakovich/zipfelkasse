@@ -443,6 +443,8 @@ a.activity-item:hover { background: hsl(var(--accent)); }
 @media (min-width: 40rem) { .fx-box { grid-template-columns: 1fr 1fr; } }
 .fx-preview { font-size: 0.875rem; }
 .fx-preview strong { font-size: 1rem; font-variant-numeric: tabular-nums; }
+/* as high as the rate input next to it, so that both amounts are level */
+.fx-preview p { display: flex; align-items: center; min-height: 2.625rem; }
 
 /* --- Lists in the settings ------------------------------------------------ */
 
