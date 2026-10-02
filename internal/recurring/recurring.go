@@ -60,8 +60,10 @@ func (s *Service) today() time.Time {
 
 // Materialize creates all instances due up to and including today (at most
 // maxInstancesPerRun per rule) and returns their count. Repeated calls create
-// no duplicates (unique index on recurring_id, date). An error in one rule
-// does not stop the others; all errors are returned together.
+// no duplicates (unique index on recurring_id, date); occurrences for which
+// an equal expense already exists are skipped (Store.ExpenseDatesLike). An
+// error in one rule does not stop the others; all errors are returned
+// together.
 func (s *Service) Materialize(ctx context.Context, today time.Time) (int, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -89,6 +91,10 @@ func (s *Service) materializeRule(ctx context.Context, r store.Recurring, today 
 	if !r.Frequency.Valid() {
 		return 0, fmt.Errorf("unknown frequency %q", r.Frequency)
 	}
+	existing, err := s.d.Store.ExpenseDatesLike(ctx, r.Template, r.NextDate, today)
+	if err != nil {
+		return 0, err
+	}
 	n := 0
 	for i, d := 0, r.NextDate; !d.After(today); i++ {
 		if i == maxInstancesPerRun {
@@ -96,18 +102,12 @@ func (s *Service) materializeRule(ctx context.Context, r store.Recurring, today 
 				"rule", r.ID, "next_date", d.Format(domain.DateLayout), "limit", maxInstancesPerRun)
 			break
 		}
-		in, err := s.instance(ctx, r, d)
+		created, err := s.createOccurrence(ctx, r, d, existing[d])
 		if err != nil {
 			return n, err // next_date stays: the next run retries this occurrence
 		}
-		_, err = s.d.Store.CreateExpense(ctx, 0, in)
-		switch {
-		case err == nil:
+		if created {
 			n++
-		case errors.Is(err, store.ErrRecurringExists):
-			// already exists (e.g. after a crash before advancing next_date)
-		default:
-			return n, err
 		}
 		next := domain.NextDate(r.Frequency, r.StartDate, d)
 		if err := s.d.Store.SetRecurringNextDate(ctx, r.ID, next); err != nil {
@@ -116,6 +116,27 @@ func (s *Service) materializeRule(ctx context.Context, r store.Recurring, today 
 		d = next
 	}
 	return n, nil
+}
+
+// createOccurrence creates the instance of rule r for date d and reports
+// whether it did. It creates none if the occurrence already exists (e.g.
+// after a crash before advancing next_date) or if exists is set: an equal
+// expense was entered by hand or by a deleted rule (Store.ExpenseDatesLike).
+func (s *Service) createOccurrence(ctx context.Context, r store.Recurring, d time.Time, exists bool) (bool, error) {
+	if exists {
+		s.d.Log.Info("recurring expense: an equal expense already exists, skipping the occurrence",
+			"rule", r.ID, "date", d.Format(domain.DateLayout))
+		return false, nil
+	}
+	in, err := s.instance(ctx, r, d)
+	if err != nil {
+		return false, err
+	}
+	_, err = s.d.Store.CreateExpense(ctx, 0, in)
+	if errors.Is(err, store.ErrRecurringExists) {
+		return false, nil
+	}
+	return err == nil, err
 }
 
 // instance builds the expense for the occurrence date from the template. For

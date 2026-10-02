@@ -459,3 +459,101 @@ func TestMaterializeCapPerRun(t *testing.T) {
 		t.Errorf("%d instances", n)
 	}
 }
+
+// titled returns the dates of all non-deleted expenses with this title, in
+// ascending order.
+func (e *env) titled(title string) string {
+	e.t.Helper()
+	all, err := e.st.ListExpenses(e.ctx, store.ExpenseFilter{})
+	if err != nil {
+		e.t.Fatal(err)
+	}
+	var ds []string
+	for i := len(all) - 1; i >= 0; i-- {
+		if all[i].Title == title {
+			ds = append(ds, all[i].Date.Format(domain.DateLayout))
+		}
+	}
+	return strings.Join(ds, " ")
+}
+
+// Catching up skips occurrences for which an expense with the same title,
+// amount and payer already exists, e.g. entered by hand or created by a
+// deleted rule; next_date advances past them as usual.
+func TestMaterializeSkipsExistingExpenses(t *testing.T) {
+	e := newEnv(t)
+	rid, _ := e.rule(e.expense("Miete", "2026-01-31", 100000), domain.FreqMonthly)
+	byHand := []store.ExpenseInput{
+		e.expense("Miete", "2026-02-28", 100000),  // duplicate → skipped
+		e.expense("Miete", "2026-03-31", 99999),   // different amount
+		e.expense("Mieten", "2026-03-31", 100000), // different title
+	}
+	otherPayer := e.expense("Miete", "2026-03-31", 100000)
+	otherPayer.PaidBy = e.ben.ID
+	deleted := e.expense("Miete", "2026-04-30", 100000)
+	byHand = append(byHand, otherPayer, deleted)
+	for i, in := range byHand {
+		id, err := e.st.CreateExpense(e.ctx, e.anna.ID, in)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if i == len(byHand)-1 {
+			if err := e.st.DeleteExpense(e.ctx, e.anna.ID, id); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	e.materialize("2026-05-15", 2)
+	if got := e.dates(rid); got != "2026-01-31 2026-03-31 2026-04-30" {
+		t.Errorf("occurrences = %s", got)
+	}
+	if got := e.next(rid); got != "2026-05-31" {
+		t.Errorf("next_date = %s", got)
+	}
+}
+
+// For a foreign currency, the original amount and currency count (the euro
+// amount depends on the rate).
+func TestMaterializeSkipsExistingForeignExpenses(t *testing.T) {
+	e := newEnv(t)
+	e.fx.rates["USD"] = 1.25
+	in := e.expense("Cloud", "2026-01-05", 9091)
+	in.OriginalCurrency, in.OriginalAmountMinor, in.FXRate, in.FXSource = "USD", 10000, 1.1, domain.FXSourceECB
+	rid, _ := e.rule(in, domain.FreqMonthly)
+	dup := in
+	dup.Date, dup.AmountCents, dup.FXRate = day("2026-02-05"), 9000, 1.111
+	if _, err := e.st.CreateExpense(e.ctx, e.anna.ID, dup); err != nil {
+		t.Fatal(err)
+	}
+	e.materialize("2026-03-05", 1)
+	if got := e.dates(rid); got != "2026-01-05 2026-03-05" {
+		t.Errorf("occurrences = %s", got)
+	}
+	if len(e.fx.calls) != 1 {
+		t.Errorf("rates requested for %v, want only 2026-03-05", e.fx.calls)
+	}
+}
+
+// Deleting a rule and creating it again from the same expense does not enter
+// the occurrences of the old rule a second time; the preview says so.
+func TestRecreateRuleSkipsExistingOccurrences(t *testing.T) {
+	e := newEnv(t)
+	rid, eid := e.rule(e.expense("Miete", "2026-01-31", 100000), domain.FreqMonthly)
+	e.materialize("2026-05-15", 3)
+	if err := e.st.DeleteRecurring(e.ctx, e.anna.ID, rid); err != nil {
+		t.Fatal(err)
+	}
+	sid := strconv.FormatInt(eid, 10)
+	rec := e.do("GET", "/einstellungen/wiederkehrend/neu?ausgabe="+sid, nil)
+	if body := rec.Body.String(); !strings.Contains(body, "5 verpasste Termine werden sofort eingetragen") ||
+		!strings.Contains(body, "3 bereits als Ausgabe vorhandene Termine werden übersprungen") {
+		t.Errorf("preview: %s", body)
+	}
+	rec = e.do("POST", "/einstellungen/wiederkehrend/neu", url.Values{"ausgabe": {sid}, "haeufigkeit": {"monthly"}})
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("create: %d %s", rec.Code, rec.Body)
+	}
+	if got := e.titled("Miete"); got != "2026-01-31 2026-02-28 2026-03-31 2026-04-30 2026-05-31 2026-06-30 2026-07-31 2026-08-31 2026-09-30" {
+		t.Errorf("expenses = %s", got)
+	}
+}

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/shostakovich/zipfelkasse/internal/domain"
@@ -163,6 +164,44 @@ func (s *Store) ListRecurring(ctx context.Context) ([]Recurring, error) {
 func (s *Store) DueRecurring(ctx context.Context, today time.Time) ([]Recurring, error) {
 	return s.queryRecurring(ctx, "SELECT "+recurringCols+" FROM recurring WHERE active = 1 AND next_date <= ? ORDER BY next_date, id",
 		formatDate(today))
+}
+
+// ExpenseDatesLike returns the dates in [from, to] on which a non-deleted
+// expense like in exists: same title, same payer and same amount (for a
+// foreign currency the original amount and currency, since the euro amount
+// depends on the rate; otherwise amount_cents). Recurrences skip such
+// occurrences, e.g. after a rule was deleted (its expenses lose their
+// recurring_id) and created again, or when the expense was entered by hand.
+// The map keys are dates as returned by domain.DateOf.
+func (s *Store) ExpenseDatesLike(ctx context.Context, in ExpenseInput, from, to time.Time) (map[time.Time]bool, error) {
+	q := `SELECT DISTINCT date FROM expenses
+		WHERE deleted_at IS NULL AND date BETWEEN ? AND ? AND title = ? AND paid_by = ? AND original_currency = ?`
+	args := []any{formatDate(from), formatDate(to), strings.Join(strings.Fields(in.Title), " "), in.PaidBy}
+	if cur := strings.ToUpper(strings.TrimSpace(in.OriginalCurrency)); cur == "" || cur == "EUR" {
+		q += " AND amount_cents = ?"
+		args = append(args, "EUR", in.AmountCents)
+	} else {
+		q += " AND original_amount_minor = ?"
+		args = append(args, cur, in.OriginalAmountMinor)
+	}
+	rows, err := s.db.QueryContext(ctx, q, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[time.Time]bool{}
+	for rows.Next() {
+		var d string
+		if err := rows.Scan(&d); err != nil {
+			return nil, err
+		}
+		t, err := parseDate(d)
+		if err != nil {
+			return nil, err
+		}
+		out[domain.DateOf(t)] = true
+	}
+	return out, rows.Err()
 }
 
 // SetRecurringNextDate advances the next due occurrence.

@@ -1,6 +1,7 @@
 package recurring
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net/http"
@@ -194,11 +195,30 @@ func (s *Service) handleDelete(w http.ResponseWriter, r *http.Request) {
 // --- New ---------------------------------------------------------------------
 
 type freqOption struct {
-	Value   domain.Frequency
-	Label   string
-	Next    time.Time // first occurrence after the template
-	Missed  int       // occurrences up to today that are created right away
-	Checked bool
+	Value    domain.Frequency
+	Label    string
+	Next     time.Time // first occurrence after the template
+	Missed   int       // occurrences up to today that are caught up right away
+	Existing int       // of these, occurrences skipped as an equal expense exists
+	Checked  bool
+}
+
+// Note describes what happens to the missed occurrences, e.g. "3 verpasste
+// Termine werden sofort eingetragen; 1 bereits als Ausgabe vorhandener Termin
+// wird übersprungen"; "" if there are none.
+func (o freqOption) Note() string {
+	var parts []string
+	if n := o.Missed - o.Existing; n == 1 {
+		parts = append(parts, "1 verpasster Termin wird sofort eingetragen")
+	} else if n > 1 {
+		parts = append(parts, fmt.Sprintf("%d verpasste Termine werden sofort eingetragen", n))
+	}
+	if o.Existing == 1 {
+		parts = append(parts, "1 bereits als Ausgabe vorhandener Termin wird übersprungen")
+	} else if o.Existing > 1 {
+		parts = append(parts, fmt.Sprintf("%d bereits als Ausgabe vorhandene Termine werden übersprungen", o.Existing))
+	}
+	return strings.Join(parts, "; ")
 }
 
 type newData struct {
@@ -210,17 +230,28 @@ type newData struct {
 // maxMissedCount caps counting missed occurrences for the preview.
 const maxMissedCount = 1000
 
-func (s *Service) newData(e store.Expense, selected domain.Frequency) newData {
+func (s *Service) newData(ctx context.Context, e store.Expense, selected domain.Frequency) (newData, error) {
 	today := s.today()
 	data := newData{Expense: &e, Existing: e.RecurringID}
+	var existing map[time.Time]bool
+	if e.Date.Before(today) {
+		var err error
+		existing, err = s.d.Store.ExpenseDatesLike(ctx, e.ExpenseInput, e.Date.AddDate(0, 0, 1), today)
+		if err != nil {
+			return data, err
+		}
+	}
 	for _, f := range domain.Frequencies {
 		o := freqOption{Value: f, Label: f.Label(), Next: domain.NextDate(f, e.Date, e.Date), Checked: f == selected}
 		for d := o.Next; !d.After(today) && o.Missed < maxMissedCount; d = domain.NextDate(f, e.Date, d) {
 			o.Missed++
+			if existing[d] {
+				o.Existing++
+			}
 		}
 		data.Options = append(data.Options, o)
 	}
-	return data
+	return data, nil
 }
 
 func (s *Service) renderNew(w http.ResponseWriter, r *http.Request, status int, data newData, errMsg string) {
@@ -258,7 +289,12 @@ func (s *Service) handleNew(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	s.renderNew(w, r, http.StatusOK, s.newData(e, domain.FreqMonthly), "")
+	data, err := s.newData(r.Context(), e, domain.FreqMonthly)
+	if err != nil {
+		s.serverError(w, r, err)
+		return
+	}
+	s.renderNew(w, r, http.StatusOK, data, "")
 }
 
 func (s *Service) handleCreate(w http.ResponseWriter, r *http.Request) {
@@ -271,7 +307,12 @@ func (s *Service) handleCreate(w http.ResponseWriter, r *http.Request) {
 	var ve domain.ValidationError
 	switch {
 	case errors.As(err, &ve):
-		s.renderNew(w, r, http.StatusUnprocessableEntity, s.newData(e, freq), ve.Msg)
+		data, err := s.newData(r.Context(), e, freq)
+		if err != nil {
+			s.serverError(w, r, err)
+			return
+		}
+		s.renderNew(w, r, http.StatusUnprocessableEntity, data, ve.Msg)
 		return
 	case errors.Is(err, store.ErrNotFound):
 		s.d.Render.Error(w, r, http.StatusNotFound, "Ausgabe nicht gefunden.")

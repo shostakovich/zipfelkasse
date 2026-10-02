@@ -41,8 +41,7 @@
         {{- range .Data.Options}}
         <label class="row">
           <input type="radio" name="haeufigkeit" value="{{.Value}}" required{{if .Checked}} checked{{end}}>
-          <span>{{.Label}} <span class="muted">– nächster Termin {{date .Next}}
-            {{- if .Missed}}; {{if eq .Missed 1}}1 verpasster Termin wird{{else}}{{.Missed}} verpasste Termine werden{{end}} sofort eingetragen{{end}}</span></span>
+          <span>{{.Label}} <span class="muted">– nächster Termin {{date .Next}}{{with .Note}}; {{.}}{{end}}</span></span>
         </label>
         {{- end}}
       </fieldset>
