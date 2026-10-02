@@ -15,19 +15,19 @@ import (
 	"github.com/shostakovich/zipfelkasse/internal/store"
 )
 
-// --- Startseite: Ausgabenliste ---------------------------------------------
+// --- Home page: expense list ------------------------------------------------
 
-// homePageSize ist die Zahl der Ausgaben pro „Weitere anzeigen“-Schritt.
+// homePageSize is the number of expenses per "Weitere anzeigen" (show more) step.
 const homePageSize = 100
 
 type homeData struct {
-	Balance      int64 // eigener Saldo (Cent)
+	Balance      int64 // own balance (cents)
 	Today        time.Time
 	Groups       []expenseGroup
 	Filter       homeFilter
 	Categories   []store.Category
 	Participants []store.Participant
-	More         string // URL für weitere Ausgaben, "" = alle angezeigt
+	More         string // URL for more expenses, "" = all shown
 }
 
 type homeFilter struct {
@@ -38,19 +38,19 @@ type homeFilter struct {
 
 func (f homeFilter) Active() bool { return f.Text != "" || f.CategoryID != 0 || f.ParticipantID != 0 }
 
-// expenseGroup sind die Ausgaben eines Zeitraums („Diese Woche“, …).
+// expenseGroup holds the expenses of a period ("Diese Woche", …).
 type expenseGroup struct {
 	Label string
 	Rows  []expenseRow
 }
 
-// expenseRow ist eine Zeile der Ausgabenliste.
+// expenseRow is a row of the expense list.
 type expenseRow struct {
 	store.Expense
-	ForNames  []string // Namen der Beteiligten
-	Everyone  bool     // alle (aktiven) Personen beteiligt, ab 4 Personen
-	Involved  bool     // die aktuelle Person zahlt oder ist beteiligt
-	MyBalance int64    // Auswirkung auf den eigenen Saldo
+	ForNames  []string // names of the participants involved
+	Everyone  bool     // all (active) people involved, from 4 people on
+	Involved  bool     // the current person pays or is involved
+	MyBalance int64    // effect on one's own balance
 }
 
 func (h handlers) home(w http.ResponseWriter, r *http.Request) {
@@ -89,7 +89,7 @@ func (h handlers) home(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	data := homeData{Balance: balances[me.ID], Today: h.d.Today(), Filter: f}
-	// Filter-Auswahl: aktive Einträge plus den gerade gewählten (auch archiviert).
+	// Filter options: active entries plus the currently selected one (even if archived).
 	for _, c := range cats {
 		if !c.Archived() || c.ID == f.CategoryID {
 			data.Categories = append(data.Categories, c)
@@ -125,8 +125,8 @@ func (h handlers) home(w http.ResponseWriter, r *http.Request) {
 	h.d.Render.Page(w, r, http.StatusOK, "home.html", Page{Title: "Ausgaben", Nav: NavExpenses, Data: data})
 }
 
-// groupExpenses teilt die (nach Datum absteigend sortierten) Ausgaben in
-// Zeiträume und bereitet die Zeilen auf.
+// groupExpenses splits the expenses (sorted by date, descending) into periods
+// and prepares the rows.
 func groupExpenses(es []store.Expense, today time.Time, meID int64, names map[int64]string, activeCount int) []expenseGroup {
 	var groups []expenseGroup
 	last := -1
@@ -153,43 +153,43 @@ func groupExpenses(es []store.Expense, today time.Time, meID int64, names map[in
 	return groups
 }
 
-// --- Formular ------------------------------------------------------------------
+// --- Form ----------------------------------------------------------------------
 
-// commonCurrencies stehen im Formular zur Auswahl; andere ISO-Codes sind über
-// „Andere …“ möglich.
+// commonCurrencies are offered in the form; other ISO codes are possible via
+// "Andere …" (other).
 var commonCurrencies = []string{"EUR", "USD", "GBP", "CHF", "DKK", "SEK", "NOK", "PLN", "CZK", "HUF", "TRY", "JPY", "CAD", "AUD"}
 
-// expenseForm enthält die Formularwerte als Text, damit sie nach einem
-// Fehler genau so wieder angezeigt werden, wie sie eingegeben wurden.
+// expenseForm holds the form values as text, so that after an error they are
+// shown again exactly as they were entered.
 type expenseForm struct {
-	ID              int64 // 0 = neue Ausgabe
+	ID              int64 // 0 = new expense
 	Title           string
 	Date            string // YYYY-MM-DD
 	Category        int64
-	Currency        string // aus commonCurrencies, "" = andere
+	Currency        string // from commonCurrencies, "" = other
 	CurrencyOther   string
-	Amount          string // in der gewählten Währung
-	Rate            string // Fremdwährung pro 1 EUR
+	Amount          string // in the selected currency
+	Rate            string // foreign currency per 1 EUR
 	RateSource      string // domain.FXSource*
 	PaidBy          int64
 	Notes           string
 	IsReimbursement bool
 	SplitMode       domain.SplitMode
 	Rows            []splitRow
-	EURCents        int64 // umgerechneter Betrag (Anzeige), 0 = unbekannt
+	EURCents        int64 // converted amount (display), 0 = unknown
 }
 
-// splitRow ist eine Person in der Aufteilung.
+// splitRow is a person in the split.
 type splitRow struct {
 	ID       int64
 	Name     string
 	Archived bool
 	Checked  bool
-	Value    string // Anteile / Prozent / Betrag, je nach Modus
-	Cents    int64  // berechneter Anteil (nur bei gespeicherten Ausgaben)
+	Value    string // shares / percent / amount, depending on the mode
+	Cents    int64  // computed share (only for saved expenses)
 }
 
-// CurrencyCode ist die effektiv gewählte Währung.
+// CurrencyCode is the effectively selected currency.
 func (f expenseForm) CurrencyCode() string {
 	c := f.Currency
 	if c == "" {
@@ -206,16 +206,16 @@ func (f expenseForm) Foreign() bool { return f.CurrencyCode() != "EUR" }
 
 type expensePage struct {
 	Form       expenseForm
-	Expense    *store.Expense // nil bei neuer Ausgabe
+	Expense    *store.Expense // nil for a new expense
 	Categories []store.Category
 	Payers     []store.Participant
 	Currencies []string
 	SplitModes []domain.SplitMode
 	History    []activityItem
-	Rotation   int64 // Ausgaben-ID (bei neuen die voraussichtliche) für die Cent-Verteilung der Vorschau
+	Rotation   int64 // expense ID (the expected one for new expenses) for the cent distribution of the preview
 }
 
-// formFromExpense füllt das Formular aus einer gespeicherten Ausgabe.
+// formFromExpense fills the form from a saved expense.
 func formFromExpense(e store.Expense, people []store.Participant) expenseForm {
 	f := expenseForm{
 		ID: e.ID, Title: e.Title, Date: e.Date.Format(domain.DateLayout), Category: e.CategoryID,
@@ -234,8 +234,8 @@ func formFromExpense(e store.Expense, people []store.Participant) expenseForm {
 	} else {
 		f.Amount = domain.FormatCentsInput(e.AmountCents)
 	}
-	// Bei „Nach Beträgen“ in Fremdwährung stehen im Formular Beträge in der
-	// Fremdwährung; gespeichert sind Euro-Cent → proportional zurückrechnen.
+	// For "by amounts" in a foreign currency, the form holds amounts in the
+	// foreign currency; euro cents are stored → convert back proportionally.
 	var origWeights []int64
 	if e.IsForeign() && e.SplitMode == domain.SplitAmount {
 		w := make([]int64, len(e.Shares))
@@ -275,9 +275,9 @@ func formFromExpense(e store.Expense, people []store.Participant) expenseForm {
 	return f
 }
 
-// newExpenseForm liefert das leere Formular (alle aktiven Personen
-// beteiligt, ich habe bezahlt) bzw. eine vorbefüllte Rückzahlung
-// (?rueckzahlung=1&von=ID&an=ID&betrag=Cent, wie Spliits „Als bezahlt markieren“).
+// newExpenseForm returns the empty form (all active people involved, I paid)
+// or a prefilled reimbursement (?rueckzahlung=1&von=ID&an=ID&betrag=cents, like
+// Spliit's "mark as paid").
 func newExpenseForm(q url.Values, today time.Time, meID int64, people []store.Participant) expenseForm {
 	f := expenseForm{
 		Date: today.Format(domain.DateLayout), Currency: "EUR", PaidBy: meID, SplitMode: domain.SplitEqual,
@@ -306,8 +306,8 @@ func newExpenseForm(q url.Values, today time.Time, meID int64, people []store.Pa
 	return f
 }
 
-// readExpenseForm liest die Formularwerte (ohne Prüfung). people sind alle
-// Personen inkl. archivierter; angezeigt werden aktive und angekreuzte.
+// readExpenseForm reads the form values (without validation). people are all
+// people including archived ones; active and checked ones are shown.
 func readExpenseForm(r *http.Request, id int64, people []store.Participant, existing *store.Expense) expenseForm {
 	f := expenseForm{
 		ID:              id,
@@ -352,9 +352,9 @@ func readExpenseForm(r *http.Request, id int64, people []store.Participant, exis
 	return f
 }
 
-// toInput prüft das Formular und baut daraus die Eingabe für den Store.
-// Fehler sind domain.ValidationError mit deutscher Meldung. Fehlt bei
-// Fremdwährung der Kurs, wird er über d.FX geholt und ins Formular übernommen.
+// toInput validates the form and builds the store input from it. Errors are
+// domain.ValidationError with a German message. If the rate is missing for a
+// foreign currency, it is fetched via d.FX and copied into the form.
 func (h handlers) toInput(r *http.Request, f *expenseForm) (store.ExpenseInput, error) {
 	in := store.ExpenseInput{
 		Title: f.Title, CategoryID: f.Category, PaidBy: f.PaidBy, Notes: f.Notes,
@@ -412,7 +412,7 @@ func (h handlers) toInput(r *http.Request, f *expenseForm) (store.ExpenseInput, 
 		return in, invalidf("Der Betrag muss größer als 0 sein.")
 	}
 
-	// Aufteilung.
+	// Split.
 	var rows []splitRow
 	for _, row := range f.Rows {
 		if row.Checked {
@@ -477,9 +477,8 @@ func (h handlers) toInput(r *http.Request, f *expenseForm) (store.ExpenseInput, 
 			return in, invalidf("Die Beträge müssen zusammen %s ergeben (aktuell %s).",
 				domain.FormatMoney(in.OriginalAmountMinor, cur), domain.FormatMoney(origSum, cur))
 		}
-		// Nach ID sortieren: Gleichstand beim Rest → kleinere ID, wie in
-		// domain.Split und in der JS-Vorschau (unabhängig von der
-		// Reihenfolge im Formular).
+		// Sort by ID: a tie in the remainder → smaller ID, as in domain.Split
+		// and in the JS preview (independent of the order in the form).
 		slices.SortFunc(in.Parts, func(a, b domain.Part) int { return cmp.Compare(a.ParticipantID, b.ParticipantID) })
 		w := make([]int64, len(in.Parts))
 		for i, p := range in.Parts {
@@ -492,7 +491,7 @@ func (h handlers) toInput(r *http.Request, f *expenseForm) (store.ExpenseInput, 
 	return in, nil
 }
 
-// lookupRate holt den Kurs über d.FX (kann in Tests nil sein).
+// lookupRate fetches the rate via d.FX (may be nil in tests).
 func (h handlers) lookupRate(r *http.Request, cur string, date time.Time) (domain.FXRate, error) {
 	msg := fmt.Sprintf("Für %s ist am %s kein Wechselkurs verfügbar. Kurs bitte von Hand eintragen.", cur, domain.FormatDate(date))
 	if h.d.FX == nil {
@@ -501,7 +500,7 @@ func (h handlers) lookupRate(r *http.Request, cur string, date time.Time) (domai
 	rate, err := h.d.FX.Rate(r.Context(), cur, date)
 	if err != nil || rate.Rate <= 0 {
 		if err != nil {
-			h.d.Log.Info("kurs nicht verfügbar", "waehrung", cur, "datum", date.Format(domain.DateLayout), "err", err)
+			h.d.Log.Info("rate not available", "currency", cur, "date", date.Format(domain.DateLayout), "err", err)
 		}
 		return domain.FXRate{}, invalidf("%s", msg)
 	}
@@ -527,7 +526,7 @@ func invalidf(format string, args ...any) error {
 	return domain.ValidationError{Msg: fmt.Sprintf(format, args...)}
 }
 
-// renderExpense rendert das Formular (neu oder bearbeiten).
+// renderExpense renders the form (new or edit).
 func (h handlers) renderExpense(w http.ResponseWriter, r *http.Request, status int, f expenseForm, e *store.Expense, errMsg string) {
 	ctx := r.Context()
 	cats, err := h.d.Store.ListCategories(ctx, true)
@@ -609,7 +608,7 @@ func (h handlers) expenseUpdate(w http.ResponseWriter, r *http.Request) {
 	h.saveExpense(w, r, &e)
 }
 
-// saveExpense legt eine Ausgabe an (existing == nil) oder ändert sie.
+// saveExpense creates an expense (existing == nil) or updates it.
 func (h handlers) saveExpense(w http.ResponseWriter, r *http.Request, existing *store.Expense) {
 	ctx := r.Context()
 	if err := r.ParseForm(); err != nil {
@@ -676,8 +675,8 @@ func (h handlers) expenseDelete(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "/", http.StatusSeeOther)
 }
 
-// loadExpense lädt die Ausgabe aus dem Pfad (auch gelöschte); bei Fehler ist
-// die Antwort schon geschrieben.
+// loadExpense loads the expense from the path (deleted ones too); on error the
+// response has already been written.
 func (h handlers) loadExpense(w http.ResponseWriter, r *http.Request) (store.Expense, bool) {
 	id := pathID(r)
 	if id == 0 {

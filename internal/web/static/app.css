@@ -1,10 +1,10 @@
-/* Zipfelkasse – Optik nach Spliit (shadcn/ui-Komponenten, Tailwind-Klassen in
-   schlankes CSS übersetzt). Design-Tokens als HSL-Komponenten: hsl(var(--token)).
-   Mobil zuerst; ab 40rem (Tailwind „sm“) mehr Luft und Desktop-Varianten.
-   Feature-Pakete nutzen nur die im Plan genannten Klassen. */
+/* Zipfelkasse: look modeled on Spliit (shadcn/ui components, Tailwind classes
+   translated into lean CSS). Design tokens as HSL components: hsl(var(--token)).
+   Mobile first; from 40rem (Tailwind "sm") more room and desktop variants.
+   Feature packages only use the classes named in the plan. */
 
 :root {
-  /* Farben wie Spliit (globals.css), hell */
+  /* Colors as in Spliit (globals.css), light */
   --background: 0 0% 100%;
   --foreground: 240 10% 3.9%;
   --card: 0 0% 100%;
@@ -26,19 +26,19 @@
   --input: 240 5.9% 90%;
   --ring: 142.1 76.2% 36.3%;
   --radius: 0.5rem;
-  /* Salden (Tailwind green-600 / red-600) */
+  /* Balances (Tailwind green-600 / red-600) */
   --positive: 142 76% 36%;
   --negative: 0 72% 51%;
-  /* Saldenbalken (green-200/300, red-200/300) */
+  /* Balance bars (green-200/300, red-200/300) */
   --bar-positive: 141 79% 85%;
   --bar-positive-border: 141 76% 73%;
   --bar-negative: 0 96% 89%;
   --bar-negative-border: 0 94% 82%;
-  /* Seitenhintergrund (Spliit: slate-50 mit wenig Deckkraft) */
+  /* Page background (Spliit: slate-50 with low opacity) */
   --page: 210 40% 99%;
 
   --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
-  --touch: 2.75rem; /* Mindesthöhe für Touch-Ziele */
+  --touch: 2.75rem; /* minimum height for touch targets */
   color-scheme: light;
 }
 
@@ -76,7 +76,7 @@
   }
 }
 
-/* --- Basis ---------------------------------------------------------------- */
+/* --- Base ----------------------------------------------------------------- */
 
 *, *::before, *::after { box-sizing: border-box; border: 0 solid hsl(var(--border)); }
 
@@ -112,9 +112,9 @@ a { color: inherit; text-underline-offset: 4px; }
 .main { padding-block: 1rem 6rem; }
 @media (min-width: 40rem) { .main { padding-block: 1.5rem 3rem; } }
 
-/* --- Layout: Gruppen-Header + Tabs (Spliit group-header / group-tabs) ------ */
+/* --- Layout: group header + tabs (Spliit group-header / group-tabs) -------- */
 
-/* Abstand zur Notch, wenn die App installiert (standalone) läuft. */
+/* Distance to the notch when the app runs installed (standalone). */
 .site-header { padding-top: env(safe-area-inset-top); }
 .site-header-inner {
   display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between;
@@ -150,7 +150,7 @@ a { color: inherit; text-underline-offset: 4px; }
   .tabs a .icon { width: 1rem; height: 1rem; }
 }
 
-/* --- Karten (shadcn Card) ------------------------------------------------- */
+/* --- Cards (shadcn Card) -------------------------------------------------- */
 
 .card {
   background: hsl(var(--card)); color: hsl(var(--card-foreground));
@@ -169,11 +169,11 @@ a { color: inherit; text-underline-offset: 4px; }
   .card-footer { padding: 0 1.5rem 1.5rem; }
 }
 
-/* Kopfzeile mit Aktionen rechts (Spliit: CardHeader flex-row). */
+/* Header row with actions on the right (Spliit: CardHeader flex-row). */
 .card-header-row { flex-direction: row; align-items: flex-start; justify-content: space-between; gap: 1rem; }
 .card-header-row > div { display: flex; flex-direction: column; gap: 0.375rem; min-width: 0; }
 
-/* Liste randlos auf dem Handy (Spliit: rounded-none -mx-4 border-x-0 sm:…). */
+/* Edge-to-edge list on phones (Spliit: rounded-none -mx-4 border-x-0 sm:…). */
 @media (max-width: 39.99rem) {
   .card-bleed { margin-inline: -1rem; border-radius: 0; border-left-width: 0; border-right-width: 0; }
 }
@@ -208,7 +208,7 @@ a { color: inherit; text-underline-offset: 4px; }
 .btn-icon { width: 2.5rem; min-height: 2.5rem; padding: 0; }
 .btn-icon.btn-sm { width: 2.25rem; min-height: 2.25rem; }
 
-/* Schwebender „+“-Knopf auf dem Handy (Daumenreichweite). */
+/* Floating "+" button on phones (within thumb reach). */
 .fab {
   position: fixed; z-index: 30;
   right: calc(1rem + env(safe-area-inset-right));
@@ -226,7 +226,7 @@ a { color: inherit; text-underline-offset: 4px; }
   .desktop-only { display: inline-flex; }
 }
 
-/* --- Formulare (shadcn Form/Input/Select) --------------------------------- */
+/* --- Forms (shadcn Form/Input/Select) ------------------------------------- */
 
 .form { display: flex; flex-direction: column; gap: 1rem; }
 .field { display: flex; flex-direction: column; gap: 0.5rem; min-width: 0; }
@@ -243,7 +243,7 @@ input:not([type="checkbox"], [type="radio"], [type="hidden"]), select, textarea 
   display: block; width: 100%; min-height: 2.5rem; padding: 0.5rem 0.75rem;
   border-width: 1px; border-color: hsl(var(--input)); border-radius: calc(var(--radius) - 2px);
   background: hsl(var(--background)); color: hsl(var(--foreground));
-  font: inherit; font-size: 1rem; /* 16px verhindert Zoom auf iOS */
+  font: inherit; font-size: 1rem; /* 16px prevents zooming on iOS */
 }
 input:disabled, select:disabled, textarea:disabled { opacity: 0.5; cursor: not-allowed; }
 input[type="date"] { min-height: 2.5rem; -webkit-appearance: none; appearance: none; }
@@ -260,10 +260,10 @@ input[type="checkbox"], input[type="radio"] {
 .field-error { font-size: 0.875rem; font-weight: 500; color: hsl(var(--destructive)); }
 .help { font-size: 0.8125rem; color: hsl(var(--muted-foreground)); }
 
-/* Checkbox mit Beschriftung, ganze Zeile anklickbar. */
+/* Checkbox with label, the whole row is clickable. */
 .check { display: flex; align-items: center; gap: 0.625rem; min-height: var(--touch); cursor: pointer; font-weight: 400; }
 
-/* Eingabe mit Einheit rechts („12,34 €“, „USD“, „%“). */
+/* Input with a unit on the right ("12,34 €", "USD", "%"). */
 .input-unit { display: flex; align-items: center; gap: 0.5rem; }
 .input-unit input { flex: 1; min-width: 0; }
 .input-unit .unit { font-size: 0.875rem; color: hsl(var(--muted-foreground)); white-space: nowrap; }
@@ -271,7 +271,7 @@ input[type="checkbox"], input[type="radio"] {
 .actions { display: flex; flex-direction: column; gap: 0.5rem; }
 @media (min-width: 40rem) { .actions { flex-direction: row; align-items: center; } }
 
-/* Inline-Formular (z. B. Umbenennen in einer Listenzeile). */
+/* Inline form (e.g. renaming in a list row). */
 .inline-form { display: flex; gap: 0.5rem; align-items: center; flex: 1; min-width: 0; }
 .inline-form input { flex: 1; min-width: 0; }
 
@@ -282,11 +282,11 @@ details.disclosure > summary {
 details.disclosure > summary::-webkit-details-marker { display: none; }
 details.disclosure > summary:hover { text-decoration: underline; }
 
-/* <summary> als Knopf (z. B. Rückfrage vor dem Löschen). */
+/* <summary> as a button (e.g. confirmation before deleting). */
 summary.btn { list-style: none; }
 summary.btn::-webkit-details-marker { display: none; }
 
-/* --- Suche (Spliit search-bar) -------------------------------------------- */
+/* --- Search (Spliit search-bar) ------------------------------------------- */
 
 .search { display: flex; flex-direction: column; gap: 0.5rem; padding: 0 1rem 0.5rem; }
 @media (min-width: 40rem) { .search { padding-inline: 1.5rem; } }
@@ -302,7 +302,7 @@ summary.btn::-webkit-details-marker { display: none; }
   .search-filters .btn { grid-column: auto; }
 }
 
-/* --- Ausgabenliste (Spliit expense-list / expense-card) ------------------- */
+/* --- Expense list (Spliit expense-list / expense-card) -------------------- */
 
 .list-group-label {
   position: sticky; top: 0; z-index: 2;
@@ -329,7 +329,7 @@ summary.btn::-webkit-details-marker { display: none; }
 .expense-sub { font-size: 0.75rem; color: hsl(var(--muted-foreground)); font-variant-numeric: tabular-nums; white-space: nowrap; }
 .expense-chevron { display: none; align-self: center; color: hsl(var(--muted-foreground)); }
 @media (min-width: 40rem) { .expense-chevron { display: block; } }
-/* Rückzahlungen kursiv und nicht fett (wie Spliit). */
+/* Reimbursements in italics and not bold (as in Spliit). */
 .expense.reimbursement .expense-title, .expense.reimbursement .expense-amount { font-style: italic; }
 .expense.reimbursement .expense-amount { font-weight: 400; }
 
@@ -337,11 +337,11 @@ summary.btn::-webkit-details-marker { display: none; }
 @media (min-width: 40rem) { .empty { padding-inline: 1.5rem; } }
 .list-more { display: flex; justify-content: center; padding: 0.5rem 1rem 0; }
 
-/* Eigener Saldo oben auf der Startseite. */
+/* Own balance at the top of the home page. */
 .my-balance { display: flex; align-items: center; justify-content: space-between; gap: 1rem; flex-wrap: wrap; }
 .my-balance-amount { font-size: 1.5rem; font-weight: 700; letter-spacing: -0.025em; font-variant-numeric: tabular-nums; }
 
-/* --- Salden (Spliit balances-list / reimbursement-list) ------------------- */
+/* --- Balances (Spliit balances-list / reimbursement-list) ----------------- */
 
 .balances { font-size: 0.875rem; }
 .balance-row { display: flex; min-height: 2.25rem; }
@@ -374,7 +374,7 @@ summary.btn::-webkit-details-marker { display: none; }
   .transfer-main { flex-direction: row; align-items: baseline; gap: 1rem; }
 }
 
-/* --- Aktivität (Spliit activity-list / activity-item) --------------------- */
+/* --- Activity (Spliit activity-list / activity-item) ---------------------- */
 
 .activity-item {
   display: flex; align-items: flex-start; gap: 0.75rem;
@@ -392,7 +392,7 @@ a.activity-item:hover { background: hsl(var(--accent)); }
 .changes del { text-decoration: line-through; opacity: 0.8; }
 .changes ins { text-decoration: none; color: hsl(var(--foreground)); }
 
-/* --- Aufteilung im Formular (Spliit „Gezahlt für“) ------------------------ */
+/* --- Split in the form (Spliit "Paid for") -------------------------------- */
 
 .split-head { display: flex; align-items: center; justify-content: space-between; gap: 1rem; }
 .split-rows { margin: 0.75rem -1rem 0; }
@@ -411,7 +411,7 @@ a.activity-item:hover { background: hsl(var(--accent)); }
 .split-sum { margin-top: 0.75rem; font-size: 0.875rem; }
 .split-sum.bad { color: hsl(var(--destructive)); font-weight: 500; }
 
-/* Ohne JS gesteuert über :has() – mit JS zusätzlich über hidden. */
+/* Without JS controlled via :has(); with JS additionally via hidden. */
 .expense-form:has(#aufteilung option[value="equal"]:checked) .split-weight { display: none; }
 .expense-form:has(#rueckzahlung:checked) .not-reimbursement { display: none; }
 .expense-form:has(#waehrung option[value="EUR"]:checked) .fx-only { display: none; }
@@ -424,12 +424,12 @@ a.activity-item:hover { background: hsl(var(--accent)); }
 .fx-preview { font-size: 0.875rem; }
 .fx-preview strong { font-size: 1rem; font-variant-numeric: tabular-nums; }
 
-/* --- Listen in den Einstellungen ------------------------------------------ */
+/* --- Lists in the settings ------------------------------------------------ */
 
 .rows { list-style: none; margin: 0; padding: 0; }
 .rows > li { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; padding-block: 0.5rem; }
 .rows > li + li { border-top-width: 1px; }
-/* Handy: Zeile 1 Name + Speichern, Zeile 2 Infos + Aktionen; ab „sm“ eine Zeile. */
+/* Phone: row 1 name + save, row 2 info + actions; from "sm" on a single row. */
 .rows > li > .inline-form { flex: 1 1 calc(100% - 2.5rem); }
 .row-meta { flex: 1 1 auto; order: 1; font-size: 0.75rem; color: hsl(var(--muted-foreground)); }
 .rows > li > .row-actions, .rows > li > form:not(.inline-form) { order: 2; }
@@ -439,7 +439,7 @@ a.activity-item:hover { background: hsl(var(--accent)); }
   .row-meta { order: 3; flex-basis: 100%; }
 }
 
-/* --- Tabellen ------------------------------------------------------------- */
+/* --- Tables --------------------------------------------------------------- */
 
 .table-wrap { width: 100%; overflow-x: auto; }
 table { width: 100%; border-collapse: collapse; font-size: 0.875rem; }
@@ -448,7 +448,7 @@ td { padding: 0.5rem; }
 tr { border-bottom-width: 1px; }
 tbody tr:last-child { border-bottom-width: 0; }
 
-/* --- Meldungen, Badges, Listen, Helfer ------------------------------------ */
+/* --- Messages, badges, lists, helpers ------------------------------------- */
 
 .alert {
   margin-bottom: 1rem; padding: 0.75rem 1rem;

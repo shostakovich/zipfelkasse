@@ -11,25 +11,25 @@ import (
 	"github.com/shostakovich/zipfelkasse/internal/store"
 )
 
-// IdentityCookie enthält die ID der Person, die man ist. Keine Anmeldung:
-// Wer die App öffnen kann, darf jede Person wählen.
+// IdentityCookie holds the ID of the person you are. No login: whoever can
+// open the app may pick any person.
 const IdentityCookie = "wer"
 
 type meKey struct{}
 
-// Me liefert die aktuell gewählte Person aus dem Request-Context. Hinter der
-// Identitäts-Middleware ist sie auf allen nicht-öffentlichen Pfaden gesetzt.
+// Me returns the currently selected person from the request context. Behind
+// the identity middleware it is set on all non-public paths.
 func Me(ctx context.Context) (store.Participant, bool) {
 	p, ok := ctx.Value(meKey{}).(store.Participant)
 	return p, ok
 }
 
-// WithMe setzt die Person im Context (für Tests anderer Pakete).
+// WithMe sets the person in the context (for tests of other packages).
 func WithMe(ctx context.Context, p store.Participant) context.Context {
 	return context.WithValue(ctx, meKey{}, p)
 }
 
-// SetIdentity setzt das Cookie für Person id (1 Jahr gültig).
+// SetIdentity sets the cookie for person id (valid for 1 year).
 func SetIdentity(w http.ResponseWriter, r *http.Request, id int64) {
 	http.SetCookie(w, &http.Cookie{
 		Name:     IdentityCookie,
@@ -42,7 +42,7 @@ func SetIdentity(w http.ResponseWriter, r *http.Request, id int64) {
 	})
 }
 
-// isPublic: Pfade, die ohne gewählte Person erreichbar sind.
+// isPublic reports paths that are reachable without a selected person.
 func isPublic(p string) bool {
 	switch p {
 	case "/wer", "/wer/neu", "/healthz", "/manifest.webmanifest", "/sw.js", "/favicon.ico":
@@ -51,8 +51,8 @@ func isPublic(p string) bool {
 	return strings.HasPrefix(p, "/static/") || strings.HasPrefix(p, "/mcp/")
 }
 
-// identity liest das Cookie, legt die Person in den Context und schickt
-// Besucher ohne (gültige) Person auf /wer. /api/… bekommt stattdessen 401.
+// identity reads the cookie, puts the person into the context and sends
+// visitors without a (valid) person to /wer. /api/… gets a 401 instead.
 func identity(st *store.Store, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if c, err := r.Cookie(IdentityCookie); err == nil {
@@ -79,10 +79,10 @@ func identity(st *store.Store, next http.Handler) http.Handler {
 	})
 }
 
-// safeReturn lässt nur lokale Pfade als Rücksprungziel zu. Abgelehnt werden
-// Steuerzeichen und Backslashes (Browser entfernen Tabs/Zeilenumbrüche bzw.
-// lesen „\“ als „/“, aus „/\t/evil“ würde so „//evil“), alles mit Scheme
-// oder Host und Pfade, die – auch erst nach dem Dekodieren – mit „//“ beginnen.
+// safeReturn only allows local paths as a return target. Rejected are control
+// characters and backslashes (browsers strip tabs/newlines or read "\" as
+// "/", so "/\t/evil" would become "//evil"), anything with a scheme or host,
+// and paths that start with "//", even only after decoding.
 func safeReturn(s string) string {
 	if strings.ContainsFunc(s, isUnsafeRune) {
 		return "/"
@@ -101,8 +101,8 @@ func isUnsafeRune(r rune) bool {
 	return r == '\\' || unicode.IsControl(r)
 }
 
-// securityHeaders setzt Standard-Header. CSP: Skripte nur aus /static
-// (keine Inline-Skripte!), Inline-Styles sind erlaubt.
+// securityHeaders sets standard headers. CSP: scripts only from /static (no
+// inline scripts!), inline styles are allowed.
 func securityHeaders(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		h := w.Header()
@@ -114,20 +114,20 @@ func securityHeaders(next http.Handler) http.Handler {
 	})
 }
 
-// Wrap legt die gemeinsamen Middlewares (Security-Header, CSRF-Schutz,
-// Identität) um den kompletten Mux. main ruft das genau einmal auf.
+// Wrap wraps the shared middlewares (security headers, CSRF protection,
+// identity) around the complete mux. main calls it exactly once.
 func Wrap(d Deps, h http.Handler) http.Handler {
 	return securityHeaders(crossOrigin(d, identity(d.Store, h)))
 }
 
-// crossOrigin lehnt POSTs u. ä. ab, die ein Browser von einer fremden Seite
-// aus schickt (Sec-Fetch-Site bzw. Origin ≠ Host). Anfragen ohne diese Header
-// (curl, MCP-Clients) kommen durch – sie tragen kein Cookie eines Opfers.
+// crossOrigin rejects POSTs and the like that a browser sends from a foreign
+// site (Sec-Fetch-Site or Origin ≠ Host). Requests without these headers
+// (curl, MCP clients) pass, since they carry no victim's cookie.
 func crossOrigin(d Deps, next http.Handler) http.Handler {
 	cop := http.NewCrossOriginProtection()
 	cop.SetDenyHandler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if d.Log != nil {
-			d.Log.Warn("cross-origin-anfrage abgelehnt", "method", r.Method, "path", r.URL.Path, "origin", r.Header.Get("Origin"))
+			d.Log.Warn("cross-origin request rejected", "method", r.Method, "path", r.URL.Path, "origin", r.Header.Get("Origin"))
 		}
 		if strings.HasPrefix(r.URL.Path, "/api/") || strings.HasPrefix(r.URL.Path, "/mcp/") {
 			WriteJSON(w, http.StatusForbidden, map[string]string{"error": "Anfrage von einer fremden Seite abgelehnt."})

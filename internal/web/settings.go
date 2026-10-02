@@ -10,10 +10,10 @@ import (
 	"github.com/shostakovich/zipfelkasse/internal/store"
 )
 
-// --- Übersicht und Gruppenname ---------------------------------------------
+// --- Overview and group name -----------------------------------------------
 
 type settingsData struct {
-	GroupName string // Eingabe (nach Fehler wie eingegeben)
+	GroupName string // input (as entered, after an error)
 }
 
 func (h handlers) settings(w http.ResponseWriter, r *http.Request) {
@@ -45,11 +45,11 @@ func (h handlers) settingsSave(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "/einstellungen", http.StatusSeeOther)
 }
 
-// --- Teilnehmer --------------------------------------------------------------
+// --- Participants ------------------------------------------------------------
 
 type participantsData struct {
 	Active, Archived []participantRow
-	Name             string // Eingabe „Neue Person“ nach Fehler
+	Name             string // "new person" input after an error
 }
 
 type participantRow struct {
@@ -130,9 +130,9 @@ func (h handlers) participantRename(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "/einstellungen/teilnehmer", http.StatusSeeOther)
 }
 
-// participantArchive archiviert eine Person bzw. holt sie zurück. Wer noch
-// einen offenen Saldo hat, kann nicht archiviert werden – sonst verschwände
-// die Person aus Formularen, obwohl noch Geld offen ist.
+// participantArchive archives a person or brings them back. A person with an
+// open balance cannot be archived; otherwise they would disappear from forms
+// while money is still owed.
 func (h handlers) participantArchive(archive bool) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		p, ok := h.loadParticipant(w, r)
@@ -178,11 +178,11 @@ func (h handlers) loadParticipant(w http.ResponseWriter, r *http.Request) (store
 	return p, true
 }
 
-// --- Kategorien --------------------------------------------------------------
+// --- Categories --------------------------------------------------------------
 
 type categoriesData struct {
 	Active, Archived []categoryRow
-	Name             string // Eingabe „Neue Kategorie“ nach Fehler
+	Name             string // "new category" input after an error
 }
 
 type categoryRow struct {

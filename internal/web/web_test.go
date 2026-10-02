@@ -16,7 +16,7 @@ import (
 	"github.com/shostakovich/zipfelkasse/internal/store"
 )
 
-// testServer ruft den Handler direkt auf (kein Port nötig, läuft auch in der Sandbox).
+// testServer calls the handler directly (no port needed, also works in the sandbox).
 type testServer struct {
 	h http.Handler
 }
@@ -70,19 +70,19 @@ func TestRedirectWithoutIdentity(t *testing.T) {
 	srv, _ := newTestServer(t)
 	res, _ := get(t, srv, "/salden?x=1")
 	if res.StatusCode != http.StatusSeeOther || res.Header.Get("Location") != "/wer?zurueck=%2Fsalden%3Fx%3D1" {
-		t.Errorf("ohne Cookie: %d → %q", res.StatusCode, res.Header.Get("Location"))
+		t.Errorf("without cookie: %d → %q", res.StatusCode, res.Header.Get("Location"))
 	}
 	res, _ = get(t, srv, "/")
 	if res.StatusCode != http.StatusSeeOther || res.Header.Get("Location") != "/wer" {
-		t.Errorf("/ ohne Cookie: %d → %q", res.StatusCode, res.Header.Get("Location"))
+		t.Errorf("/ without cookie: %d → %q", res.StatusCode, res.Header.Get("Location"))
 	}
 	res, _ = get(t, srv, "/", whoCookie(42))
 	if res.StatusCode != http.StatusSeeOther {
-		t.Errorf("unbekannte ID im Cookie: %d", res.StatusCode)
+		t.Errorf("unknown ID in cookie: %d", res.StatusCode)
 	}
 	res, body := get(t, srv, "/api/kurs")
 	if res.StatusCode != http.StatusUnauthorized || !strings.Contains(body, "error") {
-		t.Errorf("/api ohne Cookie: %d %s", res.StatusCode, body)
+		t.Errorf("/api without cookie: %d %s", res.StatusCode, body)
 	}
 }
 
@@ -97,7 +97,7 @@ func TestPublicPaths(t *testing.T) {
 		t.Errorf("/wer: %d", res.StatusCode)
 	}
 	if strings.Contains(body, "Hauptnavigation") {
-		t.Error("/wer ohne Identität zeigt Navigation")
+		t.Error("/wer without identity shows the navigation")
 	}
 	res, body = get(t, srv, "/static/app.css")
 	if res.StatusCode != 200 || !strings.Contains(body, "--background") || res.Header.Get("X-Content-Type-Options") != "nosniff" {
@@ -122,34 +122,34 @@ func TestCreateAndSelectPerson(t *testing.T) {
 		}
 	}
 	if who == nil || !who.HttpOnly || who.SameSite != http.SameSiteLaxMode {
-		t.Fatalf("Cookie fehlt/falsch: %+v", who)
+		t.Fatalf("cookie missing/wrong: %+v", who)
 	}
 	ps, _ := d.Store.ListParticipants(context.Background(), false)
 	if len(ps) != 1 || ps[0].Name != "Jörg" || who.Value != strconv.FormatInt(ps[0].ID, 10) {
-		t.Fatalf("Person nicht angelegt: %+v / %v", ps, who)
+		t.Fatalf("person not created: %+v / %v", ps, who)
 	}
-	// Protokolliert mit der neuen Person als Akteur.
+	// Logged with the new person as the actor.
 	if acts, _ := d.Store.ListActivity(context.Background(), store.ActivityFilter{Limit: 1}); len(acts) != 1 ||
 		acts[0].Action != store.ActionSettingsUpdated || acts[0].ActorID != ps[0].ID || acts[0].Details.Text != "Person „Jörg“ hinzugefügt" {
-		t.Errorf("Aktivität = %+v", acts)
+		t.Errorf("activity = %+v", acts)
 	}
 
 	res, body := get(t, srv, "/salden", who, flash)
 	if res.StatusCode != 200 {
-		t.Fatalf("/salden mit Cookie: %d", res.StatusCode)
+		t.Fatalf("/salden with cookie: %d", res.StatusCode)
 	}
 	for _, want := range []string{"Du bist <strong>Jörg</strong>", `href="/salden" aria-current="page"`, "Willkommen!", "/static/app.css?v="} {
 		if !strings.Contains(body, want) {
-			t.Errorf("/salden enthält nicht %q", want)
+			t.Errorf("/salden does not contain %q", want)
 		}
 	}
 
-	// Doppelter Name → Fehlermeldung im Formular.
+	// Duplicate name → error message in the form.
 	res = srv.postForm("/wer/neu", url.Values{"name": {"jörg"}})
 	b, _ := io.ReadAll(res.Body)
 	res.Body.Close()
 	if res.StatusCode != http.StatusUnprocessableEntity || !strings.Contains(string(b), "gibt es schon") {
-		t.Errorf("doppelter Name: %d", res.StatusCode)
+		t.Errorf("duplicate name: %d", res.StatusCode)
 	}
 }
 
@@ -171,12 +171,12 @@ func TestSelectPerson(t *testing.T) {
 	res := srv.postForm("/wer", url.Values{"id": {"999"}})
 	res.Body.Close()
 	if res.StatusCode != http.StatusUnprocessableEntity {
-		t.Errorf("unbekannte Person: %d", res.StatusCode)
+		t.Errorf("unknown person: %d", res.StatusCode)
 	}
-	// Archivierte Person gilt nicht mehr als Identität.
+	// An archived person no longer counts as an identity.
 	d.Store.SetParticipantArchived(context.Background(), id, true)
 	if res, _ := get(t, srv, "/", whoCookie(id)); res.StatusCode != http.StatusSeeOther {
-		t.Errorf("archivierte Person: %d", res.StatusCode)
+		t.Errorf("archived person: %d", res.StatusCode)
 	}
 }
 
@@ -208,11 +208,11 @@ func TestLoadForeignTemplates(t *testing.T) {
 	body := rec.Body.String()
 	for _, want := range []string{"<p>Hallo Welt 12,34 €</p>", "<title>YNAB · Zipfelkasse</title>", `href="/einstellungen" aria-current="page"`, "Du bist <strong>Anna</strong>"} {
 		if !strings.Contains(body, want) {
-			t.Errorf("Body enthält nicht %q:\n%s", want, body)
+			t.Errorf("body does not contain %q:\n%s", want, body)
 		}
 	}
-	if _, err := d.Render.Load(fsys, "nichts/*.html"); err == nil {
-		t.Error("Load ohne Treffer sollte Fehler liefern")
+	if _, err := d.Render.Load(fsys, "nothing/*.html"); err == nil {
+		t.Error("Load without matches should return an error")
 	}
 }
 
@@ -225,7 +225,7 @@ func TestRenderTemplateErrorGives500(t *testing.T) {
 	rec := httptest.NewRecorder()
 	pages.Render(rec, httptest.NewRequest("GET", "/", nil), 200, "bad.html", Page{Data: 5})
 	if rec.Code != 500 || strings.Contains(rec.Body.String(), "<html") {
-		t.Errorf("Template-Fehler: %d %q", rec.Code, rec.Body.String())
+		t.Errorf("template error: %d %q", rec.Code, rec.Body.String())
 	}
 }
 
@@ -240,23 +240,23 @@ func TestCrossOriginProtection(t *testing.T) {
 		}
 		return srv.do(req)
 	}
-	// Cross-Site (fremde Seite schickt ein Formular ab) → 403 mit Fehlerseite.
+	// Cross-site (a foreign site submits a form) → 403 with an error page.
 	res := post(map[string]string{"Sec-Fetch-Site": "cross-site", "Origin": "https://evil.example"})
 	b, _ := io.ReadAll(res.Body)
 	if res.StatusCode != http.StatusForbidden || !strings.Contains(string(b), "fremden Seite") {
 		t.Errorf("cross-site POST: %d %s", res.StatusCode, b)
 	}
-	// Alte Browser ohne Sec-Fetch-Site: Origin passt nicht zum Host → 403.
+	// Old browsers without Sec-Fetch-Site: Origin does not match the host → 403.
 	if res := post(map[string]string{"Origin": "https://evil.example"}); res.StatusCode != http.StatusForbidden {
-		t.Errorf("POST mit fremdem Origin: %d", res.StatusCode)
+		t.Errorf("POST with foreign origin: %d", res.StatusCode)
 	}
-	// Gleiche Herkunft → normal (303).
+	// Same origin → normal (303).
 	if res := post(map[string]string{"Sec-Fetch-Site": "same-origin", "Origin": "http://example.com"}); res.StatusCode != http.StatusSeeOther {
 		t.Errorf("same-origin POST: %d", res.StatusCode)
 	}
-	// Ohne Browser-Header (curl, MCP-Clients) → durchgelassen.
+	// Without browser headers (curl, MCP clients) → let through.
 	if res := post(nil); res.StatusCode != http.StatusSeeOther {
-		t.Errorf("POST ohne Browser-Header: %d", res.StatusCode)
+		t.Errorf("POST without browser headers: %d", res.StatusCode)
 	}
 }
 

@@ -13,13 +13,13 @@ import (
 	"github.com/shostakovich/zipfelkasse/internal/web"
 )
 
-// Register hängt die Routen an:
+// Register adds the routes:
 //
-//	GET  /api/kurs?waehrung=USD&datum=2026-10-01 → RateResponse bzw. {"error": "..."}
-//	GET  /einstellungen/kurse                     → manuelle Kurse, Cache, Aktualisieren
-//	POST /einstellungen/kurse                     → manuellen Kurs speichern
-//	POST /einstellungen/kurse/loeschen            → manuellen Kurs löschen
-//	POST /einstellungen/kurse/aktualisieren       → EZB-Kurse jetzt laden
+//	GET  /api/kurs?waehrung=USD&datum=2026-10-01 → RateResponse or {"error": "..."}
+//	GET  /einstellungen/kurse                     → manual rates, cache, refresh
+//	POST /einstellungen/kurse                     → save a manual rate
+//	POST /einstellungen/kurse/loeschen            → delete a manual rate
+//	POST /einstellungen/kurse/aktualisieren       → load ECB rates now
 func (s *Service) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/kurs", s.handleRate)
 	mux.HandleFunc("GET /einstellungen/kurse", s.handlePage)
@@ -28,11 +28,11 @@ func (s *Service) Register(mux *http.ServeMux) {
 	mux.HandleFunc("POST /einstellungen/kurse/aktualisieren", s.handleRefresh)
 }
 
-// RateResponse ist die JSON-Antwort von GET /api/kurs.
+// RateResponse is the JSON response of GET /api/kurs.
 type RateResponse struct {
 	Currency string  `json:"currency"`
-	Date     string  `json:"date"` // Tag, für den der Kurs gilt (YYYY-MM-DD)
-	Rate     float64 `json:"rate"` // Fremdwährung pro 1 EUR
+	Date     string  `json:"date"` // day the rate applies to (YYYY-MM-DD)
+	Rate     float64 `json:"rate"` // foreign currency per 1 EUR
 	Source   string  `json:"source"`
 }
 
@@ -69,7 +69,7 @@ func (s *Service) handleRate(w http.ResponseWriter, r *http.Request) {
 		case errors.As(err, &fe):
 			jsonError(w, http.StatusBadGateway, fe.Error())
 		default:
-			s.d.Log.Error("kurs", "waehrung", cur, "err", err)
+			s.d.Log.Error("rate", "currency", cur, "err", err)
 			jsonError(w, http.StatusInternalServerError, "Der Kurs konnte nicht ermittelt werden.")
 		}
 		return
@@ -79,15 +79,15 @@ func (s *Service) handleRate(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// --- Seite /einstellungen/kurse ---------------------------------------------
+// --- Page /einstellungen/kurse ----------------------------------------------
 
 type rateRow struct {
 	Currency string
 	Date     time.Time
-	Rate     string // deutsch formatiert, z. B. "1,1298"
-	Source   string // Anzeige: "EZB", "manuell", …
-	Title    string // bei verwendeten Kursen: Titel der Ausgabe
-	ID       int64  // bei verwendeten Kursen: Ausgabe
+	Rate     string // German format, e.g. "1,1298"
+	Source   string // display label: "EZB", "manuell", …
+	Title    string // for used rates: title of the expense
+	ID       int64  // for used rates: the expense
 }
 
 type manualForm struct {

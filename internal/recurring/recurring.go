@@ -1,10 +1,10 @@
-// Package recurring verwaltet wiederkehrende Ausgaben und legt fällige
-// Instanzen an (beim Start und stündlich).
+// Package recurring manages recurring expenses and creates due instances (on
+// startup and hourly).
 //
-// Eine Wiederholung entsteht immer aus einer bestehenden Ausgabe: Sie ist
-// Vorlage und erste Instanz, ihr Datum ist der Anker. Alle Termine werden vom
-// Anker aus berechnet (domain.Occurrence/NextDate), damit z. B. der 31. eines
-// Monats nach dem Februar wieder der 31. ist.
+// A recurring rule is always created from an existing expense: it is the
+// template and the first instance, and its date is the anchor. All
+// occurrences are computed from the anchor (domain.Occurrence/NextDate), so
+// that e.g. the 31st of a month is the 31st again after February.
 package recurring
 
 import (
@@ -26,21 +26,21 @@ import (
 //go:embed templates/*.html
 var templatesFS embed.FS
 
-// maxInstancesPerRun begrenzt die Termine, die Materialize je Regel und Lauf
-// abarbeitet (z. B. bei einem sehr alten Startdatum). Den Rest holt der
-// nächste Lauf nach (stündlich).
+// maxInstancesPerRun limits the occurrences Materialize processes per rule
+// and run (e.g. for a very old start date). The next run (hourly) catches up
+// on the rest.
 const maxInstancesPerRun = 400
 
-// Service erzeugt fällige Instanzen wiederkehrender Ausgaben.
+// Service creates due instances of recurring expenses.
 type Service struct {
 	d     web.Deps
 	pages *web.Pages
-	now   func() time.Time // in Tests überschreibbar
+	now   func() time.Time // overridable in tests
 
-	mu sync.Mutex // serialisiert Materialize
+	mu sync.Mutex // serializes Materialize
 }
 
-// New erzeugt den Service.
+// New creates the service.
 func New(d web.Deps) (*Service, error) {
 	pages, err := d.Render.Load(templatesFS, "templates/*.html")
 	if err != nil {
@@ -49,7 +49,7 @@ func New(d web.Deps) (*Service, error) {
 	return &Service{d: d, pages: pages, now: time.Now}, nil
 }
 
-// today liefert das heutige Datum in der konfigurierten Zeitzone.
+// today returns today's date in the configured time zone.
 func (s *Service) today() time.Time {
 	loc := s.d.Config.Location
 	if loc == nil {
@@ -58,10 +58,10 @@ func (s *Service) today() time.Time {
 	return domain.DateOf(s.now().In(loc))
 }
 
-// Materialize legt alle bis einschließlich today fälligen Instanzen an (je
-// Regel höchstens maxInstancesPerRun) und liefert deren Anzahl. Mehrfacher Aufruf erzeugt keine Duplikate (Unique-Index
-// auf recurring_id, date). Fehler einer Regel halten die anderen nicht auf;
-// alle Fehler kommen gesammelt zurück.
+// Materialize creates all instances due up to and including today (at most
+// maxInstancesPerRun per rule) and returns their count. Repeated calls create
+// no duplicates (unique index on recurring_id, date). An error in one rule
+// does not stop the others; all errors are returned together.
 func (s *Service) Materialize(ctx context.Context, today time.Time) (int, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -76,7 +76,7 @@ func (s *Service) Materialize(ctx context.Context, today time.Time) (int, error)
 		k, err := s.materializeRule(ctx, r, today)
 		n += k
 		if err != nil {
-			errs = append(errs, fmt.Errorf("wiederholung %d („%s“): %w", r.ID, r.Template.Title, err))
+			errs = append(errs, fmt.Errorf("recurring rule %d (%q): %w", r.ID, r.Template.Title, err))
 		}
 		if ctx.Err() != nil {
 			break
@@ -87,13 +87,13 @@ func (s *Service) Materialize(ctx context.Context, today time.Time) (int, error)
 
 func (s *Service) materializeRule(ctx context.Context, r store.Recurring, today time.Time) (int, error) {
 	if !r.Frequency.Valid() {
-		return 0, fmt.Errorf("unbekannte häufigkeit %q", r.Frequency)
+		return 0, fmt.Errorf("unknown frequency %q", r.Frequency)
 	}
 	n := 0
 	for i, d := 0, r.NextDate; !d.After(today); i++ {
 		if i == maxInstancesPerRun {
-			s.d.Log.Info("wiederkehrende Ausgaben: Obergrenze je Lauf erreicht, Rest folgt beim nächsten Lauf",
-				"regel", r.ID, "naechster_termin", d.Format(domain.DateLayout), "grenze", maxInstancesPerRun)
+			s.d.Log.Info("recurring expenses: per-run limit reached, the rest follows in the next run",
+				"rule", r.ID, "next_date", d.Format(domain.DateLayout), "limit", maxInstancesPerRun)
 			break
 		}
 		_, err := s.d.Store.CreateExpense(ctx, 0, s.instance(ctx, r, d))
@@ -101,7 +101,7 @@ func (s *Service) materializeRule(ctx context.Context, r store.Recurring, today 
 		case err == nil:
 			n++
 		case errors.Is(err, store.ErrRecurringExists):
-			// gibt es schon (z. B. nach Absturz vor dem Fortschreiben)
+			// already exists (e.g. after a crash before advancing next_date)
 		default:
 			return n, err
 		}
@@ -114,9 +114,9 @@ func (s *Service) materializeRule(ctx context.Context, r store.Recurring, today 
 	return n, nil
 }
 
-// instance baut die Ausgabe für den Termin date aus der Vorlage. Bei
-// Fremdwährung gilt der Kurs vom Termin (über d.FX); ist keiner zu bekommen,
-// bleibt es beim Kurs der Vorlage.
+// instance builds the expense for the occurrence date from the template. For
+// a foreign currency, the rate of the occurrence date applies (via d.FX); if
+// none is available, the template's rate is kept.
 func (s *Service) instance(ctx context.Context, r store.Recurring, date time.Time) store.ExpenseInput {
 	in := r.Template
 	in.Parts = slices.Clone(in.Parts)
@@ -127,8 +127,8 @@ func (s *Service) instance(ctx context.Context, r store.Recurring, date time.Tim
 	}
 	rate, err := s.d.FX.Rate(ctx, cur, date)
 	if err != nil {
-		s.d.Log.Warn("wiederkehrende Ausgabe: Kurs nicht verfügbar, nehme Kurs der Vorlage",
-			"regel", r.ID, "waehrung", cur, "datum", date.Format(domain.DateLayout), "err", err)
+		s.d.Log.Warn("recurring expense: rate not available, using the template's rate",
+			"rule", r.ID, "currency", cur, "date", date.Format(domain.DateLayout), "err", err)
 		return in
 	}
 	amount := domain.ToEURCents(in.OriginalAmountMinor, cur, rate.Rate)
@@ -142,9 +142,9 @@ func (s *Service) instance(ctx context.Context, r store.Recurring, date time.Tim
 	return in
 }
 
-// rescale verteilt total proportional zu den bisherigen festen Beträgen
-// (Methode des größten Rests, bei Gleichstand kleinere ID). Für
-// SplitAmount-Vorlagen, deren Euro-Betrag sich mit dem Kurs ändert.
+// rescale distributes total proportionally to the previous fixed amounts
+// (largest remainder method, ties go to the smaller ID). For SplitAmount
+// templates whose euro amount changes with the rate.
 func rescale(parts []domain.Part, total int64) []domain.Part {
 	var sum int64
 	for _, p := range parts {
@@ -158,7 +158,7 @@ func rescale(parts []domain.Part, total int64) []domain.Part {
 	var allocated int64
 	for i, p := range out {
 		hi, lo := bits.Mul64(uint64(p.Weight), uint64(total))
-		q, rem := bits.Div64(hi, lo, uint64(sum)) // p.Weight ≤ sum → kein Überlauf
+		q, rem := bits.Div64(hi, lo, uint64(sum)) // p.Weight ≤ sum → no overflow
 		out[i].Weight, rems[i] = int64(q), rem
 		allocated += int64(q)
 	}
@@ -179,18 +179,18 @@ func rescale(parts []domain.Part, total int64) []domain.Part {
 	return out
 }
 
-// Run ruft Materialize sofort und danach stündlich auf. Blockiert, bis ctx
-// beendet ist (main startet Run in einer eigenen Goroutine).
+// Run calls Materialize immediately and then hourly. Blocks until ctx is
+// done (main starts Run in its own goroutine).
 func (s *Service) Run(ctx context.Context) {
 	tick := time.NewTicker(time.Hour)
 	defer tick.Stop()
 	for {
 		if n, err := s.Materialize(ctx, s.today()); err != nil {
 			if ctx.Err() == nil {
-				s.d.Log.Error("wiederkehrende Ausgaben", "err", err)
+				s.d.Log.Error("recurring expenses", "err", err)
 			}
 		} else if n > 0 {
-			s.d.Log.Info("wiederkehrende Ausgaben angelegt", "anzahl", n)
+			s.d.Log.Info("recurring expenses created", "count", n)
 		}
 		select {
 		case <-ctx.Done():

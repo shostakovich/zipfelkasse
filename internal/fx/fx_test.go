@@ -23,15 +23,15 @@ import (
 	"github.com/shostakovich/zipfelkasse/internal/web"
 )
 
-// fakeECB beantwortet Anfragen an die EZB aus testdata (http.RoundTripper,
-// kein Port nötig).
+// fakeECB answers requests to the ECB from testdata (http.RoundTripper, no
+// port needed).
 type fakeECB struct {
 	mu     sync.Mutex
 	files  map[string][]byte
 	hits   map[string]int
-	err    error         // Netzwerkfehler simulieren
-	status int           // != 0: diesen HTTP-Status liefern
-	block  chan struct{} // != nil: Antwort erst nach close
+	err    error         // simulate a network error
+	status int           // != 0: return this HTTP status
+	block  chan struct{} // != nil: respond only after close
 	agents []string
 }
 
@@ -119,7 +119,7 @@ func day(s string) time.Time {
 	return t
 }
 
-// at liefert eine Uhr, die immer t (Europe/Berlin, "2006-01-02 15:04") zeigt.
+// at returns a clock that always shows t (Europe/Berlin, "2006-01-02 15:04").
 func at(s string) func() time.Time {
 	t, err := time.ParseInLocation("2006-01-02 15:04", s, berlin)
 	if err != nil {
@@ -148,8 +148,8 @@ func newTestStore(t *testing.T) *store.Store {
 	return st
 }
 
-// newTestService: heute ist Freitag, 02.10.2026, 12:00 Uhr (Kurse vom Tag
-// noch nicht veröffentlicht).
+// newTestService: today is Friday, 2026-10-02, 12:00 (the day's rates are
+// not yet published).
 func newTestService(t *testing.T, st *store.Store) (*Service, *fakeECB) {
 	t.Helper()
 	s, err := New(newTestDeps(t, st))
@@ -180,7 +180,7 @@ func TestRateEURAndInvalid(t *testing.T) {
 		}
 	}
 	if f.total() != 0 {
-		t.Errorf("ohne Bedarf geladen: %v", f.hits)
+		t.Errorf("loaded without need: %v", f.hits)
 	}
 }
 
@@ -192,43 +192,43 @@ func TestRateDailyAndCache(t *testing.T) {
 		t.Fatalf("USD = %+v, %v", r, err)
 	}
 	if f.count(fileDaily) != 1 || f.total() != 1 {
-		t.Errorf("Abrufe = %v", f.hits)
+		t.Errorf("fetches = %v", f.hits)
 	}
 	if !strings.HasPrefix(f.agents[0], "zipfelkasse/") {
 		t.Errorf("User-Agent = %q", f.agents[0])
 	}
-	// Heute vor 16:30: Der Kurs von gestern ist der aktuellste → aus dem Cache.
+	// Today before 16:30: yesterday's rate is the latest → from the cache.
 	r, err = s.Rate(ctx, "USD", day("2026-10-02"))
 	if err != nil || r.Date != day("2026-10-01") {
-		t.Errorf("heute = %+v, %v", r, err)
+		t.Errorf("today = %+v, %v", r, err)
 	}
-	// Zukunft → aktuellster Kurs.
+	// Future → latest rate.
 	r, err = s.Rate(ctx, "GBP", day("2026-12-24"))
 	if err != nil || r.Rate != 0.85373 {
-		t.Errorf("Zukunft = %+v, %v", r, err)
+		t.Errorf("future = %+v, %v", r, err)
 	}
 	if f.total() != 1 {
-		t.Errorf("Cache nicht genutzt: %v", f.hits)
+		t.Errorf("cache not used: %v", f.hits)
 	}
 }
 
 func TestRateOlderUses90d(t *testing.T) {
 	s, f := newTestService(t, newTestStore(t))
 	ctx := context.Background()
-	// Sonntag → Kurs vom Freitag davor.
+	// Sunday → rate of the Friday before.
 	r, err := s.Rate(ctx, "JPY", day("2026-09-27"))
 	if err != nil || r.Rate != 176.5 || r.Date != day("2026-09-25") {
 		t.Fatalf("JPY = %+v, %v", r, err)
 	}
 	if f.count(file90d) != 1 || f.total() != 1 {
-		t.Errorf("Abrufe = %v", f.hits)
+		t.Errorf("fetches = %v", f.hits)
 	}
-	// Liegt jetzt im Cache, auch für andere Tage.
+	// Now cached, also for other days.
 	if r, err := s.Rate(ctx, "USD", day("2026-09-29")); err != nil || r.Rate != 1.1251 {
 		t.Errorf("USD = %+v, %v", r, err)
 	}
 	if f.total() != 1 {
-		t.Errorf("Abrufe = %v", f.hits)
+		t.Errorf("fetches = %v", f.hits)
 	}
 }
 
@@ -239,16 +239,16 @@ func TestRateDailyEscalatesTo90d(t *testing.T) {
 	ctx := context.Background()
 	r, err := s.Rate(ctx, "USD", day("2026-10-01"))
 	if err != nil || r.Rate != 1.1298 || r.Date != day("2026-10-01") {
-		t.Fatalf("gestern = %+v, %v", r, err)
+		t.Fatalf("yesterday = %+v, %v", r, err)
 	}
 	if f.count(fileDaily) != 1 || f.count(file90d) != 1 {
-		t.Errorf("Abrufe = %v", f.hits)
+		t.Errorf("fetches = %v", f.hits)
 	}
 	if r, err := s.Rate(ctx, "USD", day("2026-10-02")); err != nil || r.Rate != 1.1311 {
-		t.Errorf("heute = %+v, %v", r, err)
+		t.Errorf("today = %+v, %v", r, err)
 	}
 	if f.total() != 2 {
-		t.Errorf("Abrufe = %v", f.hits)
+		t.Errorf("fetches = %v", f.hits)
 	}
 }
 
@@ -261,13 +261,13 @@ func TestRateHistZipLoadedOnce(t *testing.T) {
 		t.Fatalf("2024 = %+v, %v", r, err)
 	}
 	if f.count(fileHist) != 1 || f.total() != 1 {
-		t.Errorf("Abrufe = %v", f.hits)
+		t.Errorf("fetches = %v", f.hits)
 	}
-	// Wochenende → Freitag davor; alles aus dem Cache.
+	// Weekend → the Friday before; everything from the cache.
 	if r, err := s.Rate(ctx, "GBP", day("2022-03-06")); err != nil || r.Rate != 0.836 || r.Date != day("2022-03-01") {
 		t.Errorf("2022 = %+v, %v", r, err)
 	}
-	// RUB gibt es seit März 2022 nicht mehr.
+	// RUB has not been quoted since March 2022.
 	if _, err := s.Rate(ctx, "RUB", day("2024-01-03")); !isValidation(err, "um den 03.01.2024 keinen EZB-Kurs") {
 		t.Errorf("RUB 2024 = %v", err)
 	}
@@ -275,19 +275,19 @@ func TestRateHistZipLoadedOnce(t *testing.T) {
 		t.Errorf("XYZ = %v", err)
 	}
 	if f.total() != 1 {
-		t.Errorf("Abrufe = %v", f.hits)
+		t.Errorf("fetches = %v", f.hits)
 	}
 
-	// Neustart: Die Historie ist schon im Cache und wird nicht erneut geladen.
+	// Restart: the history is already cached and is not loaded again.
 	s2, f2 := newTestService(t, st)
 	if r, err := s2.Rate(ctx, "USD", day("2024-01-02")); err != nil || r.Rate != 1.0956 {
-		t.Errorf("nach Neustart = %+v, %v", r, err)
+		t.Errorf("after restart = %+v, %v", r, err)
 	}
 	if _, err := s2.Rate(ctx, "JPY", day("1998-12-31")); !isValidation(err, "keinen EZB-Kurs") {
-		t.Errorf("vor 1999 = %v", err)
+		t.Errorf("before 1999 = %v", err)
 	}
 	if f2.total() != 0 {
-		t.Errorf("Historie erneut geladen: %v", f2.hits)
+		t.Errorf("history loaded again: %v", f2.hits)
 	}
 }
 
@@ -303,7 +303,7 @@ func TestRateUnknownCurrency(t *testing.T) {
 		t.Errorf("XYZ (2) = %v", err)
 	}
 	if f.total() != 1 {
-		t.Errorf("Abrufe = %v (kurz nach einem Abruf nicht erneut laden)", f.hits)
+		t.Errorf("fetches = %v (must not reload shortly after a fetch)", f.hits)
 	}
 }
 
@@ -319,18 +319,18 @@ func TestRateManualPrecedence(t *testing.T) {
 	}
 	r, err := s.Rate(ctx, "USD", day("2026-10-01"))
 	if err != nil || r.Rate != 1.2 || r.Source != domain.FXSourceManual || r.Date != day("2026-09-30") {
-		t.Errorf("manuell = %+v, %v", r, err)
+		t.Errorf("manual = %+v, %v", r, err)
 	}
 	if r, err := s.Rate(ctx, "XYZ", day("2026-06-01")); err != nil || r.Rate != 4.5 {
-		t.Errorf("XYZ manuell = %+v, %v", r, err)
+		t.Errorf("XYZ manual = %+v, %v", r, err)
 	}
 	if f.total() != 0 {
-		t.Errorf("trotz manuellem Kurs geladen: %v", f.hits)
+		t.Errorf("loaded despite manual rate: %v", f.hits)
 	}
-	// Vor dem manuellen Kurs gilt die EZB.
+	// Before the manual rate, the ECB rate applies.
 	r, err = s.Rate(ctx, "USD", day("2026-09-29"))
 	if err != nil || r.Rate != 1.1251 || r.Source != domain.FXSourceECB {
-		t.Errorf("vor manuell = %+v, %v", r, err)
+		t.Errorf("before manual = %+v, %v", r, err)
 	}
 }
 
@@ -341,28 +341,28 @@ func TestRateFetchErrors(t *testing.T) {
 	_, err := s.Rate(ctx, "USD", day("2026-10-01"))
 	var fe *FetchError
 	if !errors.As(err, &fe) || !strings.Contains(err.Error(), "nicht geladen werden") {
-		t.Fatalf("Netzwerkfehler = %v", err)
+		t.Fatalf("network error = %v", err)
 	}
-	// Kurz danach: kein neuer Versuch.
+	// Shortly afterwards: no new attempt.
 	s.Rate(ctx, "USD", day("2026-10-01"))
 	if f.total() != 1 {
-		t.Errorf("Abrufe = %v", f.hits)
+		t.Errorf("fetches = %v", f.hits)
 	}
-	// Nach Ablauf der Sperre erneut, jetzt mit HTTP-Fehler.
+	// After the cooldown again, now with an HTTP error.
 	s.now = at("2026-10-02 12:05")
 	f.err, f.status = nil, http.StatusInternalServerError
 	if _, err := s.Rate(ctx, "USD", day("2026-10-01")); !errors.As(err, &fe) || !strings.Contains(err.Error(), "500") {
 		t.Errorf("HTTP 500 = %v", err)
 	}
-	// Kaputte Datei.
+	// Broken file.
 	s.now = at("2026-10-02 12:10")
 	f.status = 0
-	f.files[fileDaily] = []byte("<kaputt")
+	f.files[fileDaily] = []byte("<broken")
 	if _, err := s.Rate(ctx, "USD", day("2026-10-01")); !errors.As(err, &fe) {
-		t.Errorf("kaputtes XML = %v", err)
+		t.Errorf("broken XML = %v", err)
 	}
 	if f.count(fileDaily) != 3 {
-		t.Errorf("Abrufe = %v", f.hits)
+		t.Errorf("fetches = %v", f.hits)
 	}
 }
 
@@ -376,7 +376,7 @@ func TestFetchSingleflight(t *testing.T) {
 		wg.Go(func() {
 			r, err := s.Rate(ctx, "USD", day("2026-10-01"))
 			if err == nil && r.Rate != 1.1298 {
-				err = errors.New("falscher kurs")
+				err = errors.New("wrong rate")
 			}
 			errs <- err
 		})
@@ -384,7 +384,7 @@ func TestFetchSingleflight(t *testing.T) {
 	for f.total() == 0 {
 		time.Sleep(time.Millisecond)
 	}
-	time.Sleep(20 * time.Millisecond) // die anderen warten lassen
+	time.Sleep(20 * time.Millisecond) // let the others wait
 	close(f.block)
 	wg.Wait()
 	close(errs)
@@ -394,7 +394,7 @@ func TestFetchSingleflight(t *testing.T) {
 		}
 	}
 	if f.total() != 1 {
-		t.Errorf("Datei mehrfach geladen: %v", f.hits)
+		t.Errorf("file loaded more than once: %v", f.hits)
 	}
 }
 
@@ -405,7 +405,7 @@ func TestFetchContextCancel(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
 	defer cancel()
 	if _, err := s.Rate(ctx, "USD", day("2026-10-01")); !errors.Is(err, context.DeadlineExceeded) {
-		t.Errorf("Abbruch = %v", err)
+		t.Errorf("cancel = %v", err)
 	}
 }
 
@@ -413,12 +413,12 @@ func TestRefresh(t *testing.T) {
 	st := newTestStore(t)
 	s, f := newTestService(t, st)
 	ctx := context.Background()
-	// Leerer Cache → 90-Tage-Datei.
+	// Empty cache → 90-day file.
 	latest, err := s.Refresh(ctx)
 	if err != nil || latest != day("2026-10-01") || f.count(file90d) != 1 {
 		t.Fatalf("Refresh = %v, %v, %v", latest, err, f.hits)
 	}
-	// Aktueller Cache → Tagesdatei, auch kurz nach dem letzten Abruf (force).
+	// Current cache → daily file, even shortly after the last fetch (force).
 	if _, err := s.Refresh(ctx); err != nil || f.count(fileDaily) != 1 {
 		t.Errorf("Refresh (2) = %v, %v", err, f.hits)
 	}
@@ -430,7 +430,7 @@ func TestRefresh(t *testing.T) {
 func TestCalendar(t *testing.T) {
 	for y, want := range map[int]string{2024: "2024-03-31", 2025: "2025-04-20", 2026: "2026-04-05", 2027: "2027-03-28"} {
 		if got := easterSunday(y); got != day(want) {
-			t.Errorf("Ostern %d = %s, want %s", y, got.Format(domain.DateLayout), want)
+			t.Errorf("Easter %d = %s, want %s", y, got.Format(domain.DateLayout), want)
 		}
 	}
 	for d, want := range map[string]bool{
@@ -442,14 +442,14 @@ func TestCalendar(t *testing.T) {
 		}
 	}
 	if got := lastBusinessDay(day("2026-04-06")); got != day("2026-04-02") {
-		t.Errorf("lastBusinessDay(Ostermontag) = %s", got)
+		t.Errorf("lastBusinessDay(Easter Monday) = %s", got)
 	}
 	for now, want := range map[string]string{
 		"2026-10-02 12:00": "2026-10-02 16:30",
 		"2026-10-02 16:30": "2026-10-05 16:30",
 		"2026-10-02 17:00": "2026-10-05 16:30",
 		"2026-12-24 17:00": "2026-12-28 16:30",
-		"2026-03-28 10:00": "2026-03-30 16:30", // Zeitumstellung am 29.03.
+		"2026-03-28 10:00": "2026-03-30 16:30", // DST change on 29 March
 	} {
 		if got := nextPublish(at(now)()).Format("2006-01-02 15:04"); got != want {
 			t.Errorf("nextPublish(%s) = %s, want %s", now, got, want)
@@ -472,19 +472,19 @@ func TestParseFiles(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// N/A und leere Spalten werden übersprungen.
+	// N/A and empty columns are skipped.
 	n := map[string]int{}
 	for _, r := range rates {
 		n[r.Currency]++
 	}
 	if n["USD"] != 6 || n["CYP"] != 1 || n["RUB"] != 2 || n["BGN"] != 4 || n[""] != 0 {
-		t.Errorf("CSV-Währungen = %v", n)
+		t.Errorf("CSV currencies = %v", n)
 	}
 	if _, err := parseHistCSV(strings.NewReader("Foo,USD\n")); err == nil {
-		t.Error("falsche Kopfzeile ohne Fehler")
+		t.Error("wrong header without error")
 	}
-	if _, err := parseHistZip([]byte("kein zip")); err == nil {
-		t.Error("kaputtes ZIP ohne Fehler")
+	if _, err := parseHistZip([]byte("not a zip")); err == nil {
+		t.Error("broken ZIP without error")
 	}
 	for in, want := range map[string]float64{"1.1298": 1.1298, " 2 ": 2, "N/A": 0, "": 0, "-1": 0, "NaN": 0, "Inf": 0} {
 		if got, _ := parseECBRate(in); got != want {
@@ -543,7 +543,7 @@ func TestAPIRate(t *testing.T) {
 	f2.err = errors.New("no route to host")
 	rec := do(newMux(s2), "GET", "/api/kurs?waehrung=USD", nil)
 	if rec.Code != http.StatusBadGateway || !strings.Contains(rec.Body.String(), "nicht geladen werden") {
-		t.Errorf("Netzwerkfehler: %d %s", rec.Code, rec.Body)
+		t.Errorf("network error: %d %s", rec.Code, rec.Body)
 	}
 	_ = f
 }
@@ -573,7 +573,7 @@ func TestSettingsPage(t *testing.T) {
 		t.Fatalf("POST: %d %s", rec.Code, rec.Body)
 	}
 	if r, err := st.LookupFXRate(ctx, "THB", domain.FXSourceManual, day("2026-10-01"), time.Time{}); err != nil || r.Rate != 38.02 {
-		t.Errorf("gespeichert: %+v, %v", r, err)
+		t.Errorf("saved: %+v, %v", r, err)
 	}
 	rec = do(mux, "POST", "/einstellungen/kurse", url.Values{"waehrung": {"IDR"}, "datum": {"02.09.2026"}, "kurs": {"20.274,71"}})
 	if rec.Code != http.StatusSeeOther {
@@ -582,7 +582,7 @@ func TestSettingsPage(t *testing.T) {
 	if r, _ := st.LookupFXRate(ctx, "IDR", domain.FXSourceManual, day("2026-10-01"), time.Time{}); r.Rate != 20274.71 {
 		t.Errorf("IDR = %v", r.Rate)
 	}
-	// Tausenderpunkt wie bei Beträgen: „17.000“ = 17000, auch englisch „17,000.5“.
+	// Thousands separator as for amounts: "17.000" = 17000, also English "17,000.5".
 	for _, tt := range []struct {
 		in   string
 		want float64
@@ -607,42 +607,42 @@ func TestSettingsPage(t *testing.T) {
 
 	rec = do(mux, "GET", "/einstellungen/kurse", nil)
 	if !strings.Contains(rec.Body.String(), "38,02 THB") {
-		t.Errorf("Liste ohne manuellen Kurs: %s", rec.Body)
+		t.Errorf("list without manual rate: %s", rec.Body)
 	}
 
 	if text := lastActivity(t, st); text != "Manueller Kurs für VND ab 03.09.2026 gespeichert: 1 € = 17000,5 VND" {
-		t.Errorf("Aktivität = %q", text)
+		t.Errorf("activity = %q", text)
 	}
 	rec = do(mux, "POST", "/einstellungen/kurse/loeschen", url.Values{"waehrung": {"THB"}, "datum": {"2026-09-01"}})
 	if rec.Code != http.StatusSeeOther {
-		t.Errorf("Löschen: %d", rec.Code)
+		t.Errorf("delete: %d", rec.Code)
 	}
 	if text := lastActivity(t, st); text != "Manueller Kurs für THB ab 01.09.2026 gelöscht" {
-		t.Errorf("Aktivität = %q", text)
+		t.Errorf("activity = %q", text)
 	}
 	rec = do(mux, "POST", "/einstellungen/kurse/loeschen", url.Values{"waehrung": {"THB"}, "datum": {"2026-09-01"}})
 	if rec.Code != http.StatusNotFound {
-		t.Errorf("zweites Löschen: %d", rec.Code)
+		t.Errorf("second delete: %d", rec.Code)
 	}
 
 	rec = do(mux, "POST", "/einstellungen/kurse/aktualisieren", nil)
 	if rec.Code != http.StatusSeeOther || f.count(file90d) != 1 {
-		t.Errorf("Aktualisieren: %d %v", rec.Code, f.hits)
+		t.Errorf("refresh: %d %v", rec.Code, f.hits)
 	}
 	rec = do(mux, "GET", "/einstellungen/kurse", nil)
 	if !strings.Contains(rec.Body.String(), "1,1298 USD") || !strings.Contains(rec.Body.String(), "bis 01.10.2026") {
-		t.Errorf("EZB-Liste fehlt: %s", rec.Body)
+		t.Errorf("ECB list missing: %s", rec.Body)
 	}
 
 	f.err = errors.New("timeout")
 	rec = do(mux, "POST", "/einstellungen/kurse/aktualisieren", nil)
 	if rec.Code != http.StatusBadGateway || !strings.Contains(rec.Body.String(), "nicht geladen werden") {
-		t.Errorf("Aktualisieren mit Fehler: %d", rec.Code)
+		t.Errorf("refresh with error: %d", rec.Code)
 	}
 }
 
-// lastActivity liefert den Text des jüngsten Aktivitätseintrags
-// („settings_updated“, sonst "").
+// lastActivity returns the text of the latest activity entry
+// ("settings_updated", otherwise "").
 func lastActivity(t *testing.T, st *store.Store) string {
 	t.Helper()
 	acts, err := st.ListActivity(context.Background(), store.ActivityFilter{Limit: 1})
@@ -653,8 +653,8 @@ func lastActivity(t *testing.T, st *store.Store) string {
 	return acts[0].Details.Text
 }
 
-// Run kehrt erst zurück, wenn kein EZB-Abruf mehr läuft – main schließt
-// danach den Store.
+// Run returns only once no ECB fetch is running anymore; main closes the
+// store afterwards.
 func TestRunWaitsForDownloads(t *testing.T) {
 	st := newTestStore(t)
 	s, f := newTestService(t, st)
@@ -667,9 +667,9 @@ func TestRunWaitsForDownloads(t *testing.T) {
 	runDone := make(chan struct{})
 	go func() { s.Run(ctx); close(runDone) }()
 	deadline := time.Now().Add(2 * time.Second)
-	for f.total() == 0 { // Cache leer: Run lädt sofort
+	for f.total() == 0 { // empty cache: Run loads immediately
 		if time.Now().After(deadline) {
-			t.Fatal("Run lädt nicht")
+			t.Fatal("Run does not load")
 		}
 		time.Sleep(time.Millisecond)
 	}
@@ -677,7 +677,7 @@ func TestRunWaitsForDownloads(t *testing.T) {
 	select {
 	case <-runDone:
 	case <-time.After(2 * time.Second):
-		t.Fatal("Run hängt")
+		t.Fatal("Run hangs")
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -685,7 +685,7 @@ func TestRunWaitsForDownloads(t *testing.T) {
 		select {
 		case <-l.done:
 		default:
-			t.Errorf("Abruf %s läuft nach Run weiter", file)
+			t.Errorf("fetch %s still running after Run", file)
 		}
 	}
 }

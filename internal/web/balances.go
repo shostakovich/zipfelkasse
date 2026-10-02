@@ -14,18 +14,18 @@ type balancesData struct {
 	Transfers []transferRow
 }
 
-// balanceRow ist eine Zeile der Saldenliste mit Balken wie bei Spliit.
+// balanceRow is a row of the balance list with a bar as in Spliit.
 type balanceRow struct {
 	Participant store.Participant
 	Cents       int64
-	Width       int // Balkenbreite in Prozent der halben Zeile (0–100)
+	Width       int // bar width in percent of half the row (0–100)
 }
 
-// transferRow ist ein Ausgleichsvorschlag „From zahlt To Cents“.
+// transferRow is a settlement suggestion "From pays To Cents".
 type transferRow struct {
 	From, To store.Participant
 	Cents    int64
-	Link     string // vorbefülltes Rückzahlungsformular
+	Link     string // prefilled reimbursement form
 }
 
 func (h handlers) balances(w http.ResponseWriter, r *http.Request) {
@@ -49,7 +49,7 @@ func (h handlers) balances(w http.ResponseWriter, r *http.Request) {
 	for _, p := range people {
 		byID[p.ID] = p
 		b := balances[p.ID]
-		// Archivierte Personen nur, solange sie noch einen Saldo haben.
+		// Archived people only while they still have a balance.
 		if p.Archived() && b == 0 {
 			continue
 		}

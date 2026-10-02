@@ -1,9 +1,9 @@
-// Package web enthält das HTTP-Gerüst von Zipfelkasse: gemeinsame Abhängigkeiten
-// (Deps), den Renderer mit gemeinsamem Layout, die Identitäts-Middleware,
-// statische Dateien und die Seiten der Kern-App.
+// Package web contains the HTTP scaffolding of Zipfelkasse: shared
+// dependencies (Deps), the renderer with the shared layout, the identity
+// middleware, static files and the pages of the core app.
 //
-// Feature-Pakete (fx, recurring, ynab, export, mcp) importieren web für Deps,
-// Renderer und Me(ctx) – web importiert umgekehrt keines von ihnen.
+// Feature packages (fx, recurring, ynab, export, mcp) import web for Deps,
+// Renderer and Me(ctx); web in turn imports none of them.
 package web
 
 import (
@@ -18,25 +18,25 @@ import (
 	"github.com/shostakovich/zipfelkasse/internal/store"
 )
 
-// Deps sind die gemeinsamen Abhängigkeiten aller HTTP-Pakete. main baut sie
-// einmal und reicht sie als Wert weiter.
+// Deps are the shared dependencies of all HTTP packages. main builds them
+// once and passes them on by value.
 type Deps struct {
 	Config config.Config
 	Store  *store.Store
 	Render *Renderer
 	Log    *slog.Logger
-	// FX liefert Wechselkurse (implementiert von fx.Service). Kann in Tests nil sein.
+	// FX provides exchange rates (implemented by fx.Service). May be nil in tests.
 	FX FXRater
 }
 
-// FXRater liefert den Kurs einer Währung für ein Datum (EZB-Format: Einheiten
-// Fremdwährung pro 1 EUR; Kurs vom Datum oder letzten Bankarbeitstag davor,
-// manuelle Kurse haben Vorrang).
+// FXRater returns the rate of a currency for a date (ECB format: units of
+// foreign currency per 1 EUR; the rate of that date or of the last business
+// day before it, manual rates take precedence).
 type FXRater interface {
 	Rate(ctx context.Context, currency string, date time.Time) (domain.FXRate, error)
 }
 
-// Today liefert das heutige Datum in der konfigurierten Zeitzone.
+// Today returns today's date in the configured time zone.
 func (d Deps) Today() time.Time {
 	loc := d.Config.Location
 	if loc == nil {
@@ -45,7 +45,7 @@ func (d Deps) Today() time.Time {
 	return domain.Today(loc)
 }
 
-// WriteJSON schreibt v als JSON mit Status status.
+// WriteJSON writes v as JSON with the given status.
 func WriteJSON(w http.ResponseWriter, status int, v any) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(status)

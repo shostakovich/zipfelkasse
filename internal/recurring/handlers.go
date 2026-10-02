@@ -13,14 +13,14 @@ import (
 	"github.com/shostakovich/zipfelkasse/internal/web"
 )
 
-// Register hängt die Routen unter /einstellungen/wiederkehrend an:
+// Register adds the routes under /einstellungen/wiederkehrend:
 //
-//	GET  /einstellungen/wiederkehrend                  Liste der Regeln
-//	GET  /einstellungen/wiederkehrend/neu?ausgabe={id} Regel aus einer Ausgabe anlegen
+//	GET  /einstellungen/wiederkehrend                  list of rules
+//	GET  /einstellungen/wiederkehrend/neu?ausgabe={id} create a rule from an expense
 //	POST /einstellungen/wiederkehrend/neu              (ausgabe, haeufigkeit)
 //	POST /einstellungen/wiederkehrend/{id}/pausieren
 //	POST /einstellungen/wiederkehrend/{id}/fortsetzen
-//	POST /einstellungen/wiederkehrend/{id}/vorlage     Vorlage aus jüngster Instanz übernehmen
+//	POST /einstellungen/wiederkehrend/{id}/vorlage     take the template from the latest instance
 //	POST /einstellungen/wiederkehrend/{id}/loeschen
 func (s *Service) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /einstellungen/wiederkehrend", s.handleList)
@@ -50,7 +50,7 @@ func actorID(r *http.Request) int64 {
 	return 0
 }
 
-// --- Liste -------------------------------------------------------------------
+// --- List --------------------------------------------------------------------
 
 type ruleRow struct {
 	store.Recurring
@@ -94,8 +94,8 @@ func (s *Service) participantNames(r *http.Request) (map[int64]string, error) {
 	return m, nil
 }
 
-// ruleLabel beschreibt eine Regel fürs Aktivitätsprotokoll:
-// „Wiederholung „Miete“ (monatlich)“.
+// ruleLabel describes a rule for the activity log:
+// `Wiederholung „Miete“ (monatlich)`.
 func ruleLabel(r store.Recurring) string {
 	return fmt.Sprintf("Wiederholung „%s“ (%s)", r.Template.Title, strings.ToLower(r.Frequency.Label()))
 }
@@ -133,7 +133,7 @@ func (s *Service) handleSetActive(active bool) http.HandlerFunc {
 		if active {
 			msg = "Fortgesetzt."
 			if n, err := s.Materialize(r.Context(), s.today()); err != nil {
-				s.d.Log.Error("wiederkehrende Ausgaben", "err", err)
+				s.d.Log.Error("recurring expenses", "err", err)
 			} else if n > 0 {
 				msg += fmt.Sprintf(" %s angelegt.", countText(n))
 			}
@@ -191,23 +191,23 @@ func (s *Service) handleDelete(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, listPath, http.StatusSeeOther)
 }
 
-// --- Neu ---------------------------------------------------------------------
+// --- New ---------------------------------------------------------------------
 
 type freqOption struct {
 	Value   domain.Frequency
 	Label   string
-	Next    time.Time // erster Termin nach der Vorlage
-	Missed  int       // Termine bis heute, die sofort nachgetragen werden
+	Next    time.Time // first occurrence after the template
+	Missed  int       // occurrences up to today that are created right away
 	Checked bool
 }
 
 type newData struct {
-	Expense  *store.Expense // nil: keine Ausgabe gewählt
+	Expense  *store.Expense // nil: no expense selected
 	Options  []freqOption
-	Existing int64 // Ausgabe gehört schon zu dieser Wiederholung
+	Existing int64 // the expense already belongs to this recurring rule
 }
 
-// maxMissedCount begrenzt das Zählen verpasster Termine für die Vorschau.
+// maxMissedCount caps counting missed occurrences for the preview.
 const maxMissedCount = 1000
 
 func (s *Service) newData(e store.Expense, selected domain.Frequency) newData {
@@ -229,8 +229,8 @@ func (s *Service) renderNew(w http.ResponseWriter, r *http.Request, status int, 
 	})
 }
 
-// loadExpense liest die Ausgabe aus dem Parameter „ausgabe“; ok=false heißt,
-// die Antwort ist schon geschrieben.
+// loadExpense reads the expense from the "ausgabe" parameter; ok=false means
+// the response has already been written.
 func (s *Service) loadExpense(w http.ResponseWriter, r *http.Request) (store.Expense, bool) {
 	id, err := strconv.ParseInt(r.FormValue("ausgabe"), 10, 64)
 	if err != nil || id <= 0 {
@@ -282,7 +282,7 @@ func (s *Service) handleCreate(w http.ResponseWriter, r *http.Request) {
 	}
 	msg := fmt.Sprintf("„%s“ wiederholt sich jetzt %s.", e.Title, adverb(freq))
 	if n, err := s.Materialize(r.Context(), s.today()); err != nil {
-		s.d.Log.Error("wiederkehrende Ausgaben", "err", err)
+		s.d.Log.Error("recurring expenses", "err", err)
 	} else if n > 0 {
 		msg += fmt.Sprintf(" %s nachgetragen.", countText(n))
 	}

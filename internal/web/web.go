@@ -12,10 +12,10 @@ import (
 	"github.com/shostakovich/zipfelkasse/internal/store"
 )
 
-// Register hängt die Routen des Pakets web an den Mux.
+// Register adds the routes of package web to the mux.
 //
-// Routen-Muster immer mit Methode angeben ("GET /pfad"), keine Catch-all-
-// Muster wie "/" oder "GET /" – die kollidieren mit Mustern anderer Pakete.
+// Always specify route patterns with a method ("GET /path"), no catch-all
+// patterns like "/" or "GET /": they collide with patterns of other packages.
 func Register(mux *http.ServeMux, d Deps) {
 	h := handlers{d}
 	static, _ := fs.Sub(staticFS, "static")
@@ -80,7 +80,7 @@ func (h handlers) healthz(w http.ResponseWriter, r *http.Request) {
 type whoData struct {
 	Participants []store.Participant
 	Return       string
-	Name         string // Eingabe „Neue Person“ nach Fehler
+	Name         string // "new person" input after an error
 }
 
 func (h handlers) renderWho(w http.ResponseWriter, r *http.Request, status int, data whoData, errMsg string) {
@@ -122,11 +122,11 @@ func (h handlers) whoCreate(w http.ResponseWriter, r *http.Request) {
 		h.serverError(w, r, err)
 		return
 	}
-	// Akteur ist die neue Person selbst (noch ohne Cookie, also ohne Me).
+	// The actor is the new person themselves (no cookie yet, hence no Me).
 	p, _ := h.d.Store.GetParticipant(r.Context(), id)
 	if err := h.d.Store.AddActivity(r.Context(), id, actionSettingsUpdated, 0,
 		store.ActivityDetails{Text: fmt.Sprintf("Person „%s“ hinzugefügt", p.Name)}); err != nil {
-		h.d.Log.Error("aktivität", "err", err)
+		h.d.Log.Error("activity", "err", err)
 	}
 	SetIdentity(w, r, id)
 	SetFlash(w, "Willkommen!")
@@ -142,7 +142,7 @@ func (h handlers) notFound(w http.ResponseWriter, r *http.Request, msg string) {
 	h.d.Render.Error(w, r, http.StatusNotFound, msg)
 }
 
-// validationMsg liefert die Meldung eines domain.ValidationError.
+// validationMsg returns the message of a domain.ValidationError.
 func validationMsg(err error) (string, bool) {
 	var ve domain.ValidationError
 	if errors.As(err, &ve) {
@@ -151,7 +151,7 @@ func validationMsg(err error) (string, bool) {
 	return "", false
 }
 
-// pathID liest den Pfadparameter {id}; ungültig → 0.
+// pathID reads the path parameter {id}; invalid → 0.
 func pathID(r *http.Request) int64 {
 	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
 	if err != nil || id <= 0 {
@@ -160,7 +160,7 @@ func pathID(r *http.Request) int64 {
 	return id
 }
 
-// formID liest eine ID aus einem Formular- oder Query-Wert; ungültig → 0.
+// formID reads an ID from a form or query value; invalid → 0.
 func formID(v string) int64 {
 	id, err := strconv.ParseInt(strings.TrimSpace(v), 10, 64)
 	if err != nil || id <= 0 {
@@ -169,7 +169,7 @@ func formID(v string) int64 {
 	return id
 }
 
-// me liefert die aktuelle Person (hinter der Middleware immer gesetzt).
+// me returns the current person (always set behind the middleware).
 func me(r *http.Request) store.Participant {
 	p, _ := Me(r.Context())
 	return p

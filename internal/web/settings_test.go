@@ -18,11 +18,11 @@ func TestSettingsGroupName(t *testing.T) {
 	status, body := g.get("/einstellungen")
 	for _, link := range []string{"/einstellungen/teilnehmer", "/einstellungen/kategorien", "/einstellungen/wiederkehrend", "/einstellungen/kurse", "/einstellungen/ynab", "/export"} {
 		if !strings.Contains(body, `href="`+link+`"`) {
-			t.Errorf("Link %s fehlt", link)
+			t.Errorf("link %s missing", link)
 		}
 	}
 	if status != 200 {
-		t.Fatalf("Status %d", status)
+		t.Fatalf("status %d", status)
 	}
 	status, loc, _ := g.post("/einstellungen", url.Values{"gruppenname": {"WG Süd"}})
 	if status != http.StatusSeeOther || loc != "/einstellungen" {
@@ -33,15 +33,15 @@ func TestSettingsGroupName(t *testing.T) {
 	}
 	_, body = g.get("/salden")
 	if !strings.Contains(body, "<title>Salden · WG Süd</title>") {
-		t.Error("Gruppenname nicht im Titel")
+		t.Error("group name not in the title")
 	}
 	status, _, body = g.post("/einstellungen", url.Values{"gruppenname": {"  "}})
 	if status != http.StatusUnprocessableEntity || !strings.Contains(errorOf(body), "Namen") {
-		t.Errorf("leerer Name: %d %q", status, errorOf(body))
+		t.Errorf("empty name: %d %q", status, errorOf(body))
 	}
 	_, body = g.get("/aktivitaet")
 	if !strings.Contains(body, "Gruppe umbenannt: „Zipfelkasse“ → „WG Süd“") {
-		t.Error("Umbenennung nicht protokolliert")
+		t.Error("rename not logged")
 	}
 }
 
@@ -53,14 +53,14 @@ func TestSettingsParticipants(t *testing.T) {
 		t.Fatalf("GET: %d", status)
 	}
 
-	// Anlegen, doppelt anlegen.
+	// Create, create a duplicate.
 	status, loc, _ := g.post("/einstellungen/teilnehmer", url.Values{"name": {"Dora"}})
 	if status != http.StatusSeeOther || loc != "/einstellungen/teilnehmer" {
-		t.Fatalf("anlegen: %d", status)
+		t.Fatalf("create: %d", status)
 	}
 	status, _, body = g.post("/einstellungen/teilnehmer", url.Values{"name": {"dora"}})
 	if status != http.StatusUnprocessableEntity || !strings.Contains(errorOf(body), "gibt es schon") || !strings.Contains(body, `value="dora"`) {
-		t.Errorf("doppelt: %d %q", status, errorOf(body))
+		t.Errorf("duplicate: %d %q", status, errorOf(body))
 	}
 	ps, _ := g.d.Store.ListParticipants(ctx, false)
 	var dora int64
@@ -70,50 +70,50 @@ func TestSettingsParticipants(t *testing.T) {
 		}
 	}
 	if dora == 0 {
-		t.Fatal("Dora fehlt")
+		t.Fatal("Dora missing")
 	}
 
-	// Umbenennen.
+	// Rename.
 	if status, _, _ := g.post("/einstellungen/teilnehmer/"+id(dora), url.Values{"name": {"Dorothea"}}); status != http.StatusSeeOther {
-		t.Errorf("umbenennen: %d", status)
+		t.Errorf("rename: %d", status)
 	}
 	if p, _ := g.d.Store.GetParticipant(ctx, dora); p.Name != "Dorothea" {
 		t.Errorf("Name = %q", p.Name)
 	}
 	if status, _, _ := g.post("/einstellungen/teilnehmer/"+id(dora), url.Values{"name": {"Ben"}}); status != http.StatusUnprocessableEntity {
-		t.Errorf("umbenennen auf vorhandenen Namen: %d", status)
+		t.Errorf("rename to an existing name: %d", status)
 	}
 	if status, _, _ := g.post("/einstellungen/teilnehmer/999", url.Values{"name": {"X"}}); status != http.StatusNotFound {
-		t.Errorf("unbekannte Person: %d", status)
+		t.Errorf("unknown person: %d", status)
 	}
 
-	// Archivieren mit offenem Saldo geht nicht.
+	// Archiving with an open balance is not possible.
 	g.create(g.form())
 	status, _, body = g.post("/einstellungen/teilnehmer/"+id(g.ben)+"/archivieren", nil)
 	if status != http.StatusUnprocessableEntity || !strings.Contains(errorOf(body), "Ben hat noch einen Saldo von -10,00 €") {
-		t.Errorf("archivieren mit Saldo: %d %q", status, errorOf(body))
+		t.Errorf("archive with balance: %d %q", status, errorOf(body))
 	}
-	// Ohne Saldo: archivieren und zurückholen.
+	// Without a balance: archive and bring back.
 	if status, _, _ := g.post("/einstellungen/teilnehmer/"+id(dora)+"/archivieren", nil); status != http.StatusSeeOther {
-		t.Errorf("archivieren: %d", status)
+		t.Errorf("archive: %d", status)
 	}
 	if p, _ := g.d.Store.GetParticipant(ctx, dora); !p.Archived() {
-		t.Error("nicht archiviert")
+		t.Error("not archived")
 	}
 	_, body = g.get("/einstellungen/teilnehmer")
 	if !strings.Contains(body, "Archiviert") || !strings.Contains(body, "/einstellungen/teilnehmer/"+id(dora)+"/reaktivieren") {
-		t.Error("archivierte Person nicht gelistet")
+		t.Error("archived person not listed")
 	}
 	if status, _, _ := g.post("/einstellungen/teilnehmer/"+id(dora)+"/reaktivieren", nil); status != http.StatusSeeOther {
-		t.Errorf("reaktivieren: %d", status)
+		t.Errorf("reactivate: %d", status)
 	}
 	if p, _ := g.d.Store.GetParticipant(ctx, dora); p.Archived() {
-		t.Error("nicht reaktiviert")
+		t.Error("not reactivated")
 	}
 	_, body = g.get("/aktivitaet")
 	for _, want := range []string{"Person „Dora“ hinzugefügt", "Person „Dora“ umbenannt in „Dorothea“", "Person „Dorothea“ archiviert", "Person „Dorothea“ reaktiviert"} {
 		if !strings.Contains(body, want) {
-			t.Errorf("Aktivität enthält nicht %q", want)
+			t.Errorf("activity does not contain %q", want)
 		}
 	}
 }
@@ -127,58 +127,58 @@ func TestSettingsCategories(t *testing.T) {
 	}
 	status, _, _ = g.post("/einstellungen/kategorien", url.Values{"name": {"Haustier"}})
 	if status != http.StatusSeeOther {
-		t.Fatalf("anlegen: %d", status)
+		t.Fatalf("create: %d", status)
 	}
 	if status, _, body := g.post("/einstellungen/kategorien", url.Values{"name": {""}}); status != http.StatusUnprocessableEntity {
-		t.Errorf("leer: %d %q", status, errorOf(body))
+		t.Errorf("empty: %d %q", status, errorOf(body))
 	}
 	cats, _ := g.d.Store.ListCategories(ctx, false)
 	first, second := cats[0], cats[1]
 
 	if status, _, _ := g.post("/einstellungen/kategorien/"+id(first.ID), url.Values{"name": {"Essen & Trinken"}}); status != http.StatusSeeOther {
-		t.Errorf("umbenennen: %d", status)
+		t.Errorf("rename: %d", status)
 	}
 	status, loc, _ := g.post("/einstellungen/kategorien/"+id(second.ID)+"/hoch", nil)
 	if status != http.StatusSeeOther || loc != "/einstellungen/kategorien#kategorie-"+id(second.ID) {
-		t.Errorf("hoch: %d %q", status, loc)
+		t.Errorf("up: %d %q", status, loc)
 	}
 	cats, _ = g.d.Store.ListCategories(ctx, false)
 	if cats[0].ID != second.ID || cats[1].Name != "Essen & Trinken" {
-		t.Errorf("Reihenfolge: %s, %s", cats[0].Name, cats[1].Name)
+		t.Errorf("order: %s, %s", cats[0].Name, cats[1].Name)
 	}
 	if acts, _ := g.d.Store.ListActivity(ctx, store.ActivityFilter{Limit: 1}); len(acts) != 1 ||
 		acts[0].Action != store.ActionSettingsUpdated || acts[0].ActorID != g.anna ||
 		acts[0].Details.Text != "Kategorie „"+second.Name+"“ nach oben verschoben" {
-		t.Errorf("Aktivität = %+v", acts)
+		t.Errorf("activity = %+v", acts)
 	}
 	if status, _, _ := g.post("/einstellungen/kategorien/"+id(second.ID)+"/runter", nil); status != http.StatusSeeOther {
-		t.Errorf("runter: %d", status)
+		t.Errorf("down: %d", status)
 	}
 	if status, _, _ := g.post("/einstellungen/kategorien/"+id(first.ID)+"/archivieren", nil); status != http.StatusSeeOther {
-		t.Errorf("archivieren: %d", status)
+		t.Errorf("archive: %d", status)
 	}
 	if c, _ := g.d.Store.GetCategory(ctx, first.ID); !c.Archived() {
-		t.Error("nicht archiviert")
+		t.Error("not archived")
 	}
-	// Archivierte Kategorie fehlt im neuen Formular …
+	// An archived category is missing from the new form …
 	if _, body := g.get("/ausgaben/neu"); strings.Contains(body, "Essen &amp; Trinken") || strings.Contains(body, "Essen & Trinken") {
-		t.Error("archivierte Kategorie im Formular")
+		t.Error("archived category in the form")
 	}
 	if status, _, _ := g.post("/einstellungen/kategorien/"+id(first.ID)+"/hoch", nil); status != http.StatusNotFound {
-		t.Errorf("archivierte verschieben: %d", status)
+		t.Errorf("move archived: %d", status)
 	}
 	if status, _, _ := g.post("/einstellungen/kategorien/"+id(first.ID)+"/reaktivieren", nil); status != http.StatusSeeOther {
-		t.Errorf("reaktivieren: %d", status)
+		t.Errorf("reactivate: %d", status)
 	}
 	if status, _, _ := g.post("/einstellungen/kategorien/999/archivieren", nil); status != http.StatusNotFound {
-		t.Errorf("unbekannt: %d", status)
+		t.Errorf("unknown: %d", status)
 	}
 }
 
 func TestPWA(t *testing.T) {
 	g := newGroup(t, nil)
 	g.d.Store.SetGroupName(context.Background(), "WG Süd")
-	// Öffentlich, ohne Person.
+	// Public, without a person.
 	res, body := get(t, g.srv, "/manifest.webmanifest")
 	if res.StatusCode != 200 || !strings.HasPrefix(res.Header.Get("Content-Type"), "application/manifest+json") {
 		t.Fatalf("manifest: %d %s", res.StatusCode, res.Header.Get("Content-Type"))
@@ -205,7 +205,7 @@ func TestPWA(t *testing.T) {
 	}
 	for _, want := range []string{"192x192 any", "512x512 any", "512x512 maskable"} {
 		if !purposes[want] {
-			t.Errorf("Icon %q fehlt", want)
+			t.Errorf("icon %q missing", want)
 		}
 	}
 
@@ -215,7 +215,7 @@ func TestPWA(t *testing.T) {
 		t.Errorf("sw.js: %d %s", res.StatusCode, res.Header.Get("Content-Type"))
 	}
 	if strings.Contains(body, "caches.") {
-		t.Error("sw.js cacht")
+		t.Error("sw.js caches")
 	}
 	res, _ = get(t, g.srv, "/favicon.ico")
 	if res.StatusCode != 200 || res.Header.Get("Content-Type") != "image/png" {
@@ -228,13 +228,13 @@ func TestPWA(t *testing.T) {
 	_, body = g.get("/")
 	for _, want := range []string{`rel="manifest" href="/manifest.webmanifest"`, `rel="apple-touch-icon"`, "/static/app.js?v="} {
 		if !strings.Contains(body, want) {
-			t.Errorf("Layout enthält nicht %q", want)
+			t.Errorf("layout does not contain %q", want)
 		}
 	}
 }
 
-// TestStaticAssets prüft, dass die eingebetteten Skripte/Icons ausgeliefert
-// werden und das CSS die vertraglich zugesagten Klassen enthält.
+// TestStaticAssets checks that the embedded scripts/icons are served and that
+// the CSS contains the classes it promises.
 func TestStaticAssets(t *testing.T) {
 	g := newGroup(t, nil)
 	for _, p := range []string{"/static/app.js", "/static/expense-form.js", "/static/icons.svg"} {
@@ -251,17 +251,17 @@ func TestStaticAssets(t *testing.T) {
 		".link-list", ".stack", ".stack-sm", ".row", ".muted", ".amount", ".positive", ".negative", ".sr-only",
 	} {
 		if !strings.Contains(css, cls+" ") && !strings.Contains(css, cls+",") && !strings.Contains(css, cls+"{") {
-			t.Errorf("app.css: Klasse %s fehlt", cls)
+			t.Errorf("app.css: class %s missing", cls)
 		}
 	}
 }
 
 func TestExpensePeriod(t *testing.T) {
-	today := date("2026-10-02") // Freitag
+	today := date("2026-10-02") // Friday
 	tests := map[string]string{
 		"2026-10-05": "Bevorstehend",
 		"2026-10-02": "Diese Woche",
-		"2026-09-28": "Diese Woche", // Montag, anderer Monat
+		"2026-09-28": "Diese Woche", // Monday, other month
 		"2026-09-27": "Letzter Monat",
 		"2026-10-01": "Diese Woche",
 		"2026-08-31": "Früher in diesem Jahr",
@@ -275,11 +275,11 @@ func TestExpensePeriod(t *testing.T) {
 	}
 	today = date("2026-10-20")
 	if got := periodLabels[expensePeriod(date("2026-10-05"), today)]; got != "Früher in diesem Monat" {
-		t.Errorf("Monatsanfang: %q", got)
+		t.Errorf("start of month: %q", got)
 	}
-	// Januar: Dezember ist „Letzter Monat“, nicht „Letztes Jahr“.
+	// January: December is "Letzter Monat" (last month), not "Letztes Jahr" (last year).
 	if got := periodLabels[expensePeriod(date("2025-12-15"), date("2026-01-20"))]; got != "Letzter Monat" {
-		t.Errorf("Jahreswechsel: %q", got)
+		t.Errorf("turn of the year: %q", got)
 	}
 	acts := map[string]string{
 		"2026-10-20": "Heute", "2026-10-19": "Gestern", "2026-10-18": "Letzte Woche", "2026-10-12": "Letzte Woche",
@@ -287,7 +287,7 @@ func TestExpensePeriod(t *testing.T) {
 	}
 	for d, want := range acts {
 		if got := activityPeriodLabels[activityPeriod(date(d), today)]; got != want {
-			t.Errorf("Aktivität %s: %q, want %q", d, got, want)
+			t.Errorf("activity %s: %q, want %q", d, got, want)
 		}
 	}
 }
@@ -341,15 +341,15 @@ func TestGroupExpensesRows(t *testing.T) {
 	}
 	groups := groupExpenses(es, today, 1, names, 4)
 	if len(groups) != 2 || groups[0].Label != "Diese Woche" || groups[1].Label != "Letzter Monat" {
-		t.Fatalf("Gruppen: %+v", groups)
+		t.Fatalf("groups: %+v", groups)
 	}
 	r := groups[0].Rows[0]
 	if !r.Everyone || !r.Involved || r.MyBalance != 300 {
-		t.Errorf("Zeile 1: %+v", r)
+		t.Errorf("row 1: %+v", r)
 	}
 	r = groups[1].Rows[0]
 	if r.Everyone || r.Involved || r.MyBalance != 0 || strings.Join(r.ForNames, ",") != "B,C" {
-		t.Errorf("Zeile 2: %+v", r)
+		t.Errorf("row 2: %+v", r)
 	}
 }
 

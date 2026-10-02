@@ -2,18 +2,18 @@ package fx
 
 import "time"
 
-// Die EZB veröffentlicht Referenzkurse an TARGET-Geschäftstagen gegen 16:00
-// Uhr MEZ/MESZ: Montag bis Freitag außer Neujahr, Karfreitag, Ostermontag,
-// 1. Mai, 25. und 26. Dezember.
+// The ECB publishes reference rates on TARGET business days around 16:00
+// CET/CEST: Monday to Friday except New Year's Day, Good Friday, Easter
+// Monday, 1 May, 25 and 26 December.
 
-// publishHour/publishMinute: ab dann gelten die Kurse des Tages als
-// veröffentlicht (Europe/Berlin).
+// publishHour/publishMinute: from then on, the day's rates count as
+// published (Europe/Berlin).
 const (
 	publishHour   = 16
 	publishMinute = 30
 )
 
-// isBusinessDay meldet, ob die EZB am Datum d (00:00 UTC) Kurse veröffentlicht.
+// isBusinessDay reports whether the ECB publishes rates on date d (00:00 UTC).
 func isBusinessDay(d time.Time) bool {
 	switch d.Weekday() {
 	case time.Saturday, time.Sunday:
@@ -33,7 +33,7 @@ func isBusinessDay(d time.Time) bool {
 	return true
 }
 
-// lastBusinessDay liefert den letzten Geschäftstag ≤ d.
+// lastBusinessDay returns the last business day ≤ d.
 func lastBusinessDay(d time.Time) time.Time {
 	for !isBusinessDay(d) {
 		d = d.AddDate(0, 0, -1)
@@ -41,8 +41,8 @@ func lastBusinessDay(d time.Time) time.Time {
 	return d
 }
 
-// easterSunday berechnet den Ostersonntag (gregorianisch, Anonymous
-// Gregorian Algorithm / Meeus-Jones-Butcher) als 00:00 UTC.
+// easterSunday computes Easter Sunday (Gregorian, Anonymous Gregorian
+// Algorithm / Meeus-Jones-Butcher) at 00:00 UTC.
 func easterSunday(y int) time.Time {
 	a := y % 19
 	b, c := y/100, y%100
@@ -58,8 +58,8 @@ func easterSunday(y int) time.Time {
 	return time.Date(y, time.Month(month), day, 0, 0, 0, 0, time.UTC)
 }
 
-// nextPublish liefert den nächsten Zeitpunkt nach now (in now's Zone, gedacht
-// für Europe/Berlin), an dem neue Tageskurse vorliegen sollten.
+// nextPublish returns the next point in time after now (in now's zone, meant
+// for Europe/Berlin) at which new daily rates should be available.
 func nextPublish(now time.Time) time.Time {
 	t := time.Date(now.Year(), now.Month(), now.Day(), publishHour, publishMinute, 0, 0, now.Location())
 	for !t.After(now) || !isBusinessDay(time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, time.UTC)) {

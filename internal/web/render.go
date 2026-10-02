@@ -28,7 +28,7 @@ var pagesFS embed.FS
 //go:embed static
 var staticFS embed.FS
 
-// Werte für Page.Nav: welcher Tab der Hauptnavigation aktiv ist.
+// Values for Page.Nav: which tab of the main navigation is active.
 const (
 	NavExpenses = "ausgaben"
 	NavBalances = "salden"
@@ -36,36 +36,36 @@ const (
 	NavSettings = "einstellungen"
 )
 
-// Page beschreibt eine zu rendernde Seite.
+// Page describes a page to render.
 type Page struct {
-	Title string // Seitentitel (ohne Gruppennamen)
-	Nav   string // aktiver Tab, siehe Nav*-Konstanten; "" = keiner
-	Error string // Fehlermeldung oben auf der Seite (z. B. Validierungsfehler)
-	Data  any    // seitenspezifische Daten, im Template als .Data
+	Title string // page title (without the group name)
+	Nav   string // active tab, see the Nav* constants; "" = none
+	Error string // error message at the top of the page (e.g. validation error)
+	Data  any    // page-specific data, available as .Data in the template
 }
 
-// View ist das, was Templates als Punkt (.) bekommen.
+// View is what templates get as dot (.).
 type View struct {
 	Page
-	Me        *store.Participant // nil, wenn (noch) niemand ausgewählt ist
+	Me        *store.Participant // nil if nobody has been selected (yet)
 	GroupName string
-	Flash     string // Erfolgsmeldung aus SetFlash, einmalig
-	Path      string // aktueller Request-Pfad
+	Flash     string // success message from SetFlash, shown once
+	Path      string // current request path
 }
 
-// Renderer kombiniert das gemeinsame Layout mit Seiten-Templates. Jedes Paket
-// lädt seine Templates mit Load aus seinem eigenen embed.FS.
+// Renderer combines the shared layout with page templates. Each package
+// loads its templates with Load from its own embed.FS.
 type Renderer struct {
 	store  *store.Store
 	loc    *time.Location
 	log    *slog.Logger
 	base   *template.Template
-	static map[string]string // Dateiname → Kurz-Hash für Cache-Busting
-	pages  *Pages            // Seiten des Pakets web selbst
+	static map[string]string // file name → short hash for cache busting
+	pages  *Pages            // pages of package web itself
 }
 
-// NewRenderer parst das Layout und die eigenen Seiten. loc ist die Zeitzone
-// für die Anzeige von Zeitstempeln.
+// NewRenderer parses the layout and its own pages. loc is the time zone for
+// displaying timestamps.
 func NewRenderer(st *store.Store, loc *time.Location, log *slog.Logger) (*Renderer, error) {
 	if loc == nil {
 		loc = time.Local
@@ -99,27 +99,27 @@ func NewRenderer(st *store.Store, loc *time.Location, log *slog.Logger) (*Render
 	return r, nil
 }
 
-// Funcs sind die Template-Funktionen, die in allen Templates verfügbar sind.
+// Funcs are the template functions available in all templates.
 func (r *Renderer) Funcs() template.FuncMap {
 	return template.FuncMap{
-		"eur":         domain.FormatCents,      // int64 Cent → "1.234,56 €"
-		"amountInput": domain.FormatCentsInput, // int64 Cent → "1234,56" (für <input>)
+		"eur":         domain.FormatCents,      // int64 cents → "1.234,56 €"
+		"amountInput": domain.FormatCentsInput, // int64 cents → "1234,56" (for <input>)
 		"money":       domain.FormatMoney,      // (minor, "USD") → "12,34 USD"
 		"percent":     domain.FormatBasisPoints,
 		"date":        domain.FormatDate, // time.Time → "02.10.2026"
-		"isoDate": func(t time.Time) string { // für <input type=date>
+		"isoDate": func(t time.Time) string { // for <input type=date>
 			if t.IsZero() {
 				return ""
 			}
 			return t.Format(domain.DateLayout)
 		},
-		"dateTime": func(t time.Time) string { // Zeitstempel in lokaler Zeit
+		"dateTime": func(t time.Time) string { // timestamp in local time
 			if t.IsZero() {
 				return ""
 			}
 			return t.In(r.loc).Format("02.01.2006, 15:04")
 		},
-		"signClass": func(v int64) string { // für Salden: "positive" / "negative" / ""
+		"signClass": func(v int64) string { // for balances: "positive" / "negative" / ""
 			switch {
 			case v > 0:
 				return "positive"
@@ -129,22 +129,22 @@ func (r *Renderer) Funcs() template.FuncMap {
 			return ""
 		},
 		"static": r.staticURL, // "app.css" → "/static/app.css?v=…"
-		"icon": func(name string) template.HTML { // Icon aus static/icons.svg, z. B. {{icon "plus"}}
+		"icon": func(name string) template.HTML { // icon from static/icons.svg, e.g. {{icon "plus"}}
 			return template.HTML(`<svg class="icon" aria-hidden="true"><use href="` +
 				template.HTMLEscapeString(r.staticURL("icons.svg")+"#"+name) + `"></use></svg>`)
 		},
-		"categoryIcon": categoryIcon, // Kategoriename → Icon-Name für {{icon …}}
-		"minorInput":   minorInput,   // (minor, "USD") → "12,34" (für <input>)
-		"rateInput":    rateInput,    // Kurs 1.0876 → "1,0876" (für <input>)
-		"dict": func(kv ...any) (map[string]any, error) { // für Partials mit mehreren Werten
+		"categoryIcon": categoryIcon, // category name → icon name for {{icon …}}
+		"minorInput":   minorInput,   // (minor, "USD") → "12,34" (for <input>)
+		"rateInput":    rateInput,    // rate 1.0876 → "1,0876" (for <input>)
+		"dict": func(kv ...any) (map[string]any, error) { // for partials with several values
 			if len(kv)%2 != 0 {
-				return nil, fmt.Errorf("dict: ungerade Anzahl Argumente")
+				return nil, fmt.Errorf("dict: odd number of arguments")
 			}
 			m := make(map[string]any, len(kv)/2)
 			for i := 0; i < len(kv); i += 2 {
 				k, ok := kv[i].(string)
 				if !ok {
-					return nil, fmt.Errorf("dict: schlüssel %v ist kein string", kv[i])
+					return nil, fmt.Errorf("dict: key %v is not a string", kv[i])
 				}
 				m[k] = kv[i+1]
 			}
@@ -161,17 +161,17 @@ func (r *Renderer) staticURL(name string) string {
 	return u
 }
 
-// Pages ist ein Satz geladener Seiten eines Pakets.
+// Pages is a set of loaded pages of a package.
 type Pages struct {
 	r   *Renderer
 	set map[string]*template.Template
 }
 
-// Load lädt Seiten-Templates aus fsys. Jede Datei, die auf eines der Muster
-// passt, wird eine Seite (Name = Dateiname, z. B. "ynab.html") und definiert
-// mindestens {{define "content"}}; optional "head" (in <head>) und "scripts"
-// (vor </body>). Dateien, deren Name mit "_" beginnt, sind Partials und
-// stehen allen Seiten dieses Satzes zur Verfügung.
+// Load loads page templates from fsys. Each file matching one of the patterns
+// becomes a page (name = file name, e.g. "ynab.html") and defines at least
+// {{define "content"}}; optionally "head" (in <head>) and "scripts" (before
+// </body>). Files whose name starts with "_" are partials and are available
+// to all pages of this set.
 func (r *Renderer) Load(fsys fs.FS, patterns ...string) (*Pages, error) {
 	var files []string
 	for _, pat := range patterns {
@@ -205,22 +205,22 @@ func (r *Renderer) Load(fsys fs.FS, patterns ...string) (*Pages, error) {
 		}
 		name := path.Base(f)
 		if _, dup := p.set[name]; dup {
-			return nil, fmt.Errorf("template %s doppelt", name)
+			return nil, fmt.Errorf("duplicate template %s", name)
 		}
 		p.set[name] = t
 	}
 	if len(p.set) == 0 {
-		return nil, fmt.Errorf("keine templates für %v", patterns)
+		return nil, fmt.Errorf("no templates for %v", patterns)
 	}
 	return p, nil
 }
 
-// Render rendert die Seite name im Layout und schreibt sie mit status.
-// Template-Fehler ergeben einen 500er, ohne halbe Seite.
+// Render renders the page name in the layout and writes it with status.
+// Template errors result in a 500, without a half-written page.
 func (p *Pages) Render(w http.ResponseWriter, req *http.Request, status int, name string, page Page) {
 	t, ok := p.set[name]
 	if !ok {
-		p.r.log.Error("template unbekannt", "name", name)
+		p.r.log.Error("unknown template", "name", name)
 		http.Error(w, "Interner Fehler", http.StatusInternalServerError)
 		return
 	}
@@ -241,20 +241,20 @@ func (p *Pages) Render(w http.ResponseWriter, req *http.Request, status int, nam
 	w.Write(buf.Bytes())
 }
 
-// Page rendert eine Seite des Pakets web selbst.
+// Page renders a page of package web itself.
 func (r *Renderer) Page(w http.ResponseWriter, req *http.Request, status int, name string, page Page) {
 	r.pages.Render(w, req, status, name, page)
 }
 
-// Error rendert eine Fehlerseite im Layout (z. B. 404 „Nicht gefunden“).
+// Error renders an error page in the layout (e.g. 404 "Nicht gefunden").
 func (r *Renderer) Error(w http.ResponseWriter, req *http.Request, status int, msg string) {
 	r.Page(w, req, status, "error.html", Page{Title: msg})
 }
 
 const flashCookie = "flash"
 
-// SetFlash merkt eine Erfolgsmeldung für die nächste gerenderte Seite
-// (Muster POST → Redirect → Meldung). Vor dem Redirect aufrufen.
+// SetFlash stores a success message for the next rendered page (pattern
+// POST → redirect → message). Call it before the redirect.
 func SetFlash(w http.ResponseWriter, msg string) {
 	http.SetCookie(w, &http.Cookie{
 		Name: flashCookie, Value: base64.RawURLEncoding.EncodeToString([]byte(msg)),

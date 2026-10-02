@@ -1,9 +1,9 @@
 //go:build ignore
 
-// gen_icons erzeugt die PWA-Icons in static/icons/ (wird nicht ins Binary
-// gebaut, nur bei Bedarf: go generate ./internal/web).
+// gen_icons generates the PWA icons in static/icons/ (not built into the
+// binary, only run on demand: go generate ./internal/web).
 //
-// Motiv: eine in zwei Hälften geteilte Münze – weiß auf Spliit-Grün.
+// Motif: a coin split into two halves, white on Spliit green.
 package main
 
 import (
@@ -21,18 +21,18 @@ var (
 	white = color.NRGBA{0xff, 0xff, 0xff, 0xff}
 )
 
-// shape liefert die Farbe am Punkt (x, y) ∈ [0,1)², oder ok=false für transparent.
+// shape returns the color at point (x, y) ∈ [0,1)², or ok=false for transparent.
 type shape func(x, y float64) (c color.NRGBA, ok bool)
 
-// icon zeichnet das Motiv. rounded: abgerundetes Quadrat (sonst
-// randlos), scale: Radius der Münze relativ zur Kantenlänge.
+// icon draws the motif. rounded: rounded square (otherwise full bleed),
+// scale: radius of the coin relative to the edge length.
 func icon(rounded bool, scale float64) shape {
 	return func(x, y float64) (color.NRGBA, bool) {
 		if rounded && !inRoundedSquare(x, y, 0.22) {
 			return color.NRGBA{}, false
 		}
-		// Zwei Hälften einer Münze, auseinandergeschoben: links etwas
-		// höher, rechts etwas tiefer, dazwischen ein Spalt.
+		// Two halves of a coin, pushed apart: the left one slightly
+		// higher, the right one slightly lower, with a gap in between.
 		gap := scale * 0.14
 		shift := scale * 0.12
 		dx := x - 0.5
@@ -53,7 +53,7 @@ func inRoundedSquare(x, y, radius float64) bool {
 	return cx*cx+cy*cy <= radius*radius
 }
 
-// render rastert shape mit 4×4-Supersampling.
+// render rasterizes shape with 4×4 supersampling.
 func render(size int, s shape) *image.NRGBA {
 	img := image.NewNRGBA(image.Rect(0, 0, size, size))
 	const n = 4
@@ -104,8 +104,8 @@ func main() {
 	write("icon-192.png", render(192, icon(true, 0.30)))
 	write("icon-512.png", render(512, icon(true, 0.30)))
 	write("favicon-32.png", render(32, icon(true, 0.34)))
-	// Maskable: randlos, Motiv innerhalb der Sicherheitszone (Radius 40 %).
+	// Maskable: full bleed, motif within the safe zone (radius 40 %).
 	write("maskable-512.png", render(512, icon(false, 0.26)))
-	// iOS maskiert selbst und mag keine Transparenz.
+	// iOS applies its own mask and does not like transparency.
 	write("apple-touch-icon.png", render(180, icon(false, 0.30)))
 }

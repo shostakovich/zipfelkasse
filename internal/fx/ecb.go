@@ -19,28 +19,28 @@ import (
 	"github.com/shostakovich/zipfelkasse/internal/store"
 )
 
-// Dateien der EZB (https://www.ecb.europa.eu/stats/eurofxref/).
+// ECB files (https://www.ecb.europa.eu/stats/eurofxref/).
 const (
 	defaultBaseURL = "https://www.ecb.europa.eu/stats/eurofxref/"
-	fileDaily      = "eurofxref-daily.xml"    // letzter Geschäftstag
-	file90d        = "eurofxref-hist-90d.xml" // ca. 90 Kalendertage
-	fileHist       = "eurofxref-hist.zip"     // alles seit 1999 (CSV im ZIP)
+	fileDaily      = "eurofxref-daily.xml"    // last business day
+	file90d        = "eurofxref-hist-90d.xml" // about 90 calendar days
+	fileHist       = "eurofxref-hist.zip"     // everything since 1999 (CSV in a ZIP)
 
-	userAgent   = "zipfelkasse/1.0 (selbst gehostete Ausgabenverwaltung; EZB-Referenzkurse)"
+	userAgent   = "zipfelkasse/1.0 (self-hosted expense tracker; ECB reference rates)"
 	maxBodySize = 32 << 20
 
-	// Nach einem Abruf wird dieselbe Datei frühestens nach dieser Zeit erneut
-	// geladen (außer bei ausdrücklicher Aktualisierung).
+	// After a fetch, the same file is loaded again only after this time at the
+	// earliest (except for an explicit refresh).
 	cooldownOK    = 15 * time.Minute
 	cooldownError = time.Minute
 
-	// settingHistUntil: jüngster Tag aus eurofxref-hist.zip, falls schon
-	// einmal komplett geladen. Ältere Tage stehen vollständig im Cache.
+	// settingHistUntil: the latest day from eurofxref-hist.zip, if it has been
+	// loaded completely before. Older days are fully cached.
 	settingHistUntil = "fx.ezb_hist_bis"
 )
 
-// FetchError: Die EZB-Kurse konnten nicht geladen werden (Netzwerk, HTTP-Status,
-// kaputte Datei).
+// FetchError means the ECB rates could not be loaded (network, HTTP status,
+// broken file). Its message is shown to the user.
 type FetchError struct {
 	File string
 	Err  error
@@ -52,31 +52,31 @@ func (e *FetchError) Error() string {
 
 func (e *FetchError) Unwrap() error { return e.Err }
 
-// loadResult beschreibt eine geladene Datei.
+// loadResult describes a loaded file.
 type loadResult struct {
-	From, To   time.Time       // ältester/jüngster Tag in der Datei
-	Currencies map[string]bool // alle Währungen der Datei
-	Count      int             // Anzahl Kurse
+	From, To   time.Time       // earliest/latest day in the file
+	Currencies map[string]bool // all currencies in the file
+	Count      int             // number of rates
 }
 
 func (r loadResult) covers(d time.Time) bool {
 	return !r.From.IsZero() && !d.Before(r.From)
 }
 
-// load ist ein (laufender oder beendeter) Abruf einer Datei.
+// load is a (running or finished) fetch of a file.
 type load struct {
 	done chan struct{}
-	at   time.Time // Ende des Abrufs
+	at   time.Time // end of the fetch
 	res  loadResult
 	err  error
 }
 
-// fetch lädt file von der EZB und speichert die Kurse im Cache. Dieselbe
-// Datei wird nie parallel geladen: Weitere Aufrufer warten auf den laufenden
-// Abruf. Kurz nach einem Abruf liefert fetch dessen Ergebnis erneut, ohne zu
-// laden (force umgeht das). Der Abruf läuft unabhängig von ctx zu Ende (der
-// HTTP-Client hat ein Timeout), ctx begrenzt nur das Warten. Beim Beenden
-// (Ende von Run) werden Abrufe abgebrochen und keine neuen gestartet.
+// fetch loads file from the ECB and stores the rates in the cache. The same
+// file is never loaded concurrently: further callers wait for the running
+// fetch. Shortly after a fetch, fetch returns its result again without
+// loading (force bypasses this). The fetch runs to completion independently
+// of ctx (the HTTP client has a timeout); ctx only limits the waiting. On
+// shutdown (end of Run), fetches are cancelled and no new ones are started.
 func (s *Service) fetch(ctx context.Context, file string, force bool) (loadResult, error) {
 	s.mu.Lock()
 	l := s.loads[file]
@@ -92,7 +92,7 @@ func (s *Service) fetch(ctx context.Context, file string, force bool) (loadResul
 				return l.res, l.err
 			}
 			l = nil
-		default: // läuft noch
+		default: // still running
 		}
 	}
 	if l == nil {
@@ -105,11 +105,11 @@ func (s *Service) fetch(ctx context.Context, file string, force bool) (loadResul
 		s.bg.Go(func() {
 			res, err := s.download(s.bgCtx, file)
 			if err != nil {
-				s.d.Log.Warn("EZB-Kurse laden fehlgeschlagen", "datei", file, "err", err)
+				s.d.Log.Warn("loading ECB rates failed", "file", file, "err", err)
 				err = &FetchError{File: file, Err: err}
 			} else {
-				s.d.Log.Info("EZB-Kurse geladen", "datei", file, "kurse", res.Count,
-					"von", res.From.Format(domain.DateLayout), "bis", res.To.Format(domain.DateLayout))
+				s.d.Log.Info("ECB rates loaded", "file", file, "rates", res.Count,
+					"from", res.From.Format(domain.DateLayout), "to", res.To.Format(domain.DateLayout))
 			}
 			s.mu.Lock()
 			l.res, l.err, l.at = res, err, s.now()
@@ -126,7 +126,7 @@ func (s *Service) fetch(ctx context.Context, file string, force bool) (loadResul
 	}
 }
 
-// download holt file, parst es und speichert die Kurse.
+// download fetches file, parses it and stores the rates.
 func (s *Service) download(ctx context.Context, file string) (loadResult, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, s.baseURL+file, nil)
 	if err != nil {
@@ -139,7 +139,7 @@ func (s *Service) download(ctx context.Context, file string) (loadResult, error)
 	}
 	defer res.Body.Close()
 	if res.StatusCode != http.StatusOK {
-		return loadResult{}, fmt.Errorf("HTTP-Status %d", res.StatusCode)
+		return loadResult{}, fmt.Errorf("HTTP status %d", res.StatusCode)
 	}
 	body, err := io.ReadAll(io.LimitReader(res.Body, maxBodySize))
 	if err != nil {
@@ -155,7 +155,7 @@ func (s *Service) download(ctx context.Context, file string) (loadResult, error)
 		return loadResult{}, err
 	}
 	if len(rates) == 0 {
-		return loadResult{}, errors.New("datei enthält keine kurse")
+		return loadResult{}, errors.New("file contains no rates")
 	}
 	if err := s.d.Store.SaveECBRates(ctx, rates); err != nil {
 		return loadResult{}, err
@@ -183,8 +183,8 @@ func summarize(rates []domain.FXRate) loadResult {
 	return r
 }
 
-// histUntil liefert den jüngsten Tag aus einem früheren Komplett-Import
-// (Nullwert, wenn eurofxref-hist.zip noch nie geladen wurde).
+// histUntil returns the latest day from an earlier complete import (zero
+// value if eurofxref-hist.zip has never been loaded).
 func (s *Service) histUntil(ctx context.Context) time.Time {
 	v, err := s.d.Store.GetSetting(ctx, settingHistUntil)
 	if err != nil {
@@ -196,7 +196,7 @@ func (s *Service) histUntil(ctx context.Context) time.Time {
 
 // --- Parser ----------------------------------------------------------------
 
-// ecbEnvelope ist eurofxref-daily.xml bzw. eurofxref-hist-90d.xml:
+// ecbEnvelope is eurofxref-daily.xml or eurofxref-hist-90d.xml:
 // <gesmes:Envelope><Cube><Cube time="…"><Cube currency="USD" rate="1.1"/>…
 type ecbEnvelope struct {
 	Days []struct {
@@ -217,7 +217,7 @@ func parseXML(r io.Reader) ([]domain.FXRate, error) {
 	for _, day := range env.Days {
 		d, err := time.Parse(domain.DateLayout, strings.TrimSpace(day.Time))
 		if err != nil {
-			return nil, fmt.Errorf("xml: datum %q: %w", day.Time, err)
+			return nil, fmt.Errorf("xml: date %q: %w", day.Time, err)
 		}
 		for _, c := range day.Rates {
 			if rate, ok := parseECBRate(c.Rate); ok && store.ValidCurrencyCode(c.Currency) {
@@ -228,8 +228,8 @@ func parseXML(r io.Reader) ([]domain.FXRate, error) {
 	return out, nil
 }
 
-// parseHistZip liest eurofxref-hist.csv aus dem ZIP:
-// "Date,USD,JPY,…," gefolgt von "2026-10-01,1.1298,178.49,N/A,…,".
+// parseHistZip reads eurofxref-hist.csv from the ZIP:
+// "Date,USD,JPY,…," followed by "2026-10-01,1.1298,178.49,N/A,…,".
 func parseHistZip(b []byte) ([]domain.FXRate, error) {
 	zr, err := zip.NewReader(bytes.NewReader(b), int64(len(b)))
 	if err != nil {
@@ -246,7 +246,7 @@ func parseHistZip(b []byte) ([]domain.FXRate, error) {
 		defer rc.Close()
 		return parseHistCSV(io.LimitReader(rc, 4*maxBodySize))
 	}
-	return nil, errors.New("zip: keine CSV-Datei gefunden")
+	return nil, errors.New("zip: no CSV file found")
 }
 
 func parseHistCSV(r io.Reader) ([]domain.FXRate, error) {
@@ -255,10 +255,10 @@ func parseHistCSV(r io.Reader) ([]domain.FXRate, error) {
 	cr.TrimLeadingSpace = true
 	header, err := cr.Read()
 	if err != nil {
-		return nil, fmt.Errorf("csv: kopfzeile: %w", err)
+		return nil, fmt.Errorf("csv: header: %w", err)
 	}
 	if len(header) == 0 || !strings.EqualFold(strings.TrimSpace(strings.TrimPrefix(header[0], "\uFEFF")), "Date") {
-		return nil, fmt.Errorf("csv: unerwartete kopfzeile %q", header)
+		return nil, fmt.Errorf("csv: unexpected header %q", header)
 	}
 	curs := make([]string, len(header))
 	for i, h := range header[1:] {
@@ -278,7 +278,7 @@ func parseHistCSV(r io.Reader) ([]domain.FXRate, error) {
 		}
 		d, err := time.Parse(domain.DateLayout, strings.TrimSpace(rec[0]))
 		if err != nil {
-			return nil, fmt.Errorf("csv: datum %q: %w", rec[0], err)
+			return nil, fmt.Errorf("csv: date %q: %w", rec[0], err)
 		}
 		for i := 1; i < len(rec) && i < len(curs); i++ {
 			if rate, ok := parseECBRate(rec[i]); ok && store.ValidCurrencyCode(curs[i]) {
@@ -289,7 +289,7 @@ func parseHistCSV(r io.Reader) ([]domain.FXRate, error) {
 	return out, nil
 }
 
-// parseECBRate liest "1.1298"; "N/A", leer oder ≤ 0 → false.
+// parseECBRate reads "1.1298"; "N/A", empty or ≤ 0 → false.
 func parseECBRate(s string) (float64, bool) {
 	f, err := strconv.ParseFloat(strings.TrimSpace(s), 64)
 	if err != nil || !(f > 0) || f > 1e12 {
