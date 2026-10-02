@@ -97,11 +97,11 @@ func (h handlers) home(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	names := map[int64]string{}
-	active := 0
+	active := map[int64]bool{}
 	for _, p := range people {
 		names[p.ID] = p.Name
 		if !p.Archived() {
-			active++
+			active[p.ID] = true
 		}
 		if !p.Archived() || p.ID == f.ParticipantID {
 			data.Participants = append(data.Participants, p)
@@ -127,13 +127,16 @@ func (h handlers) home(w http.ResponseWriter, r *http.Request) {
 }
 
 // groupExpenses splits the expenses (sorted by date, descending) into periods
-// and prepares the rows.
-func groupExpenses(es []store.Expense, today time.Time, meID int64, names map[int64]string, activeCount int) []expenseGroup {
+// and prepares the rows. active holds the IDs of the active people.
+func groupExpenses(es []store.Expense, today time.Time, meID int64, names map[int64]string, active map[int64]bool) []expenseGroup {
 	var groups []expenseGroup
 	last := -1
 	for _, e := range es {
-		row := expenseRow{Expense: e, Everyone: len(e.Shares) == activeCount && activeCount >= 4}
+		row := expenseRow{Expense: e, Everyone: len(active) >= 4 && len(e.Shares) == len(active)}
 		for _, sh := range e.Shares {
+			// Shares are unique per person: same count and all active means
+			// exactly the active people.
+			row.Everyone = row.Everyone && active[sh.ParticipantID]
 			row.ForNames = append(row.ForNames, names[sh.ParticipantID])
 			if sh.ParticipantID == meID {
 				row.Involved = true
