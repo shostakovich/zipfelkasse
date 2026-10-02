@@ -27,17 +27,22 @@ func day(s string) time.Time {
 	return t
 }
 
-// fakeFX returns fixed rates; an error if there is no entry.
+// fakeFX returns fixed rates; err if set (ECB not reachable), otherwise a
+// domain.ValidationError if there is no entry (no rate exists).
 type fakeFX struct {
 	rates map[string]float64 // currency → rate
+	err   error
 	calls []time.Time
 }
 
 func (f *fakeFX) Rate(_ context.Context, cur string, date time.Time) (domain.FXRate, error) {
 	f.calls = append(f.calls, date)
+	if f.err != nil {
+		return domain.FXRate{}, f.err
+	}
 	r, ok := f.rates[cur]
 	if !ok {
-		return domain.FXRate{}, errors.New("ECB not reachable")
+		return domain.FXRate{}, domain.ValidationError{Msg: "Für " + cur + " gibt es keinen EZB-Kurs."}
 	}
 	return domain.FXRate{Currency: cur, Date: date, Rate: r, Source: domain.FXSourceECB}, nil
 }
@@ -265,12 +270,34 @@ func TestMaterializeForeignCurrency(t *testing.T) {
 		t.Errorf("rate requested for %v", e.fx.calls)
 	}
 
-	// Rate not available → the template's rate.
-	delete(e.fx.rates, "USD")
+	// ECB not reachable: the occurrence is not created and next_date stays,
+	// so that the next run catches up with the day's rate.
+	e.fx.err = errors.New("ECB not reachable")
+	if n, err := e.svc.Materialize(e.ctx, day("2026-03-05")); n != 0 || err == nil {
+		t.Errorf("Materialize without ECB = %d, %v; want 0 and an error", n, err)
+	}
+	if got := e.next(rid); got != "2026-03-05" {
+		t.Errorf("next_date after a failed rate fetch = %s", got)
+	}
+	if got := e.dates(rid); got != "2026-01-05 2026-02-05" {
+		t.Errorf("occurrences after a failed rate fetch = %s", got)
+	}
+	e.fx.err = nil
 	e.materialize("2026-03-05", 1)
-	got = e.instances(rid)[2]
+	if got := e.instances(rid)[2]; got.Date != day("2026-03-05") || got.AmountCents != 8000 || got.FXRate != 1.25 {
+		t.Errorf("caught up = %+v", got.ExpenseInput)
+	}
+
+	// No rate exists for the date (e.g. a currency the ECB does not publish):
+	// waiting would block the rule forever, so the template's rate is used.
+	delete(e.fx.rates, "USD")
+	e.materialize("2026-04-05", 1)
+	got = e.instances(rid)[3]
 	if got.AmountCents != 9091 || got.FXRate != 1.1 {
 		t.Errorf("without rate = %+v", got.ExpenseInput)
+	}
+	if got := e.next(rid); got != "2026-05-05" {
+		t.Errorf("next_date = %s", got)
 	}
 }
 

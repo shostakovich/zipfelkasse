@@ -96,7 +96,11 @@ func (s *Service) materializeRule(ctx context.Context, r store.Recurring, today 
 				"rule", r.ID, "next_date", d.Format(domain.DateLayout), "limit", maxInstancesPerRun)
 			break
 		}
-		_, err := s.d.Store.CreateExpense(ctx, 0, s.instance(ctx, r, d))
+		in, err := s.instance(ctx, r, d)
+		if err != nil {
+			return n, err // next_date stays: the next run retries this occurrence
+		}
+		_, err = s.d.Store.CreateExpense(ctx, 0, in)
 		switch {
 		case err == nil:
 			n++
@@ -115,31 +119,41 @@ func (s *Service) materializeRule(ctx context.Context, r store.Recurring, today 
 }
 
 // instance builds the expense for the occurrence date from the template. For
-// a foreign currency, the rate of the occurrence date applies (via d.FX); if
-// none is available, the template's rate is kept.
-func (s *Service) instance(ctx context.Context, r store.Recurring, date time.Time) store.ExpenseInput {
+// a foreign currency, the rate of the occurrence date applies (via d.FX).
+// If the rate is only temporarily unavailable (ECB not reachable, database
+// error), instance returns an error, so that the occurrence is retried in the
+// next run instead of being stored with a stale rate for good. If no rate
+// exists for the date at all (domain.ValidationError, e.g. a currency the ECB
+// does not publish), the template's rate is kept: waiting would block the
+// rule forever.
+func (s *Service) instance(ctx context.Context, r store.Recurring, date time.Time) (store.ExpenseInput, error) {
 	in := r.Template
 	in.Parts = slices.Clone(in.Parts)
 	in.Date, in.RecurringID = date, r.ID
 	cur := in.OriginalCurrency
 	if cur == "" || cur == "EUR" || s.d.FX == nil {
-		return in
+		return in, nil
 	}
 	rate, err := s.d.FX.Rate(ctx, cur, date)
-	if err != nil {
-		s.d.Log.Warn("recurring expense: rate not available, using the template's rate",
+	var ve domain.ValidationError
+	switch {
+	case errors.As(err, &ve):
+		s.d.Log.Warn("recurring expense: no rate for the date, using the template's rate",
 			"rule", r.ID, "currency", cur, "date", date.Format(domain.DateLayout), "err", err)
-		return in
+		return in, nil
+	case err != nil:
+		return in, fmt.Errorf("rate for %s on %s not available, retrying in the next run: %w",
+			cur, date.Format(domain.DateLayout), err)
 	}
 	amount := domain.ToEURCents(in.OriginalAmountMinor, cur, rate.Rate)
 	if amount <= 0 || amount > domain.MaxAmountCents {
-		return in
+		return in, nil
 	}
 	if in.SplitMode == domain.SplitAmount && !in.IsReimbursement {
 		in.Parts = rescale(in.Parts, amount)
 	}
 	in.AmountCents, in.FXRate, in.FXSource = amount, rate.Rate, rate.Source
-	return in
+	return in, nil
 }
 
 // rescale distributes total proportionally to the previous fixed amounts
