@@ -289,7 +289,7 @@ func TestStats(t *testing.T) {
 	str := func(rows []StatRow) string {
 		var b strings.Builder
 		for _, r := range rows {
-			fmt.Fprintf(&b, "%s|%s|%s|%d|%d|%d;", r.Category, r.Month, r.Person, r.Count, r.AmountCents, r.PaidCents)
+			fmt.Fprintf(&b, "%s|%s|%s|%d|%d|%d;", r.Category+r.Title, r.Period, r.Person, r.Count, r.AmountCents, r.PaidCents)
 		}
 		return b.String()
 	}
@@ -308,6 +308,10 @@ func TestStats(t *testing.T) {
 		{StatsFilter{GroupBy: StatsByMonth, CategoryID: f.food}, "|2026-08||1|3000|0;|2026-09||1|1000|0;"},
 		{StatsFilter{GroupBy: StatsByPerson, CategoryID: rest}, "||Ben|1|2000|0;||Cleo|1|2000|4000;"},
 		{StatsFilter{GroupBy: StatsByPerson, WithoutCategory: true}, "||Anna|1|500|500;"},
+		{StatsFilter{GroupBy: StatsByYear}, "|2026||4|8500|0;"},
+		{StatsFilter{GroupBy: StatsByWeek}, "|2026-W33||1|3000|0;|2026-W36||1|1000|0;|2026-W37||2|4500|0;"},
+		{StatsFilter{GroupBy: StatsByTitle, AnyText: []string{"pizza", "REWE"}}, "Pizza|||1|4000|0;Rewe|||1|3000|0;"},
+		{StatsFilter{GroupBy: StatsByMonth, AnyText: []string{"edeka"}}, "|2026-09||1|1000|0;"},
 	}
 	for _, tt := range tests {
 		rows, err := f.s.Stats(ctx, tt.f)
@@ -320,5 +324,76 @@ func TestStats(t *testing.T) {
 	}
 	if _, err := f.s.Stats(ctx, StatsFilter{GroupBy: "nonsense"}); !isValidation(err) {
 		t.Errorf("unknown grouping: %v", err)
+	}
+}
+
+func TestStatsByTitleIgnoresCase(t *testing.T) {
+	f := newFixture(t)
+	ctx := context.Background()
+	f.mustCreate(t, f.equal("Rewe", 3000, "2026-08-15", f.anna, f.anna))
+	f.mustCreate(t, f.equal("REWE", 1000, "2026-08-16", f.anna, f.anna))
+	f.mustCreate(t, f.equal("Lidl", 500, "2026-08-17", f.anna, f.anna))
+	rows, err := f.s.Stats(ctx, StatsFilter{GroupBy: StatsByTitle})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 2 || !strings.EqualFold(rows[0].Title, "rewe") || rows[0].Count != 2 || rows[0].AmountCents != 4000 {
+		t.Errorf("rows = %+v", rows)
+	}
+}
+
+func TestFillPeriods(t *testing.T) {
+	periods := func(rows []StatRow) string {
+		var p []string
+		for _, r := range rows {
+			p = append(p, fmt.Sprintf("%s=%d", r.Period, r.AmountCents))
+		}
+		return strings.Join(p, ",")
+	}
+	rows := []StatRow{{Period: "2026-01", AmountCents: 1}, {Period: "2026-04", AmountCents: 4}}
+	if got := periods(FillPeriods(rows, StatsByMonth, date("2025-12-20"), date("2026-04-02"))); got != "2025-12=0,2026-01=1,2026-02=0,2026-03=0,2026-04=4" {
+		t.Errorf("months = %s", got)
+	}
+	rows = []StatRow{{Period: "2025-W52", AmountCents: 1}}
+	if got := periods(FillPeriods(rows, StatsByWeek, date("2025-12-24"), date("2026-01-07"))); got != "2025-W52=1,2026-W01=0,2026-W02=0" {
+		t.Errorf("weeks = %s", got)
+	}
+	if got := periods(FillPeriods(nil, StatsByYear, date("2024-06-01"), date("2026-01-01"))); got != "2024=0,2025=0,2026=0" {
+		t.Errorf("years = %s", got)
+	}
+	if got := FillPeriods(rows, StatsByCategory, date("2024-06-01"), date("2026-01-01")); len(got) != 1 {
+		t.Errorf("category filled: %v", got)
+	}
+}
+
+func TestPeriods(t *testing.T) {
+	for _, c := range []struct{ groupBy, period, start string }{
+		{StatsByYear, "2026", "2026-01-01"},
+		{StatsByMonth, "2026-09", "2026-09-01"},
+		{StatsByWeek, "2026-W01", "2025-12-29"},
+		{StatsByWeek, "2026-W40", "2026-09-28"},
+		{StatsByWeek, "2020-W53", "2020-12-28"},
+	} {
+		got := PeriodStart(c.groupBy, c.period)
+		if got.Format("2006-01-02") != c.start || PeriodOf(c.groupBy, got) != c.period {
+			t.Errorf("%s %s: %s", c.groupBy, c.period, got)
+		}
+	}
+	if !PeriodStart(StatsByMonth, "nonsense").IsZero() {
+		t.Error("nonsense parsed")
+	}
+	for _, c := range []struct{ in, want string }{{"2024-02-29", "2023-02-28"}, {"2024-03-31", "2023-03-31"}, {"2023-02-28", "2022-02-28"}} {
+		if got := ShiftDateYear(date(c.in), -1).Format("2006-01-02"); got != c.want {
+			t.Errorf("ShiftDateYear(%s) = %s", c.in, got)
+		}
+	}
+	if got := ShiftDateYear(date("2023-02-28"), 1).Format("2006-01-02"); got != "2024-02-28" {
+		t.Errorf("ShiftDateYear forward = %s", got)
+	}
+	for in, want := range map[string]string{"2025-09": "2026-09", "2025-W40": "2026-W40", "2025": "2026", "": "",
+		"2020-W53": "2021-W52", "2025-W53": "2026-W53"} {
+		if got := ShiftPeriodYear(in, 1); got != want {
+			t.Errorf("shift %q = %q", in, got)
+		}
 	}
 }

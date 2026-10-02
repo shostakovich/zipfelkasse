@@ -297,13 +297,13 @@ func (s *server) dispatch(ctx context.Context, modern bool, method string, p par
 			"protocolVersion": info.version,
 			"capabilities":    map[string]any{"tools": map[string]any{"listChanged": false}},
 			"serverInfo":      serverInfo(),
-			"instructions":    s.instructions(),
+			"instructions":    s.instructions(ctx),
 		}, nil
 	case "server/discover":
 		return map[string]any{
 			"supportedVersions": allVersions,
 			"capabilities":      map[string]any{"tools": map[string]any{"listChanged": false}},
-			"instructions":      s.instructions(),
+			"instructions":      s.instructions(ctx),
 			"_meta":             map[string]any{metaServerInfo: serverInfo()},
 			"ttlMs":             s.discoverTTL().Milliseconds(),
 			"cacheScope":        "public",
@@ -352,12 +352,13 @@ func (s *server) callTool(ctx context.Context, p params, info *requestInfo) (map
 		}
 		text = string(b)
 	}
-	out := map[string]any{
+	// Only the text, no structuredContent: a copy of the JSON in both would
+	// double the size. Claude.ai/Desktop only pass content on to the model,
+	// Claude Code and VS Code only structuredContent if it is there – and
+	// content otherwise. Hence no outputSchema either (it requires
+	// structuredContent).
+	return map[string]any{
 		"content": []any{map[string]any{"type": "text", "text": text}},
 		"isError": false,
-	}
-	if res.data != nil {
-		out["structuredContent"] = res.data
-	}
-	return out, nil
+	}, nil
 }

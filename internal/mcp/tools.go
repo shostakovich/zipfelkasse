@@ -2,11 +2,14 @@ package mcp
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
+	"maps"
+	"math"
 	"slices"
 	"strings"
 	"time"
@@ -16,7 +19,7 @@ import (
 	"github.com/shostakovich/zipfelkasse/internal/web"
 )
 
-const serverVersion = "1.0.0"
+const serverVersion = "1.1.0"
 
 func serverInfo() map[string]any {
 	return map[string]any{"name": "zipfelkasse", "title": "Zipfelkasse – shared expenses", "version": serverVersion}
@@ -29,7 +32,7 @@ Amounts are in euros. Every amount in a result appears twice: as text with a dot
 Balance: positive = is owed money by the others, negative = owes money.
 Reimbursements are settlement payments between two people, not expenses; they count for balances, not for expense statistics.
 Dates use the format YYYY-MM-DD. Refer to people and categories by name (case-insensitive). Names, titles, categories and notes are stored as entered (often in German).
-How to proceed: balances and settlement → balances. Finding individual expenses → search_expenses. Totals by category, month or person → statistics.
+How to proceed: balances and settlement → balances; their development over time → balance_history. Finding individual expenses → search_expenses. Totals by category, merchant, period or person, also compared with the previous year → statistics. Who changed what when → activity.
 Anything else → read schema first, then sql_query (SQLite, SELECT only).`
 
 // categoryHint explains the category value for expenses without a category.
@@ -62,7 +65,38 @@ func (s *server) todayLine() string {
 		today.Format(domain.DateLayout), today.Weekday(), loc)
 }
 
-func (s *server) instructions() string { return instructionsText + "\n" + s.todayLine() }
+// instructions are the instructions with today's date and the data
+// overview (left out if it cannot be read).
+func (s *server) instructions(ctx context.Context) string {
+	text := instructionsText + "\n" + s.todayLine()
+	o, err := s.d.Store.MCPOverview(ctx)
+	if err != nil {
+		s.log.Error("mcp: data overview", "err", err)
+		return text
+	}
+	return text + "\n" + overviewText(o)
+}
+
+// overviewText describes the data in one paragraph.
+func overviewText(o store.DataOverview) string {
+	var b strings.Builder
+	b.WriteString("Data overview: ")
+	if o.FirstDate.IsZero() {
+		b.WriteString("there are no expenses yet.")
+	} else {
+		fmt.Fprintf(&b, "%d expenses and %d reimbursements dated %s to %s. ", o.Expenses, o.Reimbursements,
+			o.FirstDate.Format(domain.DateLayout), o.LastDate.Format(domain.DateLayout))
+		pct := 0.0
+		if o.Expenses > 0 {
+			pct = float64(o.WithoutCategory) * 100 / float64(o.Expenses)
+		}
+		fmt.Fprintf(&b, "%d of the expenses (%.1f%%) have no category.", o.WithoutCategory, pct)
+	}
+	if len(o.ActivityActions) > 0 {
+		fmt.Fprintf(&b, " Values of activity.action: %s.", strings.Join(o.ActivityActions, ", "))
+	}
+	return b.String()
+}
 
 // discoverTTL caches server/discover (which contains the date) at most until
 // the next midnight in the server time zone.
@@ -77,8 +111,7 @@ type tool struct {
 	run func(ctx context.Context, args json.RawMessage) (toolResult, error)
 }
 
-// toolResult: data becomes structuredContent (and, without text, the text
-// content as JSON).
+// toolResult is either plain text or data that is returned as JSON text.
 type toolResult struct {
 	text string
 	data any
@@ -93,8 +126,25 @@ const (
 
 var reimbursementModes = []string{reimbursementsExclude, reimbursementsInclude, reimbursementsOnly}
 
+var sortOrders = []string{store.SortDateDesc, store.SortDateAsc, store.SortAmountDesc, store.SortAmountAsc}
+
+// Values of the detail argument of search_expenses.
+const (
+	detailCompact = "compact"
+	detailFull    = "full"
+)
+
+var detailLevels = []string{detailCompact, detailFull}
+
 // groupings are the valid group_by values of statistics.
-var groupings = []string{store.StatsByCategory, store.StatsByMonth, store.StatsByPerson, store.StatsByCategoryMonth}
+var groupings = []string{store.StatsByCategory, store.StatsByTitle, store.StatsByYear, store.StatsByMonth, store.StatsByWeek,
+	store.StatsByPerson, store.StatsByCategoryMonth}
+
+// historyIntervals are the valid interval values of balance_history.
+var historyIntervals = []string{store.StatsByMonth, store.StatsByWeek, store.StatsByYear}
+
+// comparePreviousYear is the (only) compare value of statistics.
+const comparePreviousYear = "previous_year"
 
 func newServer(d web.Deps) *server {
 	s := &server{d: d, log: newLogger(d), tools: map[string]tool{}, sqlSem: make(chan struct{}, 2), now: time.Now}
@@ -109,6 +159,13 @@ func newServer(d web.Deps) *server {
 	dateProp := func(desc string) map[string]any {
 		return map[string]any{"type": "string", "description": desc + " Format YYYY-MM-DD (DD.MM.YYYY is accepted too)."}
 	}
+	textProp := map[string]any{
+		"anyOf": []any{
+			map[string]any{"type": "string"},
+			map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
+		},
+		"description": `Substring of the title or notes (case-insensitive). A list matches if any of the terms occurs, e.g. ["Rewe", "Edeka", "Lidl"].`,
+	}
 
 	add("balances", "Balances and settlement",
 		"Current balance of each person in euros and a settlement proposal (who transfers how much to whom so that everyone ends at 0). "+
@@ -116,20 +173,43 @@ func newServer(d web.Deps) *server {
 		map[string]any{"type": "object", "properties": map[string]any{}, "additionalProperties": false},
 		s.balances)
 
+	add("balance_history", "Balance history",
+		"Balance of each person at the end of each month (or week/year): how the balances developed over time. "+
+			"Based on the current data by expense date (later edits and deletions apply retroactively). "+
+			"Positive balance = is owed money, negative = owes money. Reimbursements count.",
+		map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"interval": map[string]any{"type": "string", "enum": historyIntervals, "description": "Length of a period: month (default), week (ISO week) or year."},
+				"from":     dateProp("First period: the one containing this date. Default: the first expense."),
+				"to":       dateProp("Last period: the one containing this date. Default: today."),
+				"person":   map[string]any{"type": "string", "description": "Name of a person: only their balance. Empty = everyone."},
+			},
+			"additionalProperties": false,
+		},
+		s.balanceHistory)
+
 	add("search_expenses", "Search expenses",
-		"Searches individual expenses (newest first) with amount, payer, category and split (each person's share). "+
+		"Searches individual expenses (newest first unless sort says otherwise) with amount, payer and category; with detail=full also split (each person's share), notes and foreign currency. "+
 			"All filters are optional and are combined. Also returns the total number of matches, their total and – with person – "+
 			"the total of that person's shares. For plain totals by category/month, statistics is the better choice.",
 		map[string]any{
 			"type": "object",
 			"properties": map[string]any{
-				"from":     dateProp("First date (inclusive)."),
-				"to":       dateProp("Last date (inclusive)."),
-				"category": map[string]any{"type": "string", "description": `Category name, e.g. "Lebensmittel". ` + categoryHint},
-				"person":   map[string]any{"type": "string", "description": "Name of a person: finds expenses they paid OR take part in."},
-				"text":     map[string]any{"type": "string", "description": "Substring of the title or notes (case-insensitive)."},
+				"from":       dateProp("First date (inclusive)."),
+				"to":         dateProp("Last date (inclusive)."),
+				"category":   map[string]any{"type": "string", "description": `Category name, e.g. "Lebensmittel". ` + categoryHint},
+				"person":     map[string]any{"type": "string", "description": "Name of a person: finds expenses they paid OR take part in."},
+				"paid_by":    map[string]any{"type": "string", "description": "Name of a person: only expenses this person paid."},
+				"involved":   map[string]any{"type": "string", "description": "Name of a person: only expenses this person has a share in."},
+				"text":       textProp,
+				"min_amount": map[string]any{"type": "number", "minimum": 0, "description": "Smallest amount in euros (inclusive), e.g. 50 or 12.5."},
+				"max_amount": map[string]any{"type": "number", "minimum": 0, "description": "Largest amount in euros (inclusive)."},
 				"reimbursements": map[string]any{"type": "string", "enum": reimbursementModes,
 					"description": "Reimbursements (settlement payments between people): hide them (exclude, default), include them (include) or return only them (only)."},
+				"sort": map[string]any{"type": "string", "enum": sortOrders, "description": "Order of the expenses: date_desc (newest first, default), date_asc, amount_desc (most expensive first), amount_asc."},
+				"detail": map[string]any{"type": "string", "enum": detailLevels,
+					"description": "compact (default): id, date, title, category, payer and amount per expense. full: additionally split, each person's share, notes and foreign currency."},
 				"limit": map[string]any{"type": "integer", "minimum": 1, "maximum": store.SQLMaxRows, "description": "Maximum number of expenses returned, default 50."},
 			},
 			"additionalProperties": false,
@@ -137,23 +217,47 @@ func newServer(d web.Deps) *server {
 		s.searchExpenses)
 
 	add("statistics", "Statistics",
-		"Expense totals grouped by category, month (YYYY-MM), person or category_month, optionally for a period. "+
+		"Expense totals grouped by category, title (merchant), year, month (YYYY-MM), ISO week (YYYY-Www), person or category_month, optionally for a period. "+
 			"Without share_of: total amounts of the expenses. With share_of: only that person's share of each expense, i.e. what they consumed themselves "+
 			`(e.g. "How much did I spend on restaurants in 2026?"). With group_by=person, amount is each person's share (consumption) `+
-			"and paid is what they paid up front. Reimbursements and deleted expenses never count.",
+			"and paid is what they paid up front. year, month and week list periods without expenses with 0. "+
+			"compare=previous_year adds the amount of the same group one year earlier and the change. Reimbursements and deleted expenses never count.",
 		map[string]any{
 			"type": "object",
 			"properties": map[string]any{
-				"group_by": map[string]any{"type": "string", "enum": groupings, "description": "What to group by."},
+				"group_by": map[string]any{"type": "string", "enum": groupings, "description": "What to group by. title groups by expense title (case-insensitive), i.e. by merchant."},
 				"from":     dateProp("First date (inclusive)."),
 				"to":       dateProp("Last date (inclusive)."),
 				"share_of": map[string]any{"type": "string", "description": "Name of a person: only their share counts (that person's perspective). Empty = total amounts."},
 				"category": map[string]any{"type": "string", "description": "Only count expenses of this category (name, case-insensitive). " + categoryHint},
+				"text":     textProp,
+				"compare": map[string]any{"type": "string", "enum": []string{comparePreviousYear},
+					"description": "previous_year: compare each row with the same group one year earlier (month 2026-03 with 2025-03, category in from…to with from…to minus one year). " +
+						"For category, title and person, from is required."},
+				"limit": map[string]any{"type": "integer", "minimum": 1, "maximum": store.SQLMaxRows, "description": fmt.Sprintf("Maximum number of rows, default %d. total always covers all rows.", store.SQLMaxRows)},
 			},
 			"required":             []string{"group_by"},
 			"additionalProperties": false,
 		},
 		s.statistics)
+
+	add("activity", "Activity log",
+		"Who created, changed or deleted which expense when, and other changes (settings, people, categories, rates, recurring expenses), newest first. "+
+			"Entries of expense_updated list the changed fields with old and new value (field names and values as shown in the app, in German).",
+		map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"from":       dateProp("First day (inclusive, server time zone)."),
+				"to":         dateProp("Last day (inclusive, server time zone)."),
+				"person":     map[string]any{"type": "string", "description": "Name of a person: only changes they made."},
+				"action":     map[string]any{"type": "string", "description": "Only this action, e.g. expense_created, expense_updated, expense_deleted, settings_updated."},
+				"expense_id": map[string]any{"type": "integer", "minimum": 1, "description": "Only entries of this expense (id as in search_expenses)."},
+				"before_id":  map[string]any{"type": "integer", "minimum": 1, "description": "Paging: only entries with a smaller id (pass the id of the last entry of the previous page)."},
+				"limit":      map[string]any{"type": "integer", "minimum": 1, "maximum": store.SQLMaxRows, "description": "Maximum number of entries, default 50."},
+			},
+			"additionalProperties": false,
+		},
+		s.activity)
 
 	add("schema", "Database schema",
 		"Explains the database tables and columns in words (amounts in cents, deleted expenses, reimbursements, shares, foreign currency), "+
@@ -373,6 +477,134 @@ func (s *server) balances(ctx context.Context, raw json.RawMessage) (toolResult,
 	}}, nil
 }
 
+// --- balance_history ---------------------------------------------------------
+
+type historyOut struct {
+	Year     string       `json:"year,omitempty"`
+	Month    string       `json:"month,omitempty"`
+	Week     string       `json:"week,omitempty"`
+	Balances []balanceOut `json:"balances"`
+}
+
+func (s *server) balanceHistory(ctx context.Context, raw json.RawMessage) (toolResult, error) {
+	var args struct {
+		Interval string `json:"interval"`
+		From     string `json:"from"`
+		To       string `json:"to"`
+		Person   string `json:"person"`
+	}
+	if err := decodeArgs(raw, &args); err != nil {
+		return toolResult{}, err
+	}
+	interval := cmpOr(args.Interval, store.StatsByMonth)
+	if !slices.Contains(historyIntervals, interval) {
+		return toolResult{}, invalid("interval must be one of %s.", strings.Join(historyIntervals, ", "))
+	}
+	from, to, err := parseRange(args.From, args.To)
+	if err != nil {
+		return toolResult{}, err
+	}
+	var person store.Participant
+	if strings.TrimSpace(args.Person) != "" {
+		if person, err = s.findPerson(ctx, args.Person); err != nil {
+			return toolResult{}, err
+		}
+	}
+	today := domain.DateOf(s.now().In(s.location()))
+	tooMany := func(periods []string) error {
+		if len(periods) > store.SQLMaxRows {
+			return invalid("That is %d periods, at most %d are possible. Please narrow down from/to or choose a longer interval.", len(periods), store.SQLMaxRows)
+		}
+		return nil
+	}
+	// Check the obvious case before loading anything.
+	if !from.IsZero() {
+		if err := tooMany(store.Periods(interval, from, cmpTime(to, today))); err != nil {
+			return toolResult{}, err
+		}
+	}
+	// Up to the end of the last period: each row is the balance after all
+	// expenses dated in or before its period.
+	until := time.Time{}
+	if !to.IsZero() {
+		until = store.PeriodEnd(interval, to)
+	}
+	es, err := s.d.Store.DatedBalanceEntries(ctx, until)
+	if err != nil {
+		return toolResult{}, err
+	}
+	_, ps, err := s.participantNames(ctx)
+	if err != nil {
+		return toolResult{}, err
+	}
+	if to.IsZero() {
+		// Until today, or the last expense if one is dated later: the last
+		// row then equals the current balances.
+		to = today
+		if len(es) > 0 && es[len(es)-1].Date.After(to) {
+			to = es[len(es)-1].Date
+		}
+	}
+	if from.IsZero() && len(es) > 0 {
+		from = es[0].Date
+	}
+	if from.IsZero() || to.Before(from) {
+		from = to
+	}
+	periods := store.Periods(interval, from, to)
+	if err := tooMany(periods); err != nil {
+		return toolResult{}, err
+	}
+
+	// Walk the expenses (oldest first) and record the balances at the end of
+	// each period; expenses before the first period are the opening balance.
+	bal := map[int64]int64{}
+	everNonZero := map[int64]bool{}
+	snapshots := make([]map[int64]int64, len(periods))
+	i := 0
+	for pi, p := range periods {
+		var entries []domain.Entry
+		for ; i < len(es) && store.PeriodOf(interval, es[i].Date) <= p; i++ {
+			entries = append(entries, es[i].Entry)
+		}
+		for id, v := range domain.Balances(entries) {
+			bal[id] += v
+		}
+		snapshots[pi] = maps.Clone(bal)
+		for id, v := range bal {
+			everNonZero[id] = everNonZero[id] || v != 0
+		}
+	}
+	rows := make([]historyOut, len(periods))
+	for pi, p := range periods {
+		r := historyOut{Balances: []balanceOut{}}
+		switch interval {
+		case store.StatsByYear:
+			r.Year = p
+		case store.StatsByWeek:
+			r.Week = p
+		default:
+			r.Month = p
+		}
+		for _, pp := range ps {
+			if (person.ID != 0 && pp.ID != person.ID) || (person.ID == 0 && pp.Archived() && !everNonZero[pp.ID]) {
+				continue
+			}
+			v := snapshots[pi][pp.ID]
+			r.Balances = append(r.Balances, balanceOut{Person: pp.Name, Balance: eur(v), BalanceCents: v})
+		}
+		rows[pi] = r
+	}
+	return toolResult{data: map[string]any{
+		"interval": interval,
+		"period":   describeRange(from, to),
+		"rows":     rows,
+		"note": "Balance after all expenses dated up to the end of each period (in the current period also those dated later this period), " +
+			"positive = is owed money, negative = owes money. Without to, the last row equals the current balances. " +
+			"Computed from the current data by expense date: later edits and deletions apply retroactively.",
+	}}, nil
+}
+
 // --- search_expenses -------------------------------------------------------------
 
 type shareOut struct {
@@ -401,13 +633,19 @@ type expenseOut struct {
 
 func (s *server) searchExpenses(ctx context.Context, raw json.RawMessage) (toolResult, error) {
 	var args struct {
-		From           string `json:"from"`
-		To             string `json:"to"`
-		Category       string `json:"category"`
-		Person         string `json:"person"`
-		Text           string `json:"text"`
-		Reimbursements string `json:"reimbursements"`
-		Limit          int    `json:"limit"`
+		From           string     `json:"from"`
+		To             string     `json:"to"`
+		Category       string     `json:"category"`
+		Person         string     `json:"person"`
+		PaidBy         string     `json:"paid_by"`
+		Involved       string     `json:"involved"`
+		Text           stringList `json:"text"`
+		MinAmount      *float64   `json:"min_amount"`
+		MaxAmount      *float64   `json:"max_amount"`
+		Reimbursements string     `json:"reimbursements"`
+		Sort           string     `json:"sort"`
+		Detail         string     `json:"detail"`
+		Limit          int        `json:"limit"`
 	}
 	if err := decodeArgs(raw, &args); err != nil {
 		return toolResult{}, err
@@ -417,20 +655,51 @@ func (s *server) searchExpenses(ctx context.Context, raw json.RawMessage) (toolR
 	if f.From, f.To, err = parseRange(args.From, args.To); err != nil {
 		return toolResult{}, err
 	}
-	f.Text = strings.TrimSpace(args.Text)
+	f.AnyText = args.Text
 	if f.CategoryID, f.WithoutCategory, err = s.categoryArg(ctx, args.Category); err != nil {
 		return toolResult{}, err
 	}
-	var person store.Participant
-	if strings.TrimSpace(args.Person) != "" {
-		if person, err = s.findPerson(ctx, args.Person); err != nil {
+	var person, payer, involved store.Participant
+	for _, p := range []struct {
+		arg string
+		out *store.Participant
+		id  *int64
+	}{{args.Person, &person, &f.ParticipantID}, {args.PaidBy, &payer, &f.PaidBy}, {args.Involved, &involved, &f.InvolvedID}} {
+		if strings.TrimSpace(p.arg) == "" {
+			continue
+		}
+		if *p.out, err = s.findPerson(ctx, p.arg); err != nil {
 			return toolResult{}, err
 		}
-		f.ParticipantID = person.ID
+		*p.id = p.out.ID
+	}
+	if f.MinCents, err = amountArg("min_amount", args.MinAmount); err != nil {
+		return toolResult{}, err
+	}
+	if f.MaxCents, err = amountArg("max_amount", args.MaxAmount); err != nil {
+		return toolResult{}, err
+	}
+	if args.MaxAmount != nil && f.MaxCents == 0 {
+		return toolResult{}, invalid("max_amount must be greater than 0.")
+	}
+	if f.MaxCents != 0 && f.MinCents > f.MaxCents {
+		return toolResult{}, invalid("min_amount (%s) is greater than max_amount (%s).", eur(f.MinCents), eur(f.MaxCents))
 	}
 	mode := cmpOr(args.Reimbursements, reimbursementsExclude)
 	if !slices.Contains(reimbursementModes, mode) {
 		return toolResult{}, invalid(`reimbursements must be "exclude", "include" or "only".`)
+	}
+	if f.Sort = cmpOr(args.Sort, store.SortDateDesc); !slices.Contains(sortOrders, f.Sort) {
+		return toolResult{}, invalid("sort must be one of %s.", strings.Join(sortOrders, ", "))
+	}
+	detail := cmpOr(args.Detail, detailCompact)
+	if !slices.Contains(detailLevels, detail) {
+		return toolResult{}, invalid(`detail must be "compact" or "full".`)
+	}
+	// The person whose shares are summed up: person, otherwise involved.
+	sharer := person
+	if sharer.ID == 0 {
+		sharer = involved
 	}
 	limit := args.Limit
 	switch {
@@ -457,9 +726,9 @@ func (s *server) searchExpenses(ctx context.Context, raw json.RawMessage) (toolR
 		}
 		hits++
 		sum += e.AmountCents
-		share += e.ShareOf(person.ID)
+		share += e.ShareOf(sharer.ID)
 		if len(out) < limit {
-			out = append(out, expenseToOut(e, names))
+			out = append(out, expenseToOut(e, names, detail == detailFull))
 		}
 	}
 	data := map[string]any{
@@ -470,26 +739,34 @@ func (s *server) searchExpenses(ctx context.Context, raw json.RawMessage) (toolR
 		"total_cents": sum,
 		"expenses":    out,
 	}
-	if person.ID != 0 {
-		data["person_share"] = map[string]any{"person": person.Name, "amount": eur(share), "amount_cents": share}
+	if sharer.ID != 0 {
+		data["person_share"] = map[string]any{"person": sharer.Name, "amount": eur(share), "amount_cents": share}
 	}
 	return toolResult{data: data}, nil
 }
 
-func expenseToOut(e store.Expense, names map[int64]string) expenseOut {
+// expenseToOut converts an expense; without full only the compact fields
+// (no split, shares, notes and foreign currency).
+func expenseToOut(e store.Expense, names map[int64]string, full bool) expenseOut {
 	o := expenseOut{
 		ID: e.ID, Date: e.Date.Format(domain.DateLayout), Title: e.Title, Category: e.CategoryName,
-		PaidBy: e.PaidByName, Amount: eur(e.AmountCents), AmountCents: e.AmountCents, Notes: e.Notes,
-	}
-	if e.IsForeign() {
-		o.Original = money(e.OriginalAmountMinor, e.OriginalCurrency)
-		o.FXRate, o.FXSource = e.FXRate, e.FXSource
+		PaidBy: e.PaidByName, Amount: eur(e.AmountCents), AmountCents: e.AmountCents,
 	}
 	if e.IsReimbursement {
 		o.Reimbursement = true
 		if len(e.Shares) > 0 {
 			o.Recipient = names[e.Shares[0].ParticipantID]
 		}
+	}
+	if !full {
+		return o
+	}
+	o.Notes = e.Notes
+	if e.IsForeign() {
+		o.Original = money(e.OriginalAmountMinor, e.OriginalCurrency)
+		o.FXRate, o.FXSource = e.FXRate, e.FXSource
+	}
+	if e.IsReimbursement {
 		return o
 	}
 	o.Split = string(e.SplitMode)
@@ -497,6 +774,35 @@ func expenseToOut(e store.Expense, names map[int64]string) expenseOut {
 		o.Shares = append(o.Shares, shareOut{Person: names[sh.ParticipantID], Amount: eur(sh.AmountCents), AmountCents: sh.AmountCents})
 	}
 	return o
+}
+
+// stringList is a tool argument that is either a string or a list of
+// strings.
+type stringList []string
+
+func (l *stringList) UnmarshalJSON(b []byte) error {
+	var one string
+	if err := json.Unmarshal(b, &one); err == nil {
+		*l = stringList{one}
+		return nil
+	}
+	var many []string
+	if err := json.Unmarshal(b, &many); err != nil {
+		return errors.New("must be a string or a list of strings")
+	}
+	*l = many
+	return nil
+}
+
+// amountArg converts an amount argument in euros to cents (nil = 0).
+func amountArg(name string, v *float64) (int64, error) {
+	if v == nil {
+		return 0, nil
+	}
+	if *v < 0 || math.IsNaN(*v) || *v > 1e12 {
+		return 0, invalid("%s must be an amount in euros of at least 0.", name)
+	}
+	return int64(math.Round(*v * 100)), nil
 }
 
 func cmpOr(v, fallback string) string {
@@ -509,28 +815,39 @@ func cmpOr(v, fallback string) string {
 // --- statistics ------------------------------------------------------------------
 
 type statOut struct {
-	Category    string `json:"category,omitempty"`
-	Month       string `json:"month,omitempty"`
-	Person      string `json:"person,omitempty"`
-	Count       int64  `json:"count"`
-	Amount      string `json:"amount"`
-	AmountCents int64  `json:"amount_cents"`
-	Paid        string `json:"paid,omitempty"`
-	PaidCents   *int64 `json:"paid_cents,omitempty"`
+	Category      string   `json:"category,omitempty"`
+	Title         string   `json:"title,omitempty"`
+	Year          string   `json:"year,omitempty"`
+	Month         string   `json:"month,omitempty"`
+	Week          string   `json:"week,omitempty"`
+	Person        string   `json:"person,omitempty"`
+	Count         int64    `json:"count"`
+	Amount        string   `json:"amount"`
+	AmountCents   int64    `json:"amount_cents"`
+	Paid          string   `json:"paid,omitempty"`
+	PaidCents     *int64   `json:"paid_cents,omitempty"`
+	Previous      string   `json:"previous,omitempty"`
+	PreviousCents *int64   `json:"previous_cents,omitempty"`
+	Change        string   `json:"change,omitempty"`
+	ChangeCents   *int64   `json:"change_cents,omitempty"`
+	ChangePercent *float64 `json:"change_percent,omitempty"`
 }
 
 func (s *server) statistics(ctx context.Context, raw json.RawMessage) (toolResult, error) {
 	var args struct {
-		GroupBy  string `json:"group_by"`
-		From     string `json:"from"`
-		To       string `json:"to"`
-		ShareOf  string `json:"share_of"`
-		Category string `json:"category"`
+		GroupBy  string     `json:"group_by"`
+		From     string     `json:"from"`
+		To       string     `json:"to"`
+		ShareOf  string     `json:"share_of"`
+		Category string     `json:"category"`
+		Text     stringList `json:"text"`
+		Compare  string     `json:"compare"`
+		Limit    int        `json:"limit"`
 	}
 	if err := decodeArgs(raw, &args); err != nil {
 		return toolResult{}, err
 	}
-	f := store.StatsFilter{GroupBy: strings.TrimSpace(args.GroupBy)}
+	f := store.StatsFilter{GroupBy: strings.TrimSpace(args.GroupBy), AnyText: args.Text}
 	if !slices.Contains(groupings, f.GroupBy) {
 		return toolResult{}, invalid("group_by must be one of %s.", strings.Join(groupings, ", "))
 	}
@@ -550,34 +867,289 @@ func (s *server) statistics(ctx context.Context, raw json.RawMessage) (toolResul
 		f.ParticipantID = p.ID
 		perspective = "only the share of " + p.Name
 	}
-	rows, err := s.d.Store.Stats(ctx, f)
+	limit := args.Limit
+	switch {
+	case limit == 0:
+		limit = store.SQLMaxRows
+	case limit < 1 || limit > store.SQLMaxRows:
+		return toolResult{}, invalid("limit must be between 1 and %d.", store.SQLMaxRows)
+	}
+	today := domain.DateOf(s.now().In(s.location()))
+	compare := strings.TrimSpace(args.Compare)
+	timeKeyed := store.IsTimeGrouping(f.GroupBy) || f.GroupBy == store.StatsByCategoryMonth
+	switch {
+	case compare == "":
+	case compare != comparePreviousYear:
+		return toolResult{}, invalid(`compare must be "%s".`, comparePreviousYear)
+	case !timeKeyed && f.From.IsZero():
+		return toolResult{}, invalid("compare=previous_year with group_by=%s needs from (and optionally to): the period to compare.", f.GroupBy)
+	case !timeKeyed && f.To.IsZero():
+		if today.Before(f.From) {
+			return toolResult{}, invalid("from (%s) is in the future; compare=previous_year needs a period up to today or an explicit to.", f.From.Format(domain.DateLayout))
+		}
+		f.To = today
+	}
+
+	statRows, err := s.d.Store.Stats(ctx, f)
 	if err != nil {
 		return toolResult{}, err
+	}
+	rows := statRows
+	if store.IsTimeGrouping(f.GroupBy) {
+		rows = fillGaps(rows, f, today)
 	}
 	var total int64
 	out := []statOut{}
 	for _, r := range rows {
-		o := statOut{Category: r.Category, Month: r.Month, Person: r.Person, Count: r.Count, Amount: eur(r.AmountCents), AmountCents: r.AmountCents}
-		if f.GroupBy == store.StatsByPerson {
-			paid := r.PaidCents
-			o.Paid, o.PaidCents = eur(paid), &paid
-		}
 		total += r.AmountCents
-		out = append(out, o)
+		out = append(out, statToOut(r, f.GroupBy))
+	}
+	data := map[string]any{
+		"group_by":    f.GroupBy,
+		"perspective": perspective,
+		"period":      describeRange(f.From, f.To),
+	}
+	if compare != "" {
+		prev := f
+		if !prev.From.IsZero() {
+			prev.From = store.ShiftDateYear(prev.From, -1)
+		}
+		if !prev.To.IsZero() {
+			prev.To = store.ShiftDateYear(prev.To, -1)
+		}
+		// Without from and to, the previous year's rows are the same rows.
+		prevRows := statRows
+		if !prev.From.IsZero() || !prev.To.IsZero() {
+			if prevRows, err = s.d.Store.Stats(ctx, prev); err != nil {
+				return toolResult{}, err
+			}
+		}
+		var window func(period string) bool // time-keyed: periods within the requested range
+		if timeKeyed {
+			window = periodWindow(f, statRows, today)
+		}
+		out = comparePrevious(out, prevRows, f.GroupBy, window)
+		var prevTotal int64
+		for _, o := range out {
+			prevTotal += *o.PreviousCents
+		}
+		data["previous_period"] = describeRange(prev.From, prev.To)
+		if timeKeyed {
+			data["previous_period"] = "each " + strings.TrimPrefix(f.GroupBy, "category_") + " one year earlier"
+		}
+		data["previous_total"], data["previous_total_cents"] = eur(prevTotal), prevTotal
+	}
+	data["rows_total"], data["truncated"] = len(out), len(out) > limit
+	if len(out) > limit {
+		out = out[:limit]
 	}
 	note := "Reimbursements and deleted expenses are not included. count = number of expenses."
 	if f.GroupBy == store.StatsByPerson {
 		note += " amount = the person's share (consumption), paid = what they paid for the group."
 	}
-	return toolResult{data: map[string]any{
-		"group_by":    f.GroupBy,
-		"perspective": perspective,
-		"period":      describeRange(f.From, f.To),
-		"rows":        out,
-		"total":       eur(total),
-		"total_cents": total,
-		"note":        note,
-	}}, nil
+	if compare != "" {
+		note += " previous = same group one year earlier, change = amount − previous, change_percent relative to previous (missing if previous is 0)."
+	}
+	data["rows"], data["total"], data["total_cents"], data["note"] = out, eur(total), total, note
+	return toolResult{data: data}, nil
+}
+
+// fillGaps lists the periods without expenses of a time grouping with 0:
+// from from (or the first row) to to (or today), never beyond today.
+func fillGaps(rows []store.StatRow, f store.StatsFilter, today time.Time) []store.StatRow {
+	first, last := f.From, cmpTime(f.To, today)
+	if first.IsZero() && len(rows) > 0 {
+		first = store.PeriodStart(f.GroupBy, rows[0].Period)
+	}
+	if first.IsZero() {
+		return rows
+	}
+	return store.FillPeriods(rows, f.GroupBy, first, last)
+}
+
+// periodWindow reports whether a period lies within the requested range of a
+// time-keyed grouping: from from (or the first row) to to (or today), never
+// beyond today.
+func periodWindow(f store.StatsFilter, rows []store.StatRow, today time.Time) func(string) bool {
+	lo := ""
+	switch {
+	case !f.From.IsZero():
+		lo = store.PeriodOf(f.GroupBy, f.From)
+	case len(rows) > 0:
+		lo = slices.MinFunc(rows, func(a, b store.StatRow) int { return strings.Compare(a.Period, b.Period) }).Period
+	default:
+		return func(string) bool { return false }
+	}
+	hi := store.PeriodOf(f.GroupBy, cmpTime(f.To, today))
+	return func(p string) bool { return p >= lo && p <= hi }
+}
+
+// cmpTime returns t, or fallback if t is zero or after fallback.
+func cmpTime(t, fallback time.Time) time.Time {
+	if t.IsZero() || t.After(fallback) {
+		return fallback
+	}
+	return t
+}
+
+func statToOut(r store.StatRow, groupBy string) statOut {
+	o := statOut{Category: r.Category, Title: r.Title, Person: r.Person, Count: r.Count, Amount: eur(r.AmountCents), AmountCents: r.AmountCents}
+	switch groupBy {
+	case store.StatsByYear:
+		o.Year = r.Period
+	case store.StatsByWeek:
+		o.Week = r.Period
+	default:
+		o.Month = r.Period
+	}
+	if groupBy == store.StatsByPerson {
+		paid := r.PaidCents
+		o.Paid, o.PaidCents = eur(paid), &paid
+	}
+	return o
+}
+
+// comparePrevious adds previous and change to each row. prev are the rows of
+// the period one year earlier; their periods are shifted by one year to match.
+// Groups that only exist in prev are appended with 0 – for time-keyed
+// groupings (window != nil) only if their period lies within window.
+func comparePrevious(out []statOut, prev []store.StatRow, groupBy string, window func(period string) bool) []statOut {
+	key := func(o statOut) string {
+		return strings.Join([]string{o.Category, store.Fold(o.Title), o.Person, o.Year, o.Month, o.Week}, "\x00")
+	}
+	prevBy := map[string]statOut{}
+	var order []string
+	for _, r := range prev {
+		r.Period = store.ShiftPeriodYear(r.Period, 1)
+		o := statToOut(r, groupBy)
+		k := key(o)
+		if have, ok := prevBy[k]; ok {
+			// Week 53 merged into week 52 of a year without week 53.
+			o.AmountCents += have.AmountCents
+		} else {
+			order = append(order, k)
+		}
+		prevBy[k] = o
+	}
+	set := func(o *statOut, p int64) {
+		change := o.AmountCents - p
+		o.Previous, o.PreviousCents = eur(p), &p
+		o.Change, o.ChangeCents = eur(change), &change
+		if p != 0 {
+			pct := math.Round(float64(change)*1000/float64(p)) / 10
+			o.ChangePercent = &pct
+		}
+	}
+	for i := range out {
+		k := key(out[i])
+		set(&out[i], prevBy[k].AmountCents)
+		delete(prevBy, k)
+	}
+	appended := false
+	for _, k := range order {
+		p, ok := prevBy[k]
+		if !ok || (window != nil && !window(p.Year+p.Month+p.Week)) {
+			continue
+		}
+		o := statOut{Category: p.Category, Title: p.Title, Year: p.Year, Month: p.Month, Week: p.Week, Person: p.Person, Amount: eur(0)}
+		if groupBy == store.StatsByPerson {
+			var zero int64
+			o.Paid, o.PaidCents = eur(0), &zero
+		}
+		set(&o, p.AmountCents)
+		out = append(out, o)
+		appended = true
+	}
+	if appended && window != nil {
+		// Back into the order of Stats: by period, then amount, then category.
+		slices.SortStableFunc(out, func(a, b statOut) int {
+			return cmp.Or(strings.Compare(a.Year+a.Month+a.Week, b.Year+b.Month+b.Week),
+				cmp.Compare(b.AmountCents, a.AmountCents), strings.Compare(a.Category, b.Category))
+		})
+	}
+	return out
+}
+
+// --- activity -----------------------------------------------------------------
+
+type activityOut struct {
+	ID          int64               `json:"id"`
+	At          string              `json:"at"`
+	Actor       string              `json:"actor"`
+	Action      string              `json:"action"`
+	ExpenseID   int64               `json:"expense_id,omitempty"`
+	Title       string              `json:"title,omitempty"`
+	Amount      string              `json:"amount,omitempty"`
+	AmountCents *int64              `json:"amount_cents,omitempty"`
+	Changes     []store.FieldChange `json:"changes,omitempty"`
+	Text        string              `json:"text,omitempty"`
+}
+
+func (s *server) activity(ctx context.Context, raw json.RawMessage) (toolResult, error) {
+	var args struct {
+		From      string `json:"from"`
+		To        string `json:"to"`
+		Person    string `json:"person"`
+		Action    string `json:"action"`
+		ExpenseID int64  `json:"expense_id"`
+		BeforeID  int64  `json:"before_id"`
+		Limit     int    `json:"limit"`
+	}
+	if err := decodeArgs(raw, &args); err != nil {
+		return toolResult{}, err
+	}
+	from, to, err := parseRange(args.From, args.To)
+	if err != nil {
+		return toolResult{}, err
+	}
+	loc := s.location()
+	f := store.ActivityFilter{Action: strings.TrimSpace(args.Action), ExpenseID: args.ExpenseID, BeforeID: args.BeforeID}
+	if !from.IsZero() {
+		f.Since = time.Date(from.Year(), from.Month(), from.Day(), 0, 0, 0, 0, loc)
+	}
+	if !to.IsZero() {
+		f.Until = time.Date(to.Year(), to.Month(), to.Day()+1, 0, 0, 0, 0, loc)
+	}
+	if strings.TrimSpace(args.Person) != "" {
+		p, err := s.findPerson(ctx, args.Person)
+		if err != nil {
+			return toolResult{}, err
+		}
+		f.ActorID = p.ID
+	}
+	if args.ExpenseID < 0 || args.BeforeID < 0 {
+		return toolResult{}, invalid("expense_id and before_id must be positive.")
+	}
+	limit := args.Limit
+	switch {
+	case limit == 0:
+		limit = 50
+	case limit < 1 || limit > store.SQLMaxRows:
+		return toolResult{}, invalid("limit must be between 1 and %d.", store.SQLMaxRows)
+	}
+	f.Limit = limit + 1
+	acts, err := s.d.Store.ListActivity(ctx, f)
+	if err != nil {
+		return toolResult{}, err
+	}
+	more := len(acts) > limit
+	if more {
+		acts = acts[:limit]
+	}
+	out := make([]activityOut, len(acts))
+	for i, a := range acts {
+		o := activityOut{ID: a.ID, At: a.At.In(loc).Format(time.RFC3339), Actor: cmpOr(a.ActorName, "system"), Action: a.Action,
+			ExpenseID: a.ExpenseID, Title: a.Details.Title, Changes: a.Details.Changes, Text: a.Details.Text}
+		if c := a.Details.AmountCents; c != 0 {
+			o.Amount, o.AmountCents = eur(c), &c
+		}
+		out[i] = o
+	}
+	data := map[string]any{"entries": out, "shown": len(out), "more": more}
+	if more {
+		data["note"] = fmt.Sprintf("There are older entries: call again with before_id=%d.", out[len(out)-1].ID)
+	}
+	return toolResult{data: data}, nil
 }
 
 // --- schema -----------------------------------------------------------------------

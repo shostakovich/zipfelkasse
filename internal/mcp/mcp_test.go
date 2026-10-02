@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -33,6 +34,23 @@ type env struct {
 	ids   map[string]int64
 	cats  map[string]int64
 	today time.Time
+	deps  web.Deps
+}
+
+// at lets the server run with a fixed clock (date in the server time zone,
+// noon).
+func (e *env) at(date string) {
+	e.t.Helper()
+	d, err := domain.ParseDate(date)
+	if err != nil {
+		e.t.Fatal(err)
+	}
+	srv := newServer(e.deps)
+	now := time.Date(d.Year(), d.Month(), d.Day(), 12, 0, 0, 0, srv.location())
+	srv.now = func() time.Time { return now }
+	mux := http.NewServeMux()
+	mux.Handle("/mcp/{secret}", srv)
+	e.h = mux
 }
 
 func newEnv(t *testing.T) *env {
@@ -54,7 +72,7 @@ func newEnv(t *testing.T) *env {
 	if err := Register(mux, d); err != nil {
 		t.Fatal(err)
 	}
-	e := &env{t: t, h: mux, st: st, logs: logs, ids: map[string]int64{}, cats: map[string]int64{}}
+	e := &env{t: t, h: mux, st: st, logs: logs, ids: map[string]int64{}, cats: map[string]int64{}, deps: d}
 	ctx := context.Background()
 	for _, n := range []string{"Anna", "Ben", "Cleo"} {
 		if e.ids[n], err = st.CreateParticipant(ctx, n); err != nil {
@@ -163,12 +181,17 @@ func (r reply) errCode() float64 {
 	return 0
 }
 
-// call calls a tool (legacy) and returns structuredContent, the text and isError.
+// call calls a tool (legacy) and returns the text parsed as a JSON object
+// (nil if it is not one), the text and isError.
 func (e *env) call(name string, args map[string]any) (map[string]any, string, bool) {
 	e.t.Helper()
 	res := e.legacy("tools/call", map[string]any{"name": name, "arguments": args}).result(e.t)
 	content := res["content"].([]any)[0].(map[string]any)
-	sc, _ := res["structuredContent"].(map[string]any)
+	if _, ok := res["structuredContent"]; ok {
+		e.t.Errorf("%s: structuredContent duplicates the text", name)
+	}
+	var sc map[string]any
+	_ = json.Unmarshal([]byte(content["text"].(string)), &sc)
 	return sc, content["text"].(string), res["isError"] == true
 }
 
@@ -278,11 +301,11 @@ func TestLegacyProtocol(t *testing.T) {
 			t.Errorf("tool incomplete: %v", m)
 		}
 	}
-	if strings.Join(names, ",") != "balances,search_expenses,statistics,schema,sql_query" {
+	if strings.Join(names, ",") != "balances,balance_history,search_expenses,statistics,activity,schema,sql_query" {
 		t.Errorf("Tools = %v", names)
 	}
 	r = e.send("POST", "/mcp/"+testSecret, "", nil, `{"jsonrpc":"2.0","id":2,"method":"tools/list"}`)
-	if r.status != 200 || len(r.result(t)["tools"].([]any)) != 5 {
+	if r.status != 200 || len(r.result(t)["tools"].([]any)) != 7 {
 		t.Errorf("tools/list without header: %d %s", r.status, r.raw)
 	}
 	// Unsupported version in the header → 400 with list.
@@ -349,11 +372,12 @@ func TestModernProtocol(t *testing.T) {
 		t.Errorf("serverInfo missing: %v", res)
 	}
 	res = e.modern("tools/list", nil, nil).result(t)
-	if res["resultType"] != "complete" || res["ttlMs"] == nil || len(res["tools"].([]any)) != 5 {
+	if res["resultType"] != "complete" || res["ttlMs"] == nil || len(res["tools"].([]any)) != 7 {
 		t.Errorf("tools/list: %v", res)
 	}
 	res = e.modern("tools/call", map[string]any{"name": "balances", "arguments": map[string]any{}}, nil).result(t)
-	if res["resultType"] != "complete" || res["isError"] != false || res["structuredContent"] == nil {
+	if text := res["content"].([]any)[0].(map[string]any)["text"].(string); res["resultType"] != "complete" || res["isError"] != false ||
+		res["structuredContent"] != nil || !strings.HasPrefix(text, `{"balances":`) {
 		t.Errorf("tools/call: %v", res)
 	}
 	// Mcp-Name in Base64 format.
@@ -545,7 +569,7 @@ func TestTools(t *testing.T) {
 	}
 
 	// search_expenses
-	sc, _, isErr = e.call("search_expenses", map[string]any{"person": "anna", "from": "2026-09-01"})
+	sc, _, isErr = e.call("search_expenses", map[string]any{"person": "anna", "from": "2026-09-01", "detail": "full"})
 	if isErr || sc["matches"].(float64) != 2 || sc["total_cents"].(float64) != 3000 || sc["total"] != "30.00" {
 		t.Errorf("search person: %v", sc)
 	}
@@ -579,6 +603,8 @@ func TestTools(t *testing.T) {
 	for _, args := range []map[string]any{
 		{"person": "Dora"}, {"category": "Yacht"}, {"from": "yesterday"}, {"from": "2026-09-02", "to": "2026-09-01"},
 		{"limit": 1000}, {"reimbursements": "whatever"}, {"unknown": 1}, {"limit": "ten"}, {"von": "2026-09-01"},
+		{"sort": "random"}, {"detail": "all"}, {"min_amount": -1}, {"max_amount": 0}, {"min_amount": 20, "max_amount": 10},
+		{"text": 5}, {"paid_by": "Dora"}, {"involved": "Dora"},
 	} {
 		if _, text, isErr := e.call("search_expenses", args); !isErr || text == "" || strings.Contains(text, "Internal error") {
 			t.Errorf("%v: isError=%v %q", args, isErr, text)
@@ -614,7 +640,8 @@ func TestTools(t *testing.T) {
 	if r := sc["rows"].([]any); len(r) != 3 || sc["period"] != "all time" || r[0].(map[string]any)["month"] == "" || r[0].(map[string]any)["category"] == "" {
 		t.Errorf("statistics category_month: %v", sc)
 	}
-	for _, args := range []map[string]any{nil, {"group_by": "year"}, {"group_by": "month", "person": "Anna"}, {"group_by": "month", "share_of": "Dora"}} {
+	for _, args := range []map[string]any{nil, {"group_by": "decade"}, {"group_by": "month", "person": "Anna"},
+		{"group_by": "category", "compare": "previous_year"}, {"group_by": "month", "compare": "last_week"}, {"group_by": "month", "limit": 0.5}, {"group_by": "month", "share_of": "Dora"}} {
 		if _, text, isErr := e.call("statistics", args); !isErr || strings.Contains(text, "Internal error") {
 			t.Errorf("statistics %v: isError=%v %s", args, isErr, text)
 		}
@@ -646,5 +673,353 @@ func TestTools(t *testing.T) {
 	}
 	if !strings.Contains(e.logs.String(), "tool=sql_query") {
 		t.Error("tool call not logged")
+	}
+}
+
+func TestSearchExpensesOptions(t *testing.T) {
+	e := newEnv(t)
+	e.expense("Rewe", 3000, "2026-08-15", "Anna", "Lebensmittel", "Anna", "Ben", "Cleo")
+	e.expense("Edeka", 1000, "2026-09-01", "Ben", "Lebensmittel", "Anna", "Ben")
+	e.expense("Kino", 2400, "2026-09-05", "Cleo", "", "Ben", "Cleo")
+	e.expense("Lidl", 1999, "2026-09-07", "Cleo", "Lebensmittel", "Cleo")
+	titles := func(args map[string]any) string {
+		t.Helper()
+		sc, text, isErr := e.call("search_expenses", args)
+		if isErr {
+			t.Fatalf("%v: %s", args, text)
+		}
+		var out []string
+		for _, x := range sc["expenses"].([]any) {
+			out = append(out, x.(map[string]any)["title"].(string))
+		}
+		return strings.Join(out, ",")
+	}
+	for _, c := range []struct {
+		args map[string]any
+		want string
+	}{
+		{map[string]any{}, "Lidl,Kino,Edeka,Rewe"},
+		{map[string]any{"sort": "date_asc"}, "Rewe,Edeka,Kino,Lidl"},
+		{map[string]any{"sort": "amount_desc"}, "Rewe,Kino,Lidl,Edeka"},
+		{map[string]any{"sort": "amount_asc"}, "Edeka,Lidl,Kino,Rewe"},
+		{map[string]any{"min_amount": 19.99, "max_amount": 24}, "Lidl,Kino"},
+		{map[string]any{"min_amount": 20}, "Kino,Rewe"},
+		{map[string]any{"text": []string{"rewe", "LIDL"}}, "Lidl,Rewe"},
+		{map[string]any{"text": "edeka"}, "Edeka"},
+		{map[string]any{"paid_by": "Cleo"}, "Lidl,Kino"},
+		{map[string]any{"involved": "Ben"}, "Kino,Edeka,Rewe"},
+		{map[string]any{"person": "Ben"}, "Kino,Edeka,Rewe"},
+		{map[string]any{"paid_by": "Cleo", "involved": "Ben"}, "Kino"},
+	} {
+		if got := titles(c.args); got != c.want {
+			t.Errorf("%v = %s, want %s", c.args, got, c.want)
+		}
+	}
+
+	// involved sums up the person's shares like person.
+	sc, _, _ := e.call("search_expenses", map[string]any{"involved": "Ben"})
+	if ps := sc["person_share"].(map[string]any); ps["person"] != "Ben" || ps["amount_cents"].(float64) != 1000+500+1200 {
+		t.Errorf("person_share involved = %v", ps)
+	}
+	// compact (default) leaves out split, shares and notes, full includes them.
+	_, text, _ := e.call("search_expenses", map[string]any{"text": "Kino"})
+	if strings.Contains(text, `"shares"`) || strings.Contains(text, `"split"`) || !strings.Contains(text, `"amount":"24.00"`) {
+		t.Errorf("compact: %s", text)
+	}
+	_, text, _ = e.call("search_expenses", map[string]any{"text": "Kino", "detail": "full"})
+	if !strings.Contains(text, `"shares"`) || !strings.Contains(text, `"split":"equal"`) {
+		t.Errorf("full: %s", text)
+	}
+}
+
+func TestStatisticsOptions(t *testing.T) {
+	e := newEnv(t)
+	e.at("2026-04-15")
+	e.expense("Rewe", 3000, "2025-03-10", "Anna", "Lebensmittel", "Anna", "Ben")
+	e.expense("Pizza", 1000, "2025-05-02", "Anna", "Restaurant", "Anna")
+	e.expense("Rewe", 4000, "2026-01-05", "Anna", "Lebensmittel", "Anna", "Ben")
+	e.expense("REWE", 2000, "2026-03-20", "Ben", "Lebensmittel", "Anna", "Ben")
+	e.expense("Kino", 1500, "2026-03-21", "Ben", "", "Ben")
+	rows := func(args map[string]any) ([]map[string]any, map[string]any) {
+		t.Helper()
+		sc, text, isErr := e.call("statistics", args)
+		if isErr {
+			t.Fatalf("%v: %s", args, text)
+		}
+		var out []map[string]any
+		for _, r := range sc["rows"].([]any) {
+			out = append(out, r.(map[string]any))
+		}
+		return out, sc
+	}
+
+	// Months without expenses appear with 0, from from (or the first row) to today.
+	r, _ := rows(map[string]any{"group_by": "month", "from": "2026-01-01"})
+	if len(r) != 4 || r[0]["month"] != "2026-01" || r[1]["month"] != "2026-02" || r[1]["amount_cents"].(float64) != 0 || r[2]["amount_cents"].(float64) != 3500 ||
+		r[3]["month"] != "2026-04" || r[3]["amount_cents"].(float64) != 0 {
+		t.Errorf("months: %v", r)
+	}
+	if r, _ = rows(map[string]any{"group_by": "month", "from": "2026-01-01", "text": "nothing like this"}); len(r) != 4 {
+		t.Errorf("months without matches: %v", r)
+	}
+	if r, _ = rows(map[string]any{"group_by": "month", "from": "2026-01-01", "to": "2026-12-31"}); len(r) != 4 {
+		t.Errorf("months beyond today: %v", r)
+	}
+	r, _ = rows(map[string]any{"group_by": "year"})
+	if len(r) != 2 || r[0]["year"] != "2025" || r[1]["amount_cents"].(float64) != 7500 {
+		t.Errorf("years: %v", r)
+	}
+	r, _ = rows(map[string]any{"group_by": "week", "from": "2026-03-16", "to": "2026-03-29"})
+	if len(r) != 2 || r[0]["week"] != "2026-W12" || r[0]["count"].(float64) != 2 || r[1]["week"] != "2026-W13" || r[1]["amount_cents"].(float64) != 0 {
+		t.Errorf("weeks: %v", r)
+	}
+	// title groups case-insensitively, text filters.
+	r, _ = rows(map[string]any{"group_by": "title", "from": "2026-01-01"})
+	if len(r) != 2 || !strings.EqualFold(r[0]["title"].(string), "rewe") || r[0]["count"].(float64) != 2 || r[0]["amount_cents"].(float64) != 6000 {
+		t.Errorf("titles: %v", r)
+	}
+	r, _ = rows(map[string]any{"group_by": "category", "text": []string{"kino", "pizza"}})
+	if len(r) != 2 {
+		t.Errorf("text: %v", r)
+	}
+	// limit truncates the rows, but total covers all of them.
+	r, sc := rows(map[string]any{"group_by": "month", "limit": 2})
+	if len(r) != 2 || sc["truncated"] != true || sc["rows_total"].(float64) != 14 || sc["total_cents"].(float64) != 11500 {
+		t.Errorf("limit: %d rows, %v %v %v", len(r), sc["truncated"], sc["rows_total"], sc["total_cents"])
+	}
+
+	// compare=previous_year by month: each month against the same month a year earlier.
+	r, sc = rows(map[string]any{"group_by": "month", "from": "2026-01-01", "to": "2026-03-31", "compare": "previous_year"})
+	if len(r) != 3 || r[2]["month"] != "2026-03" || r[2]["previous_cents"].(float64) != 3000 || r[2]["change_cents"].(float64) != 500 ||
+		r[2]["change_percent"].(float64) != 16.7 || r[0]["previous_cents"].(float64) != 0 || r[0]["change_percent"] != nil ||
+		sc["previous_total_cents"].(float64) != 3000 {
+		t.Errorf("compare months: %v %v", r, sc)
+	}
+	// By category: groups only present a year earlier appear with 0.
+	r, sc = rows(map[string]any{"group_by": "category", "from": "2026-01-01", "to": "2026-12-31", "compare": "previous_year"})
+	got := map[string][2]float64{}
+	for _, x := range r {
+		got[x["category"].(string)] = [2]float64{x["amount_cents"].(float64), x["previous_cents"].(float64)}
+	}
+	if len(r) != 3 || got["Lebensmittel"] != [2]float64{6000, 3000} || got["No category"] != [2]float64{1500, 0} || got["Restaurant"] != [2]float64{0, 1000} ||
+		sc["previous_period"] != "2025-01-01 to 2025-12-31" {
+		t.Errorf("compare categories: %v %v", got, sc["previous_period"])
+	}
+}
+
+func TestBalanceHistory(t *testing.T) {
+	e := newEnv(t)
+	e.expense("Rewe", 3000, "2026-01-10", "Anna", "Lebensmittel", "Anna", "Ben", "Cleo")
+	e.expense("Kino", 2000, "2026-03-05", "Ben", "", "Anna", "Ben")
+	d, _ := domain.ParseDate("2026-03-20")
+	if _, err := e.st.CreateExpense(context.Background(), e.ids["Ben"], store.ExpenseInput{Title: "Rückzahlung", Date: d, PaidBy: e.ids["Ben"],
+		AmountCents: 1000, IsReimbursement: true, Parts: []domain.Part{{ParticipantID: e.ids["Anna"]}}}); err != nil {
+		t.Fatal(err)
+	}
+	history := func(args map[string]any) []map[string]float64 {
+		t.Helper()
+		sc, text, isErr := e.call("balance_history", args)
+		if isErr {
+			t.Fatalf("%v: %s", args, text)
+		}
+		var out []map[string]float64
+		for _, r := range sc["rows"].([]any) {
+			m := map[string]float64{}
+			for _, b := range r.(map[string]any)["balances"].([]any) {
+				b := b.(map[string]any)
+				m[b["person"].(string)] = b["balance_cents"].(float64)
+			}
+			out = append(out, m)
+		}
+		return out
+	}
+	e.at("2026-03-25")
+	rows := history(map[string]any{"from": "2025-12-01", "to": "2026-03-31"})
+	want := []map[string]float64{
+		{"Anna": 0, "Ben": 0, "Cleo": 0},
+		{"Anna": 2000, "Ben": -1000, "Cleo": -1000},
+		{"Anna": 2000, "Ben": -1000, "Cleo": -1000},
+		{"Anna": 0, "Ben": 1000, "Cleo": -1000},
+	}
+	if fmt.Sprint(rows) != fmt.Sprint(want) {
+		t.Errorf("months = %v", rows)
+	}
+	// A later first period starts with the opening balance; person narrows down.
+	rows = history(map[string]any{"interval": "year", "from": "2026-02-01", "to": "2026-12-31", "person": "ben"})
+	if len(rows) != 1 || len(rows[0]) != 1 || rows[0]["Ben"] != 1000 {
+		t.Errorf("year Ben = %v", rows)
+	}
+	sc, _, _ := e.call("balance_history", map[string]any{"interval": "week", "from": "2026-03-02", "to": "2026-03-15"})
+	if r := sc["rows"].([]any); len(r) != 2 || r[0].(map[string]any)["week"] != "2026-W10" {
+		t.Errorf("weeks = %v", r)
+	}
+	// Without to, the last row includes expenses dated later and equals balances;
+	// with to, later expenses are left out.
+	e.expense("Miete", 3000, "2026-05-01", "Cleo", "", "Anna", "Ben", "Cleo")
+	rows = history(nil)
+	if len(rows) != 5 || rows[4]["Cleo"] != -1000+2000 || rows[3]["Cleo"] != -1000 {
+		t.Errorf("until the last expense = %v", rows)
+	}
+	if rows = history(map[string]any{"to": "2026-04-30"}); len(rows) != 4 || rows[3]["Cleo"] != -1000 {
+		t.Errorf("until April = %v", rows)
+	}
+	for _, args := range []map[string]any{{"interval": "day"}, {"person": "Dora"}, {"interval": "week", "from": "2000-01-01", "to": "2026-01-01"},
+		{"interval": "week", "from": "1900-01-01"}} {
+		if _, text, isErr := e.call("balance_history", args); !isErr || strings.Contains(text, "Internal error") {
+			t.Errorf("%v: isError=%v %s", args, isErr, text)
+		}
+	}
+}
+
+func TestActivity(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	e.expense("Rewe", 3000, "2026-01-10", "Anna", "Lebensmittel", "Anna", "Ben")
+	e.expense("Kino", 2000, "2026-03-05", "Ben", "", "Anna", "Ben")
+	es, _ := e.st.ListExpenses(ctx, store.ExpenseFilter{Text: "Kino"})
+	kino := es[0]
+	in := kino.ExpenseInput
+	in.Title, in.AmountCents = "Kino & Popcorn", 2500
+	if err := e.st.UpdateExpense(ctx, e.ids["Cleo"], kino.ID, in); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.st.AddActivity(ctx, 0, store.ActionSettingsUpdated, 0, store.ActivityDetails{Text: "Kategorie angelegt"}); err != nil {
+		t.Fatal(err)
+	}
+	entries := func(args map[string]any) ([]map[string]any, map[string]any) {
+		t.Helper()
+		sc, text, isErr := e.call("activity", args)
+		if isErr {
+			t.Fatalf("%v: %s", args, text)
+		}
+		var out []map[string]any
+		for _, x := range sc["entries"].([]any) {
+			out = append(out, x.(map[string]any))
+		}
+		return out, sc
+	}
+	all, _ := entries(nil)
+	if len(all) != 4 || all[0]["actor"] != "system" || all[0]["text"] != "Kategorie angelegt" || all[1]["actor"] != "Cleo" ||
+		all[1]["action"] != "expense_updated" || all[1]["title"] != "Kino & Popcorn" || all[1]["changes"] == nil ||
+		all[3]["amount"] != "30.00" || all[3]["expense_id"] == nil {
+		t.Errorf("all = %v", all)
+	}
+	if got, _ := entries(map[string]any{"person": "cleo"}); len(got) != 1 || got[0]["action"] != "expense_updated" {
+		t.Errorf("person = %v", got)
+	}
+	if got, _ := entries(map[string]any{"action": "expense_created"}); len(got) != 2 {
+		t.Errorf("action = %v", got)
+	}
+	if got, _ := entries(map[string]any{"expense_id": kino.ID}); len(got) != 2 {
+		t.Errorf("expense_id = %v", got)
+	}
+	got, sc := entries(map[string]any{"limit": 3})
+	if len(got) != 3 || sc["more"] != true || !strings.Contains(sc["note"].(string), "before_id") {
+		t.Errorf("limit = %v", sc)
+	}
+	if got, _ = entries(map[string]any{"before_id": got[2]["id"]}); len(got) != 1 {
+		t.Errorf("before_id = %v", got)
+	}
+	// The log was written just now (real clock): today is in, yesterday is not.
+	today := time.Now().In(time.Local).Format(domain.DateLayout)
+	yesterday := time.Now().In(time.Local).AddDate(0, 0, -1).Format(domain.DateLayout)
+	if got, _ := entries(map[string]any{"from": today, "to": today}); len(got) != 4 {
+		t.Errorf("today = %d", len(got))
+	}
+	if got, _ := entries(map[string]any{"to": yesterday}); len(got) != 0 {
+		t.Errorf("until yesterday = %d", len(got))
+	}
+	for _, args := range []map[string]any{{"person": "Dora"}, {"limit": 0.5}, {"from": "gestern"}, {"expense_id": -1}} {
+		if _, text, isErr := e.call("activity", args); !isErr || strings.Contains(text, "Internal error") {
+			t.Errorf("%v: isError=%v %s", args, isErr, text)
+		}
+	}
+}
+
+func TestDataOverviewInInstructions(t *testing.T) {
+	e := newEnv(t)
+	instructions := func() string {
+		t.Helper()
+		return e.modern("server/discover", nil, nil).result(t)["instructions"].(string)
+	}
+	if got := instructions(); !strings.Contains(got, "Data overview: there are no expenses yet.") {
+		t.Errorf("empty: %s", got)
+	}
+	e.expense("Rewe", 3000, "2025-03-10", "Anna", "Lebensmittel", "Anna", "Ben")
+	e.expense("Kino", 2000, "2026-09-05", "Ben", "", "Anna", "Ben")
+	e.expense("Bahn", 2000, "2026-09-06", "Ben", "", "Ben")
+	e.expense("Pizza", 2000, "2026-09-07", "Ben", "Restaurant", "Ben")
+	d, _ := domain.ParseDate("2026-09-30")
+	if _, err := e.st.CreateExpense(context.Background(), e.ids["Ben"], store.ExpenseInput{Title: "Rückzahlung", Date: d, PaidBy: e.ids["Ben"],
+		AmountCents: 1000, IsReimbursement: true, Parts: []domain.Part{{ParticipantID: e.ids["Anna"]}}}); err != nil {
+		t.Fatal(err)
+	}
+	got := instructions()
+	for _, want := range []string{
+		"4 expenses and 1 reimbursements dated 2025-03-10 to 2026-09-30.",
+		"2 of the expenses (50.0%) have no category.",
+		"Values of activity.action: expense_created.",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("missing %q in %s", want, got)
+		}
+	}
+	init := e.send("POST", "/mcp/"+testSecret, "", nil,
+		`{"jsonrpc":"2.0","id":0,"method":"initialize","params":{"protocolVersion":"2025-06-18"}}`).result(t)
+	if !strings.Contains(init["instructions"].(string), "4 expenses") {
+		t.Errorf("initialize: %s", init["instructions"])
+	}
+}
+
+// Edge cases of compare=previous_year.
+func TestStatisticsCompareEdgeCases(t *testing.T) {
+	e := newEnv(t)
+	e.at("2026-10-02")
+	e.expense("Rewe", 7000, "2025-03-10", "Anna", "Lebensmittel", "Anna")
+	e.expense("Hotel", 50000, "2025-03-12", "Anna", "", "Anna")
+	e.expense("Rewe", 10000, "2026-03-10", "Anna", "Lebensmittel", "Anna")
+	e.expense("Miete", 90000, "2023-03-01", "Anna", "", "Anna")
+	e.expense("Bäckerei Groß", 300, "2026-05-02", "Anna", "", "Anna")
+	e.expense("BÄCKEREI GROSS", 200, "2025-05-02", "Anna", "", "Anna")
+	e.expense("Glühwein", 800, "2020-12-30", "Anna", "", "Anna")
+	call := func(args map[string]any) ([]map[string]any, map[string]any) {
+		t.Helper()
+		sc, text, isErr := e.call("statistics", args)
+		if isErr {
+			t.Fatalf("%v: %s", args, text)
+		}
+		var out []map[string]any
+		for _, r := range sc["rows"].([]any) {
+			out = append(out, r.(map[string]any))
+		}
+		return out, sc
+	}
+
+	// category_month: a category that only had expenses a year earlier appears with 0.
+	r, sc := call(map[string]any{"group_by": "category_month", "from": "2026-03-01", "to": "2026-03-31", "compare": "previous_year"})
+	if len(r) != 2 || r[1]["category"] != "No category" || r[1]["amount_cents"].(float64) != 0 || r[1]["previous_cents"].(float64) != 50000 ||
+		sc["previous_total_cents"].(float64) != 57000 {
+		t.Errorf("category_month: %v %v", r, sc["previous_total_cents"])
+	}
+	// 29 February: the previous range ends on 28 February, not 1 March.
+	if _, sc = call(map[string]any{"group_by": "category", "from": "2024-02-01", "to": "2024-02-29", "compare": "previous_year"}); sc["previous_total_cents"].(float64) != 0 ||
+		sc["previous_period"] != "2023-02-01 to 2023-02-28" {
+		t.Errorf("leap day: %v %v", sc["previous_total_cents"], sc["previous_period"])
+	}
+	// Titles are matched like Stats groups them (ß = ss).
+	if r, _ = call(map[string]any{"group_by": "title", "from": "2026-05-01", "to": "2026-05-31", "compare": "previous_year"}); len(r) != 1 || r[0]["previous_cents"].(float64) != 200 {
+		t.Errorf("title ß: %v", r)
+	}
+	// Week 53 of 2020 is compared with week 52 of 2021.
+	if r, _ = call(map[string]any{"group_by": "week", "from": "2021-12-20", "to": "2021-12-26", "compare": "previous_year"}); len(r) != 1 || r[0]["week"] != "2021-W51" {
+		t.Errorf("week 51: %v", r)
+	}
+	if r, _ = call(map[string]any{"group_by": "week", "from": "2021-12-27", "to": "2022-01-02", "compare": "previous_year"}); len(r) != 1 || r[0]["week"] != "2021-W52" ||
+		r[0]["previous_cents"].(float64) != 800 {
+		t.Errorf("week 53 → 52: %v", r)
+	}
+	// A future from without to cannot be compared up to today.
+	if _, text, isErr := e.call("statistics", map[string]any{"group_by": "category", "from": "2026-12-01", "compare": "previous_year"}); !isErr || !strings.Contains(text, "future") {
+		t.Errorf("future from: %v %s", isErr, text)
 	}
 }

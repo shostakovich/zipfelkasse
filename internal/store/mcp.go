@@ -12,6 +12,7 @@ import (
 	"net/url"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -82,6 +83,51 @@ func schemaObjects(ctx context.Context, q queryer, schema string) ([]SchemaObjec
 		}
 	}
 	return out, rows.Err()
+}
+
+// DataOverview summarizes the data for the MCP instructions. Deleted
+// expenses do not count.
+type DataOverview struct {
+	Expenses        int64     // without reimbursements
+	Reimbursements  int64     //
+	WithoutCategory int64     // expenses (without reimbursements) without a category
+	FirstDate       time.Time // of all expenses and reimbursements; zero if there are none
+	LastDate        time.Time //
+	ActivityActions []string  // all values of activity.action, sorted
+}
+
+// MCPOverview returns the DataOverview.
+func (s *Store) MCPOverview(ctx context.Context) (DataOverview, error) {
+	var o DataOverview
+	var first, last sql.NullString
+	err := s.db.QueryRowContext(ctx, `SELECT
+		coalesce(sum(is_reimbursement = 0), 0), coalesce(sum(is_reimbursement = 1), 0),
+		coalesce(sum(is_reimbursement = 0 AND category_id IS NULL), 0), min(date), max(date)
+		FROM expenses WHERE deleted_at IS NULL`).Scan(&o.Expenses, &o.Reimbursements, &o.WithoutCategory, &first, &last)
+	if err != nil {
+		return o, err
+	}
+	if first.Valid {
+		if o.FirstDate, err = parseDate(first.String); err != nil {
+			return o, err
+		}
+		if o.LastDate, err = parseDate(last.String); err != nil {
+			return o, err
+		}
+	}
+	rows, err := s.db.QueryContext(ctx, "SELECT DISTINCT action FROM activity ORDER BY action")
+	if err != nil {
+		return o, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var a string
+		if err := rows.Scan(&a); err != nil {
+			return o, err
+		}
+		o.ActivityActions = append(o.ActivityActions, a)
+	}
+	return o, rows.Err()
 }
 
 // ReadOnlyQuery runs a single SELECT/WITH query in a sandbox and returns at
@@ -367,10 +413,22 @@ func skipQuoted(s string, i int, open, close byte) int {
 // Groupings for Stats (also the group_by values of the MCP statistics tool).
 const (
 	StatsByCategory      = "category"
+	StatsByTitle         = "title"
+	StatsByYear          = "year"
 	StatsByMonth         = "month"
+	StatsByWeek          = "week"
 	StatsByPerson        = "person"
 	StatsByCategoryMonth = "category_month"
 )
+
+// statsPeriod is the SQL expression of the period of each time grouping:
+// "2026", "2026-09", ISO week "2026-W40".
+var statsPeriod = map[string]string{
+	StatsByYear:          "substr(e.date, 1, 4)",
+	StatsByMonth:         "substr(e.date, 1, 7)",
+	StatsByWeek:          "strftime('%G-W%V', e.date)",
+	StatsByCategoryMonth: "substr(e.date, 1, 7)",
+}
 
 // StatsFilter controls Stats. Reimbursements and deleted expenses never count.
 type StatsFilter struct {
@@ -381,13 +439,17 @@ type StatsFilter struct {
 	// WithoutCategory to expenses without a category (label NoCategory).
 	CategoryID      int64
 	WithoutCategory bool
+	// AnyText: only expenses whose title or notes contain one of the terms
+	// (as ExpenseFilter.AnyText).
+	AnyText []string
 }
 
 // StatRow is a row of the statistics. Depending on the grouping, Category,
-// Month ("YYYY-MM") and/or Person are set.
+// Title, Period and/or Person are set.
 type StatRow struct {
 	Category    string
-	Month       string
+	Title       string // for title: the title as in one of the expenses (grouped case-insensitively)
+	Period      string // year "2026", month "2026-09" or ISO week "2026-W40"
 	Person      string
 	Count       int64 // number of expenses
 	AmountCents int64 // sum (total amount or share; for person: the person's share)
@@ -397,7 +459,9 @@ type StatRow struct {
 // NoCategory is the group label for expenses without a category.
 const NoCategory = "No category"
 
-// Stats sums up expenses (excluding reimbursements and deleted ones) by f.GroupBy.
+// Stats sums up expenses (excluding reimbursements and deleted ones) by
+// f.GroupBy. Time groupings are sorted by period, the others by amount
+// (largest first); periods without expenses are missing (see FillPeriods).
 func (s *Store) Stats(ctx context.Context, f StatsFilter) ([]StatRow, error) {
 	where := []string{"e.deleted_at IS NULL", "e.is_reimbursement = 0"}
 	var args []any
@@ -416,6 +480,10 @@ func (s *Store) Stats(ctx context.Context, f StatsFilter) ([]StatRow, error) {
 		where = append(where, "e.category_id = ?")
 		args = append(args, f.CategoryID)
 	}
+	if c, a := textCond(f.AnyText...); c != "" {
+		where = append(where, c)
+		args = append(args, a...)
+	}
 	if f.GroupBy == StatsByPerson {
 		return s.statsByPerson(ctx, where, args, f.ParticipantID)
 	}
@@ -428,15 +496,18 @@ func (s *Store) Stats(ctx context.Context, f StatsFilter) ([]StatRow, error) {
 		amount = "x.amount_cents"
 	}
 	cat := fmt.Sprintf("coalesce(c.name, '%s')", NoCategory)
-	month := "substr(e.date, 1, 7)"
+	period := statsPeriod[f.GroupBy]
+	// Columns: label (category or title), period.
 	var sel, group, order string
 	switch f.GroupBy {
 	case StatsByCategory:
 		sel, group, order = cat+", ''", cat, "4 DESC, 1"
-	case StatsByMonth:
-		sel, group, order = "'', "+month, month, "2"
+	case StatsByTitle:
+		sel, group, order = "max(e.title), ''", foldFunc+"(e.title)", "4 DESC, 1"
+	case StatsByYear, StatsByMonth, StatsByWeek:
+		sel, group, order = "'', "+period, period, "2"
 	case StatsByCategoryMonth:
-		sel, group, order = cat+", "+month, cat+", "+month, "2, 4 DESC, 1"
+		sel, group, order = cat+", "+period, cat+", "+period, "2, 4 DESC, 1"
 	default:
 		return nil, invalid("Unknown grouping %q.", f.GroupBy)
 	}
@@ -450,12 +521,161 @@ func (s *Store) Stats(ctx context.Context, f StatsFilter) ([]StatRow, error) {
 	var out []StatRow
 	for rows.Next() {
 		var r StatRow
-		if err := rows.Scan(&r.Category, &r.Month, &r.Count, &r.AmountCents); err != nil {
+		var label string
+		if err := rows.Scan(&label, &r.Period, &r.Count, &r.AmountCents); err != nil {
 			return nil, err
+		}
+		if f.GroupBy == StatsByTitle {
+			r.Title = label
+		} else {
+			r.Category = label
 		}
 		out = append(out, r)
 	}
 	return out, rows.Err()
+}
+
+// IsTimeGrouping reports whether rows of groupBy are periods only (year,
+// month, week).
+func IsTimeGrouping(groupBy string) bool {
+	return groupBy == StatsByYear || groupBy == StatsByMonth || groupBy == StatsByWeek
+}
+
+// PeriodOf returns the period of day for a time grouping (as in StatRow.Period).
+func PeriodOf(groupBy string, day time.Time) string {
+	switch groupBy {
+	case StatsByYear:
+		return day.Format("2006")
+	case StatsByWeek:
+		y, w := day.ISOWeek()
+		return fmt.Sprintf("%d-W%02d", y, w)
+	}
+	return day.Format("2006-01")
+}
+
+// FillPeriods adds a row with 0 for every period of a time grouping between
+// first and last (inclusive) that has no row. rows must be sorted by period.
+func FillPeriods(rows []StatRow, groupBy string, first, last time.Time) []StatRow {
+	if !IsTimeGrouping(groupBy) || last.Before(first) {
+		return rows
+	}
+	have := make(map[string]StatRow, len(rows))
+	for _, r := range rows {
+		have[r.Period] = r
+	}
+	var out []StatRow
+	for _, p := range Periods(groupBy, first, last) {
+		if r, ok := have[p]; ok {
+			out = append(out, r)
+			delete(have, p)
+		} else {
+			out = append(out, StatRow{Period: p})
+		}
+	}
+	// Rows outside first…last stay.
+	for _, r := range rows {
+		if _, ok := have[r.Period]; ok {
+			out = append(out, r)
+		}
+	}
+	slices.SortStableFunc(out, func(a, b StatRow) int { return strings.Compare(a.Period, b.Period) })
+	return out
+}
+
+// Periods lists the periods of a time grouping from the one containing
+// first to the one containing last (sorted; empty if last is before first).
+func Periods(groupBy string, first, last time.Time) []string {
+	var out []string
+	end := PeriodOf(groupBy, last)
+	if last.Before(first) {
+		return nil
+	}
+	for d := periodStart(groupBy, first); ; d = nextPeriod(groupBy, d) {
+		p := PeriodOf(groupBy, d)
+		out = append(out, p)
+		if p >= end {
+			break
+		}
+	}
+	return out
+}
+
+// PeriodEnd returns the last day of the period of a time grouping that
+// contains day.
+func PeriodEnd(groupBy string, day time.Time) time.Time {
+	return nextPeriod(groupBy, periodStart(groupBy, day)).AddDate(0, 0, -1)
+}
+
+// PeriodStart returns the first day of a period of a time grouping
+// ("2026", "2026-09", "2026-W40"); zero if it cannot be parsed.
+func PeriodStart(groupBy, period string) time.Time {
+	var y, n int
+	switch groupBy {
+	case StatsByYear:
+		if _, err := fmt.Sscanf(period, "%4d", &y); err != nil {
+			return time.Time{}
+		}
+		return time.Date(y, 1, 1, 0, 0, 0, 0, time.UTC)
+	case StatsByWeek:
+		if _, err := fmt.Sscanf(period, "%4d-W%2d", &y, &n); err != nil {
+			return time.Time{}
+		}
+		// 4 January is always in week 1.
+		return periodStart(StatsByWeek, time.Date(y, 1, 4, 0, 0, 0, 0, time.UTC)).AddDate(0, 0, 7*(n-1))
+	}
+	if _, err := fmt.Sscanf(period, "%4d-%2d", &y, &n); err != nil {
+		return time.Time{}
+	}
+	return time.Date(y, time.Month(n), 1, 0, 0, 0, 0, time.UTC)
+}
+
+// ShiftPeriodYear moves a period ("2025-09", "2025-W40", "2025") by years;
+// "" stays "". Week 53 becomes week 52 in a year that has no week 53.
+func ShiftPeriodYear(period string, years int) string {
+	y, err := strconv.Atoi(period[:min(4, len(period))])
+	if err != nil {
+		return period
+	}
+	if strings.HasSuffix(period, "-W53") {
+		if _, w := time.Date(y+years, 12, 28, 0, 0, 0, 0, time.UTC).ISOWeek(); w < 53 {
+			return fmt.Sprintf("%04d-W52", y+years)
+		}
+	}
+	return fmt.Sprintf("%04d", y+years) + period[4:]
+}
+
+// ShiftDateYear moves a date by years; 29 February becomes 28 February in a
+// year that is not a leap year (time.AddDate would make it 1 March).
+func ShiftDateYear(d time.Time, years int) time.Time {
+	y, m, day := d.Date()
+	if m == time.February && day == 29 {
+		if last := time.Date(y+years, time.March, 0, 0, 0, 0, 0, d.Location()).Day(); last < 29 {
+			day = last
+		}
+	}
+	return time.Date(y+years, m, day, d.Hour(), d.Minute(), d.Second(), d.Nanosecond(), d.Location())
+}
+
+func periodStart(groupBy string, d time.Time) time.Time {
+	y, m, day := d.Date()
+	switch groupBy {
+	case StatsByYear:
+		return time.Date(y, 1, 1, 0, 0, 0, 0, time.UTC)
+	case StatsByWeek:
+		monday := time.Date(y, m, day, 0, 0, 0, 0, time.UTC)
+		return monday.AddDate(0, 0, -(int(monday.Weekday())+6)%7)
+	}
+	return time.Date(y, m, 1, 0, 0, 0, 0, time.UTC)
+}
+
+func nextPeriod(groupBy string, d time.Time) time.Time {
+	switch groupBy {
+	case StatsByYear:
+		return d.AddDate(1, 0, 0)
+	case StatsByWeek:
+		return d.AddDate(0, 0, 7)
+	}
+	return d.AddDate(0, 1, 0)
 }
 
 func (s *Store) statsByPerson(ctx context.Context, where []string, args []any, participantID int64) ([]StatRow, error) {
