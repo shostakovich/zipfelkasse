@@ -1,0 +1,321 @@
+package export
+
+import (
+	"encoding/csv"
+	"encoding/json"
+	"fmt"
+	"io"
+	"slices"
+	"strconv"
+	"strings"
+	"time"
+
+	"teilen/internal/domain"
+	"teilen/internal/store"
+	"teilen/internal/ynab"
+)
+
+// --- Ausgaben als CSV (für Excel/Numbers) -------------------------------------
+
+// writeExpensesCSV schreibt alle Ausgaben als CSV im deutschen Excel-Format:
+// UTF-8 mit BOM, Semikolon, Komma als Dezimaltrenner, CRLF. Je beteiligter
+// Person gibt es eine Spalte „Anteil <Name>“. es ist chronologisch sortiert.
+func writeExpensesCSV(w io.Writer, people []store.Participant, es []store.Expense) error {
+	if _, err := io.WriteString(w, "\uFEFF"); err != nil {
+		return err
+	}
+	people = involved(people, es)
+	cw := csv.NewWriter(w)
+	cw.Comma = ';'
+	cw.UseCRLF = true
+	head := []string{"ID", "Datum", "Titel", "Kategorie", "Bezahlt von", "Betrag (EUR)", "Originalbetrag", "Währung",
+		"Kurs", "Art", "Aufteilung", "Notiz"}
+	for _, p := range people {
+		head = append(head, "Anteil "+p.Name)
+	}
+	if err := cw.Write(head); err != nil {
+		return err
+	}
+	for _, e := range es {
+		kind, rate := "Ausgabe", ""
+		if e.IsReimbursement {
+			kind = "Rückzahlung"
+		}
+		if e.IsForeign() {
+			rate = strings.Replace(strconv.FormatFloat(e.FXRate, 'f', -1, 64), ".", ",", 1)
+		}
+		rec := []string{
+			strconv.FormatInt(e.ID, 10),
+			domain.FormatDate(e.Date),
+			cell(e.Title),
+			cell(e.CategoryName),
+			cell(e.PaidByName),
+			decimal(e.AmountCents, 2, ','),
+			decimal(e.OriginalAmountMinor, domain.CurrencyDecimals(e.OriginalCurrency), ','),
+			e.OriginalCurrency,
+			rate,
+			kind,
+			e.SplitMode.Label(),
+			cell(e.Notes),
+		}
+		for _, p := range people {
+			v := ""
+			if slices.ContainsFunc(e.Shares, func(s domain.Share) bool { return s.ParticipantID == p.ID }) {
+				v = decimal(e.ShareOf(p.ID), 2, ',')
+			}
+			rec = append(rec, v)
+		}
+		if err := cw.Write(rec); err != nil {
+			return err
+		}
+	}
+	cw.Flush()
+	return cw.Error()
+}
+
+// involved filtert people auf die, die in es zahlen oder beteiligt sind.
+func involved(people []store.Participant, es []store.Expense) []store.Participant {
+	seen := map[int64]bool{}
+	for _, e := range es {
+		seen[e.PaidBy] = true
+		for _, s := range e.Shares {
+			seen[s.ParticipantID] = true
+		}
+	}
+	var out []store.Participant
+	for _, p := range people {
+		if seen[p.ID] {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+// cell entschärft Text, den Tabellenprogramme sonst als Formel ausführen
+// würden (CSV-Injection): führendes =, +, -, @, Tab oder CR bekommt ein '.
+func cell(s string) string {
+	if s != "" && strings.ContainsRune("=+-@\t\r", rune(s[0])) {
+		return "'" + s
+	}
+	return s
+}
+
+// decimal formatiert minor mit decimals Nachkommastellen, ohne
+// Tausendertrenner: (123456, 2, ',') → "1234,56".
+func decimal(minor int64, decimals int, sep byte) string {
+	neg := minor < 0
+	if neg {
+		minor = -minor
+	}
+	s := strconv.FormatInt(minor, 10)
+	if decimals > 0 {
+		if len(s) <= decimals {
+			s = strings.Repeat("0", decimals-len(s)+1) + s
+		}
+		s = s[:len(s)-decimals] + string(sep) + s[len(s)-decimals:]
+	}
+	if neg {
+		s = "-" + s
+	}
+	return s
+}
+
+// --- Ausgaben als JSON ---------------------------------------------------------
+
+type jsonExport struct {
+	Group        string            `json:"group"`
+	ExportedAt   time.Time         `json:"exported_at"`
+	From         string            `json:"from,omitempty"`
+	To           string            `json:"to,omitempty"`
+	Currency     string            `json:"currency"`
+	Participants []jsonParticipant `json:"participants"`
+	Expenses     []jsonExpense     `json:"expenses"`
+}
+
+type jsonParticipant struct {
+	ID       int64  `json:"id"`
+	Name     string `json:"name"`
+	Archived bool   `json:"archived"`
+}
+
+type jsonExpense struct {
+	ID                  int64       `json:"id"`
+	Date                string      `json:"date"`
+	Title               string      `json:"title"`
+	CategoryID          *int64      `json:"category_id"`
+	Category            string      `json:"category"`
+	PaidBy              int64       `json:"paid_by"`
+	PaidByName          string      `json:"paid_by_name"`
+	AmountCents         int64       `json:"amount_cents"`
+	IsReimbursement     bool        `json:"is_reimbursement"`
+	SplitMode           string      `json:"split_mode"`
+	OriginalAmountMinor int64       `json:"original_amount_minor"`
+	OriginalCurrency    string      `json:"original_currency"`
+	FXRate              float64     `json:"fx_rate"`
+	FXSource            string      `json:"fx_source"`
+	Notes               string      `json:"notes"`
+	RecurringID         *int64      `json:"recurring_id"`
+	Shares              []jsonShare `json:"shares"`
+	CreatedAt           time.Time   `json:"created_at"`
+	UpdatedAt           time.Time   `json:"updated_at"`
+}
+
+type jsonShare struct {
+	ParticipantID int64  `json:"participant_id"`
+	Name          string `json:"name"`
+	Weight        int64  `json:"weight"`
+	AmountCents   int64  `json:"amount_cents"`
+}
+
+func optID(id int64) *int64 {
+	if id == 0 {
+		return nil
+	}
+	return &id
+}
+
+func writeExpensesJSON(w io.Writer, group string, now time.Time, p period, people []store.Participant, es []store.Expense) error {
+	names := map[int64]string{}
+	out := jsonExport{Group: group, ExportedAt: now.UTC(), Currency: "EUR",
+		Participants: []jsonParticipant{}, Expenses: []jsonExpense{}}
+	if !p.From.IsZero() {
+		out.From = p.From.Format(domain.DateLayout)
+	}
+	if !p.To.IsZero() {
+		out.To = p.To.Format(domain.DateLayout)
+	}
+	for _, pp := range people {
+		names[pp.ID] = pp.Name
+		out.Participants = append(out.Participants, jsonParticipant{ID: pp.ID, Name: pp.Name, Archived: pp.Archived()})
+	}
+	for _, e := range es {
+		je := jsonExpense{
+			ID: e.ID, Date: e.Date.Format(domain.DateLayout), Title: e.Title,
+			CategoryID: optID(e.CategoryID), Category: e.CategoryName,
+			PaidBy: e.PaidBy, PaidByName: e.PaidByName, AmountCents: e.AmountCents,
+			IsReimbursement: e.IsReimbursement, SplitMode: string(e.SplitMode),
+			OriginalAmountMinor: e.OriginalAmountMinor, OriginalCurrency: e.OriginalCurrency,
+			FXRate: e.FXRate, FXSource: e.FXSource, Notes: e.Notes, RecurringID: optID(e.RecurringID),
+			Shares: []jsonShare{}, CreatedAt: e.CreatedAt.UTC(), UpdatedAt: e.UpdatedAt.UTC(),
+		}
+		for _, s := range e.Shares {
+			je.Shares = append(je.Shares, jsonShare{ParticipantID: s.ParticipantID, Name: names[s.ParticipantID],
+				Weight: s.Weight, AmountCents: s.AmountCents})
+		}
+		out.Expenses = append(out.Expenses, je)
+	}
+	enc := json.NewEncoder(w)
+	enc.SetIndent("", "  ")
+	return enc.Encode(out)
+}
+
+// --- Meine Anteile für YNAB: OFX -------------------------------------------------
+
+// writeOFX schreibt die Buchungen als OFX 1.02 (SGML) – ein Kontoauszug des
+// Verrechnungskontos. FITID ist stabil je Ausgabe („teilen-<ID>“). Kodierung
+// UTF-8 (so deklariert), Zeilenende CRLF.
+func writeOFX(w io.Writer, ps []ynab.Posting, accountID string, from, to, now time.Time) error {
+	if from.IsZero() || to.IsZero() {
+		lo, hi := now, now
+		if len(ps) > 0 {
+			lo, hi = ps[0].Date, ps[len(ps)-1].Date
+		}
+		if from.IsZero() {
+			from = lo
+		}
+		if to.IsZero() {
+			to = hi
+		}
+	}
+	var total int64
+	for _, p := range ps {
+		total -= p.AmountCents
+	}
+	var b strings.Builder
+	line := func(format string, args ...any) {
+		fmt.Fprintf(&b, format, args...)
+		b.WriteString("\r\n")
+	}
+	for _, h := range []string{"OFXHEADER:100", "DATA:OFXSGML", "VERSION:102", "SECURITY:NONE", "ENCODING:UTF-8",
+		"CHARSET:NONE", "COMPRESSION:NONE", "OLDFILEUID:NONE", "NEWFILEUID:NONE", ""} {
+		line("%s", h)
+	}
+	line("<OFX>")
+	line("<SIGNONMSGSRSV1>")
+	line("<SONRS>")
+	line("<STATUS>")
+	line("<CODE>0")
+	line("<SEVERITY>INFO")
+	line("</STATUS>")
+	line("<DTSERVER>%s", now.UTC().Format("20060102150405"))
+	line("<LANGUAGE>GER")
+	line("</SONRS>")
+	line("</SIGNONMSGSRSV1>")
+	line("<BANKMSGSRSV1>")
+	line("<STMTTRNRS>")
+	line("<TRNUID>1")
+	line("<STATUS>")
+	line("<CODE>0")
+	line("<SEVERITY>INFO")
+	line("</STATUS>")
+	line("<STMTRS>")
+	line("<CURDEF>EUR")
+	line("<BANKACCTFROM>")
+	line("<BANKID>TEILEN")
+	line("<ACCTID>%s", sgml(accountID, 22))
+	line("<ACCTTYPE>CHECKING")
+	line("</BANKACCTFROM>")
+	line("<BANKTRANLIST>")
+	line("<DTSTART>%s", from.Format("20060102"))
+	line("<DTEND>%s", to.Format("20060102"))
+	for _, p := range ps {
+		line("<STMTTRN>")
+		line("<TRNTYPE>DEBIT")
+		line("<DTPOSTED>%s", p.Date.Format("20060102"))
+		line("<TRNAMT>%s", decimal(-p.AmountCents, 2, '.'))
+		line("<FITID>teilen-%d", p.ExpenseID)
+		line("<NAME>%s", sgml(p.Payee, 32))
+		line("<MEMO>%s", sgml(p.Memo, 255))
+		line("</STMTTRN>")
+	}
+	line("</BANKTRANLIST>")
+	line("<LEDGERBAL>")
+	line("<BALAMT>%s", decimal(total, 2, '.'))
+	line("<DTASOF>%s", to.Format("20060102"))
+	line("</LEDGERBAL>")
+	line("</STMTRS>")
+	line("</STMTTRNRS>")
+	line("</BANKMSGSRSV1>")
+	line("</OFX>")
+	_, err := io.WriteString(w, b.String())
+	return err
+}
+
+// sgml kürzt auf n Zeichen (OFX-Feldlängen), entfernt Zeilenumbrüche und
+// maskiert &, < und >.
+func sgml(s string, n int) string {
+	s = strings.Join(strings.Fields(s), " ")
+	if r := []rune(s); len(r) > n {
+		s = strings.TrimSpace(string(r[:n]))
+	}
+	return strings.NewReplacer("&", "&amp;", "<", "&lt;", ">", "&gt;").Replace(s)
+}
+
+// --- Meine Anteile für YNAB: CSV ------------------------------------------------
+
+// writeYNABCSV schreibt die Buchungen im CSV-Format des YNAB-Dateiimports:
+// Date,Payee,Memo,Outflow,Inflow; Datum ISO (Jahr zuerst, eindeutig), Beträge
+// mit Punkt, UTF-8 ohne BOM.
+func writeYNABCSV(w io.Writer, ps []ynab.Posting) error {
+	cw := csv.NewWriter(w)
+	if err := cw.Write([]string{"Date", "Payee", "Memo", "Outflow", "Inflow"}); err != nil {
+		return err
+	}
+	for _, p := range ps {
+		if err := cw.Write([]string{p.Date.Format(domain.DateLayout), p.Payee, p.Memo, decimal(p.AmountCents, 2, '.'), ""}); err != nil {
+			return err
+		}
+	}
+	cw.Flush()
+	return cw.Error()
+}

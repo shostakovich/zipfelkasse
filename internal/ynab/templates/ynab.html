@@ -1,10 +1,202 @@
 {{define "content"}}
-<section class="card">
-  <div class="card-header">
-    <h1 class="card-title">YNAB</h1>
-  </div>
-  <div class="card-content">
-    <p class="muted">Noch nicht verfügbar.</p>
-  </div>
-</section>
+{{- $d := .Data}}
+<div class="stack">
+  <section class="card">
+    <div class="card-header">
+      <h1 class="card-title">YNAB</h1>
+      <p class="card-description">Deine Anteile an geteilten Ausgaben automatisch in dein eigenes YNAB übertragen.</p>
+    </div>
+    <div class="card-content stack-sm">
+      <p><strong>So funktioniert’s:</strong></p>
+      <ol class="stack-sm">
+        <li>Lege in YNAB ein Konto <strong>„Geteilt“</strong> an (im Budget, z. B. Typ „Cash“). Als Startsaldo trägst du deinen Saldo in teilen am Tag vor dem Startdatum ein.</li>
+        <li>teilen schreibt dort für jede geteilte Ausgabe <strong>nur deinen Anteil</strong> als Ausgabe – mit der YNAB-Kategorie aus der Zuordnung unten.</li>
+        <li>Bezahlst du eine geteilte Ausgabe mit deiner Karte, markierst du die Buchung im Bankkonto als <strong>Transfer → „Geteilt“</strong> statt sie zu kategorisieren.</li>
+        <li>Rückzahlungen (du überweist jemandem Geld oder bekommst welches) markierst du ebenso als Transfer zwischen Bankkonto und „Geteilt“. teilen schreibt Rückzahlungen nicht selbst.</li>
+      </ol>
+      <p class="muted">Dann entspricht der Saldo von „Geteilt“ in YNAB deinem Saldo in teilen (positiv: du bekommst Geld).</p>
+    </div>
+  </section>
+
+  <section class="card">
+    <div class="card-header">
+      <h2 class="card-title">Verbindung</h2>
+      <p class="card-description">Persönlicher Zugriffstoken aus YNAB: Account Settings → Developer Settings → New Token. Er wird nur auf diesem Server gespeichert und nie wieder angezeigt.</p>
+    </div>
+    <div class="card-content stack">
+      {{- if $d.TokenSet}}
+      {{- if $d.TokenInvalid}}
+      <p class="alert alert-destructive" role="alert">Der gespeicherte Token ist ungültig oder abgelaufen. Bitte einen neuen eintragen.</p>
+      {{- else}}
+      <p>Token: <strong>gesetzt</strong></p>
+      {{- end}}
+      {{- end}}
+      <form method="post" action="/einstellungen/ynab/token" class="form">
+        <div class="field">
+          <label for="token">{{if $d.TokenSet}}Token ersetzen{{else}}Token{{end}}</label>
+          <input id="token" name="token" type="password" autocomplete="off" spellcheck="false" maxlength="200" required>
+        </div>
+        <div class="row">
+          <button class="btn btn-primary" type="submit">{{if $d.TokenSet}}Token ersetzen{{else}}Verbinden{{end}}</button>
+        </div>
+      </form>
+      {{- if $d.TokenSet}}
+      <form method="post" action="/einstellungen/ynab/trennen">
+        <button class="btn btn-outline btn-sm" type="submit">Verbindung trennen</button>
+      </form>
+      {{- end}}
+    </div>
+  </section>
+
+  {{- if and $d.TokenSet (not $d.TokenInvalid)}}
+  <section class="card">
+    <div class="card-header">
+      <h2 class="card-title">Plan und Konto</h2>
+      <p class="card-description">Das Verrechnungskonto „Geteilt“ und ab wann deine Anteile übertragen werden.</p>
+    </div>
+    <div class="card-content stack">
+      {{- with $d.APIError}}
+      <p class="alert alert-destructive" role="alert">{{.}}</p>
+      {{- end}}
+      {{- with $d.Currency}}
+      <p class="alert alert-destructive" role="alert">Achtung: Dieser Plan rechnet in {{.}}. teilen überträgt Euro-Beträge.</p>
+      {{- end}}
+      {{- if $d.Plans}}
+      <form method="post" action="/einstellungen/ynab/konto" class="form">
+        <div class="field">
+          <label for="ziel">Konto</label>
+          <select id="ziel" name="ziel" required>
+            <option value="">Bitte wählen …</option>
+            {{- range $d.Plans}}
+            <optgroup label="{{.Name}}">
+              {{- range .Accounts}}
+              <option value="{{.Value}}"{{if .Selected}} selected{{end}}>{{.Name}}</option>
+              {{- end}}
+            </optgroup>
+            {{- end}}
+          </select>
+          <p class="help">Nur offene Konten im Budget. Bei einem Wechsel bleiben die bisherigen Buchungen im alten Konto, im neuen wird alles neu angelegt.</p>
+        </div>
+        <div class="field">
+          <label for="start">Startdatum</label>
+          <input id="start" name="start" type="date" value="{{isoDate $d.StartDate}}" required>
+          <p class="help">Übertragen werden Ausgaben ab diesem Datum (bis heute).</p>
+        </div>
+        <div class="row">
+          <button class="btn btn-primary" type="submit">Speichern</button>
+          <a class="btn btn-ghost btn-sm" href="/einstellungen/ynab?neu=1">Listen von YNAB neu laden</a>
+        </div>
+      </form>
+      {{- else if not $d.APIError}}
+      <p class="muted">In deinem YNAB gibt es kein offenes Konto im Budget. Lege zuerst das Konto „Geteilt“ an und lade die <a href="/einstellungen/ynab?neu=1">Liste neu</a>.</p>
+      {{- end}}
+    </div>
+  </section>
+  {{- end}}
+
+  {{- if and $d.HasTarget $d.Categories}}
+  <section class="card">
+    <div class="card-header">
+      <h2 class="card-title">Kategorien</h2>
+      <p class="card-description">Welche YNAB-Kategorie bekommt dein Anteil? Ohne Zuordnung landet er unkategorisiert in YNAB.</p>
+    </div>
+    <div class="card-content">
+      {{- if $d.Groups}}
+      <form method="post" action="/einstellungen/ynab/kategorien" class="form">
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr><th scope="col">In teilen</th><th scope="col">In YNAB</th></tr>
+            </thead>
+            <tbody>
+              {{- range $d.Categories}}
+              {{- $sel := .Selected}}
+              <tr>
+                <td><label for="kat-{{.ID}}">{{.Name}}</label>{{if .Archived}} <span class="muted">(archiviert)</span>{{end}}</td>
+                <td>
+                  <select id="kat-{{.ID}}" name="kat-{{.ID}}">
+                    <option value="">– unkategorisiert –</option>
+                    {{- if .Missing}}
+                    <option value="{{$sel}}" selected>Nicht mehr vorhanden (in YNAB gelöscht oder versteckt)</option>
+                    {{- end}}
+                    {{- range $d.Groups}}
+                    <optgroup label="{{.Name}}">
+                      {{- range .Categories}}
+                      <option value="{{.ID}}"{{if eq .ID $sel}} selected{{end}}>{{.Name}}</option>
+                      {{- end}}
+                    </optgroup>
+                    {{- end}}
+                  </select>
+                </td>
+              </tr>
+              {{- end}}
+            </tbody>
+          </table>
+        </div>
+        <div class="row">
+          <button class="btn btn-primary" type="submit">Zuordnung speichern</button>
+        </div>
+      </form>
+      {{- else}}
+      <p class="muted">Die Kategorien aus YNAB konnten nicht geladen werden.</p>
+      {{- end}}
+    </div>
+  </section>
+  {{- end}}
+
+  {{- if $d.TokenSet}}
+  <section class="card">
+    <div class="card-header">
+      <h2 class="card-title">Status</h2>
+    </div>
+    <div class="card-content stack-sm">
+      <p>Dein Saldo in teilen: <strong class="amount {{signClass $d.Balance}}">{{eur $d.Balance}}</strong> <span class="muted">– so viel sollte auch „Geteilt“ in YNAB zeigen.</span></p>
+      {{- if $d.Ready}}
+      <p>Synchronisierte Buchungen: <strong>{{$d.Synced}}</strong></p>
+      {{- if not $d.Status.LastSync.IsZero}}
+      <p>Letzter Abgleich: {{dateTime $d.Status.LastSync}}{{with $d.Status.Summary}} <span class="muted">({{.}})</span>{{end}}</p>
+      {{- else}}
+      <p class="muted">Noch nicht synchronisiert.</p>
+      {{- end}}
+      {{- with $d.Status.Error}}
+      <p class="alert alert-destructive" role="alert">{{.}}</p>
+      {{- end}}
+      {{- if not $d.RetryAt.IsZero}}
+      <p class="muted">Nächster Versuch ab {{dateTime $d.RetryAt}}.</p>
+      {{- end}}
+      {{- else}}
+      <p class="muted">Sobald Plan, Konto und Startdatum gewählt sind, synchronisiert teilen automatisch: kurz nach jeder Änderung und stündlich.</p>
+      {{- end}}
+    </div>
+    {{- if $d.Problems}}
+    <div class="card-content">
+      <h3>Fehler bei einzelnen Ausgaben</h3>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr><th scope="col">Datum</th><th scope="col">Ausgabe</th><th scope="col">Fehler</th></tr>
+          </thead>
+          <tbody>
+            {{- range $d.Problems}}
+            <tr>
+              <td>{{date .Date}}</td>
+              <td><a href="/ausgaben/{{.ExpenseID}}">{{.Title}}</a></td>
+              <td>{{.Error}}</td>
+            </tr>
+            {{- end}}
+          </tbody>
+        </table>
+      </div>
+    </div>
+    {{- end}}
+    {{- if $d.Ready}}
+    <div class="card-footer">
+      <form method="post" action="/einstellungen/ynab/sync">
+        <button class="btn btn-secondary" type="submit">Jetzt synchronisieren</button>
+      </form>
+    </div>
+    {{- end}}
+  </section>
+  {{- end}}
+</div>
 {{end}}

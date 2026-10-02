@@ -1,10 +1,44 @@
 {{define "content"}}
+{{- $d := .Data}}
 <section class="card">
   <div class="card-header">
     <h1 class="card-title">Export</h1>
+    <p class="card-description">Ausgaben herunterladen – alles oder nur einen Zeitraum.</p>
   </div>
-  <div class="card-content">
-    <p class="muted">Noch nicht verfügbar.</p>
-  </div>
+  <form method="get" action="/export/ausgaben.csv">
+    <div class="card-content stack">
+      <div class="row">
+        <div class="field">
+          <label for="von">Von</label>
+          <input id="von" name="von" type="date" value="{{isoDate $d.From}}">
+        </div>
+        <div class="field">
+          <label for="bis">Bis</label>
+          <input id="bis" name="bis" type="date" value="{{isoDate $d.To}}">
+        </div>
+      </div>
+      <p class="help">Leer lassen für alle Ausgaben.</p>
+
+      <div class="stack-sm">
+        <h2 class="card-title">Alle Ausgaben</h2>
+        <p class="muted">Mit Kategorie, Fremdwährung und den Anteilen aller Personen. Gelöschte Ausgaben fehlen.</p>
+        <div class="row">
+          <button class="btn btn-primary" type="submit" formaction="/export/ausgaben.csv">CSV (Excel, Numbers)</button>
+          <button class="btn btn-outline" type="submit" formaction="/export/ausgaben.json">JSON</button>
+        </div>
+      </div>
+
+      <div class="stack-sm">
+        <h2 class="card-title">Meine Anteile für YNAB</h2>
+        <p class="muted">Dieselben Buchungen, die der YNAB-Abgleich schreibt: dein Anteil je Ausgabe als Ausgang, ohne Rückzahlungen.
+          Zum Import ins Konto „Geteilt“, falls du die <a href="/einstellungen/ynab">YNAB-Verbindung</a> nicht nutzt.
+          YNAB erkennt Dubletten nur an Datum und Betrag: Importiere am besten jeweils nur neue Zeiträume.</p>
+        <div class="row">
+          <button class="btn btn-secondary" type="submit" formaction="/export/ynab.ofx">OFX</button>
+          <button class="btn btn-outline" type="submit" formaction="/export/ynab.csv">CSV (YNAB-Format)</button>
+        </div>
+      </div>
+    </div>
+  </form>
 </section>
 {{end}}
