@@ -39,6 +39,7 @@
 
   --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
   --touch: 2.75rem; /* minimum height for touch targets */
+  --tabbar: 3rem; /* height of a tab in the bottom tab bar (phones) */
   color-scheme: light;
 }
 
@@ -117,37 +118,54 @@ a { color: inherit; text-underline-offset: 4px; }
 /* Distance to the notch when the app runs installed (standalone). */
 .site-header { padding-top: env(safe-area-inset-top); }
 .site-header-inner {
-  display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between;
+  display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between;
   gap: 0.25rem 1rem; padding-block: 1rem 0.25rem;
 }
 .brand {
+  display: flex; align-items: center; gap: 0.5rem;
   font-size: 1.5rem; font-weight: 700; letter-spacing: -0.025em; line-height: 1.2;
-  text-decoration: none; overflow-wrap: anywhere;
+  color: hsl(var(--primary)); text-decoration: none;
 }
+.brand img { flex: none; width: auto; height: 3rem; }
 .whoami { font-size: 0.875rem; color: hsl(var(--muted-foreground)); }
 .whoami strong { color: hsl(var(--foreground)); font-weight: 600; }
 
+/* Phones: tab bar at the bottom (within thumb reach), above the home
+   indicator. Hidden while typing, otherwise the keyboard pushes it up. */
 .tabs {
+  position: fixed; z-index: 40; inset: auto 0 0 0;
   display: grid; grid-template-columns: repeat(4, 1fr); gap: 0.25rem;
-  padding: 0.25rem; margin-top: 0.75rem;
-  background: hsl(var(--muted)); border-width: 1px; border-radius: calc(var(--radius) - 2px);
+  padding: 0.25rem calc(0.5rem + env(safe-area-inset-right)) calc(0.25rem + env(safe-area-inset-bottom)) calc(0.5rem + env(safe-area-inset-left));
+  background: hsl(var(--background) / 0.92); border-top-width: 1px;
+  -webkit-backdrop-filter: blur(12px); backdrop-filter: blur(12px);
 }
 .tabs a {
   display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 0.125rem;
-  min-height: var(--touch); padding: 0.25rem;
+  min-height: var(--tabbar); padding: 0.25rem;
   border-radius: calc(var(--radius) - 4px);
   font-size: 0.6875rem; font-weight: 500; line-height: 1.2; text-decoration: none; white-space: nowrap;
   color: hsl(var(--muted-foreground));
 }
-.tabs a .icon { width: 1.125rem; height: 1.125rem; }
+.tabs a .icon { width: 1.375rem; height: 1.375rem; }
 .tabs a:hover { color: hsl(var(--foreground)); }
-.tabs a[aria-current="page"] {
-  background: hsl(var(--background)); color: hsl(var(--foreground));
-  box-shadow: 0 1px 2px 0 rgb(0 0 0 / 0.05);
+.tabs a[aria-current="page"] { color: hsl(var(--primary)); }
+@media (max-width: 39.99rem) {
+  .has-tabbar .main { padding-bottom: calc(6rem + var(--tabbar) + env(safe-area-inset-bottom)); }
+  .has-tabbar:has(:is(input:not([type=checkbox], [type=radio], [type=range], [type=submit], [type=button]), textarea):focus) .tabs { display: none; }
 }
-@media (min-width: 30rem) {
+/* Larger screens: segmented tabs below the header (Spliit group tabs). */
+@media (min-width: 40rem) {
+  .tabs {
+    position: static; margin-top: 0.75rem; padding: 0.25rem;
+    background: hsl(var(--muted)); border-width: 1px; border-radius: calc(var(--radius) - 2px);
+    -webkit-backdrop-filter: none; backdrop-filter: none;
+  }
   .tabs a { flex-direction: row; gap: 0.5rem; font-size: 0.875rem; min-height: 2.25rem; padding: 0.375rem 0.75rem; }
   .tabs a .icon { width: 1rem; height: 1rem; }
+  .tabs a[aria-current="page"] {
+    background: hsl(var(--background)); color: hsl(var(--foreground));
+    box-shadow: 0 1px 2px 0 rgb(0 0 0 / 0.05);
+  }
 }
 
 /* --- Cards (shadcn Card) -------------------------------------------------- */
@@ -220,6 +238,8 @@ a { color: inherit; text-underline-offset: 4px; }
   box-shadow: 0 10px 15px -3px rgb(0 0 0 / 0.2), 0 4px 6px -4px rgb(0 0 0 / 0.2);
 }
 .fab .icon { width: 1.25rem; height: 1.25rem; }
+/* Above the tab bar (tab + its padding and border). */
+.has-tabbar .fab { bottom: calc(var(--tabbar) + 0.5rem + 1px + 1rem + env(safe-area-inset-bottom)); }
 .desktop-only { display: none; }
 @media (min-width: 40rem) {
   .fab { display: none; }

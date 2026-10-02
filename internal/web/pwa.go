@@ -1,6 +1,7 @@
 package web
 
-//go:generate go run gen_icons.go
+// The icons in static/icons/ are exports of the Zipfelkasse logo (mouse with
+// abacus); static/mascot.webp is the header logo.
 
 import (
 	"encoding/json"

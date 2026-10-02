@@ -20,7 +20,7 @@
       </div>
       <a class="btn btn-primary desktop-only" href="/ausgaben/neu">{{icon "plus"}} Ausgabe hinzufügen</a>
     </div>
-    <div class="card-list">
+    <div class="card-list" data-more-list data-sync-url>
       <form class="search" method="get" action="/" role="search">
         <div class="search-input">
           {{icon "search"}}
@@ -50,10 +50,10 @@
       </form>
 
       {{- range .Data.Groups}}
-      <div class="expense-group">
+      <div class="expense-group" data-group="{{.Label}}">
         <h2 class="list-group-label">{{.Label}}</h2>
         {{- range .Rows}}
-        <a class="expense{{if .IsReimbursement}} reimbursement{{end}}" href="/ausgaben/{{.ID}}">
+        <a class="expense{{if .IsReimbursement}} reimbursement{{end}}" id="ausgabe-{{.ID}}" href="/ausgaben/{{.ID}}">
           <span class="expense-icon">{{if .IsReimbursement}}{{icon "banknote"}}{{else}}{{icon (categoryIcon .CategoryName)}}{{end}}</span>
           <span class="expense-main">
             <span class="expense-title">{{.Title}}{{if .RecurringID}} <span class="badge badge-muted" title="Wiederkehrend">{{icon "repeat"}}</span>{{end}}</span>
@@ -88,7 +88,7 @@
       {{- end}}
 
       {{- with .Data.More}}
-      <div class="list-more"><a class="btn btn-outline" href="{{.}}">Weitere anzeigen</a></div>
+      <div class="list-more"><a class="btn btn-outline" href="{{.}}" data-more>Weitere anzeigen</a></div>
       {{- end}}
     </div>
   </section>
