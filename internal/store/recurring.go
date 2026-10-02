@@ -124,25 +124,13 @@ func (s *Store) CreateRecurringFromExpense(ctx context.Context, actorID, expense
 		}
 		return s.insertActivity(ctx, tx, actorID, ActionRecurringCreated, expenseID, ActivityDetails{
 			Title: e.Title, AmountCents: e.AmountCents,
-			Text: fmt.Sprintf("„%s“ wiederholt sich jetzt %s.", e.Title, frequencyAdverb(freq)),
+			Text: fmt.Sprintf("„%s“ wiederholt sich jetzt %s.", e.Title, freq.Adverb()),
 		})
 	})
 	if err != nil {
 		return 0, err
 	}
 	return id, nil
-}
-
-func frequencyAdverb(f domain.Frequency) string {
-	switch f {
-	case domain.FreqWeekly:
-		return "wöchentlich"
-	case domain.FreqMonthly:
-		return "monatlich"
-	case domain.FreqYearly:
-		return "jährlich"
-	}
-	return string(f)
 }
 
 // GetRecurring returns a recurrence or ErrNotFound.

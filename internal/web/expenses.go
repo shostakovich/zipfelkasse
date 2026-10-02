@@ -709,7 +709,7 @@ func (h handlers) expenseDelete(w http.ResponseWriter, r *http.Request) {
 // loadExpense loads the expense from the path (deleted ones too); on error the
 // response has already been written.
 func (h handlers) loadExpense(w http.ResponseWriter, r *http.Request) (store.Expense, bool) {
-	id := pathID(r)
+	id := PathID(r)
 	if id == 0 {
 		h.notFound(w, r, "Ausgabe nicht gefunden.")
 		return store.Expense{}, false

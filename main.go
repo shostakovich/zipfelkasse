@@ -62,7 +62,8 @@ type app struct {
 	ynab      *ynab.Service
 }
 
-// newApp builds Deps, all services and the mux.
+// newApp builds Deps, all services and the handler: the browser app behind
+// web.Wrap and, beside it, the MCP endpoint.
 func newApp(cfg config.Config, st *store.Store, log *slog.Logger) (*app, error) {
 	render, err := web.NewRenderer(st, cfg.Location, log)
 	if err != nil {
@@ -93,10 +94,19 @@ func newApp(cfg config.Config, st *store.Store, log *slog.Logger) (*app, error) 
 	if err := export.Register(mux, d); err != nil {
 		return nil, fmt.Errorf("export: %w", err)
 	}
-	if err := mcp.Register(mux, d); err != nil {
+
+	// MCP stays outside web.Wrap: it is no browser page (no person to pick, no
+	// CSRF protection – it rejects any Origin header itself) and checks its own
+	// body limit. It keeps only the security headers. Nothing below /mcp/
+	// reaches the browser app, so web never logs the secret in the path.
+	mcpMux := http.NewServeMux()
+	if err := mcp.Register(mcpMux, d); err != nil {
 		return nil, fmt.Errorf("mcp: %w", err)
 	}
-	return &app{handler: web.Wrap(d, mux), fx: fxSvc, recurring: rec, ynab: yn}, nil
+	root := http.NewServeMux()
+	root.Handle("/mcp/", web.SecurityHeaders(mcpMux))
+	root.Handle("/", web.Wrap(d, mux))
+	return &app{handler: root, fx: fxSvc, recurring: rec, ynab: yn}, nil
 }
 
 func serve() error {

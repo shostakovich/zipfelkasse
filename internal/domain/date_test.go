@@ -68,6 +68,14 @@ func TestFrequency(t *testing.T) {
 	}
 }
 
+func TestFrequencyAdverb(t *testing.T) {
+	for f, want := range map[Frequency]string{FreqWeekly: "wöchentlich", FreqMonthly: "monatlich", FreqYearly: "jährlich", "daily": "daily"} {
+		if got := f.Adverb(); got != want {
+			t.Errorf("%q.Adverb() = %q, want %q", f, got, want)
+		}
+	}
+}
+
 func TestParseDate(t *testing.T) {
 	tests := []struct {
 		in      string

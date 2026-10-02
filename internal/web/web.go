@@ -146,8 +146,8 @@ func validationMsg(err error) (string, bool) {
 	return "", false
 }
 
-// pathID reads the path parameter {id}; invalid → 0.
-func pathID(r *http.Request) int64 {
+// PathID reads the path parameter {id}; invalid → 0.
+func PathID(r *http.Request) int64 {
 	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
 	if err != nil || id <= 0 {
 		return 0
