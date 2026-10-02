@@ -54,8 +54,8 @@ func TestAppWiring(t *testing.T) {
 		{"GET", "/export", true, 200},
 		{"GET", "/api/kurs?waehrung=EUR", true, 200},
 		{"GET", "/api/kurs?waehrung=USD", true, http.StatusNotImplemented},
-		{"POST", "/mcp/falsch", false, http.StatusForbidden},
-		{"POST", "/mcp/geheim", false, http.StatusNotImplemented},
+		{"POST", "/mcp/falsch", false, http.StatusNotFound},  // falsches Secret verrät nichts
+		{"POST", "/mcp/geheim", false, http.StatusForbidden}, // Test-IP 192.0.2.1 nicht erlaubt
 		{"GET", "/gibtsnicht", true, 404},
 	}
 	for _, tt := range tests {
