@@ -122,19 +122,13 @@ func (s *Service) handleRefreshTemplate(w http.ResponseWriter, r *http.Request) 
 		s.notFound(w, r)
 		return
 	}
-	_, err := s.d.Store.GetRecurring(r.Context(), id)
-	if errors.Is(err, store.ErrNotFound) {
-		s.notFound(w, r)
-		return
-	}
-	if err != nil {
-		s.d.ServerError(w, r, err)
-		return
-	}
 	me, _ := web.Me(r.Context())
-	err = s.d.Store.UpdateRecurringTemplateFromLatest(r.Context(), me.ID, id)
+	err := s.d.Store.UpdateRecurringTemplateFromLatest(r.Context(), me.ID, id)
 	switch {
 	case errors.Is(err, store.ErrNotFound):
+		s.notFound(w, r)
+		return
+	case errors.Is(err, store.ErrNoInstance):
 		web.SetFlash(w, "Es gibt keine Ausgabe dieser Wiederholung mehr, aus der die Vorlage übernommen werden könnte.")
 	case err != nil:
 		s.d.ServerError(w, r, err)

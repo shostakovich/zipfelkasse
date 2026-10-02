@@ -45,9 +45,10 @@ func (d Deps) Today() time.Time {
 	return domain.Today(loc)
 }
 
-// ServerError logs err and renders the error page with status 500.
+// ServerError logs err and renders the error page with status 500. The path
+// is logged without the MCP secret (see logPath).
 func (d Deps) ServerError(w http.ResponseWriter, r *http.Request, err error) {
-	d.Log.Error("request", "method", r.Method, "path", r.URL.Path, "err", err)
+	d.Log.Error("request", "method", r.Method, "path", logPath(r.URL.Path), "err", err)
 	d.Render.Error(w, r, http.StatusInternalServerError, "Da ist etwas schiefgegangen.")
 }
 

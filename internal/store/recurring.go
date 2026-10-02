@@ -248,7 +248,8 @@ func (s *Store) SetRecurringActive(ctx context.Context, actorID, id int64, activ
 
 // UpdateRecurringTemplateFromLatest adopts the most recent (non-deleted)
 // instance of the recurrence as the new template, e.g. after its amount was
-// changed. Without an instance (or without the recurrence): ErrNotFound.
+// changed. Without the recurrence: ErrNotFound; without an instance:
+// ErrNoInstance.
 func (s *Store) UpdateRecurringTemplateFromLatest(ctx context.Context, actorID, id int64) error {
 	return s.inTx(ctx, func(tx *sql.Tx) error {
 		r, err := getRecurring(ctx, tx, id)
@@ -261,7 +262,7 @@ func (s *Store) UpdateRecurringTemplateFromLatest(ctx context.Context, actorID, 
 			return err
 		}
 		if len(es) == 0 {
-			return ErrNotFound
+			return ErrNoInstance
 		}
 		tmpl, err := json.Marshal(templateOf(es[0]))
 		if err != nil {

@@ -100,6 +100,16 @@ func (e *env) input(title string, cents int64, date string, payer int64, who ...
 	return in
 }
 
+// status returns Anna's sync status.
+func (e *env) status() Status {
+	e.t.Helper()
+	st, err := e.svc.loadStatus(e.ctx, e.anna)
+	if err != nil {
+		e.t.Fatal(err)
+	}
+	return st
+}
+
 func (e *env) create(in store.ExpenseInput) int64 {
 	e.t.Helper()
 	id, err := e.st.CreateExpense(e.ctx, in.PaidBy, in)
@@ -222,7 +232,7 @@ func TestSyncCreateUpdateDelete(t *testing.T) {
 	e.mustSync(true)
 	e.expectRequests()
 
-	st := e.svc.loadStatus(e.ctx, e.anna)
+	st := e.status()
 	if st.LastSync != e.now || st.Error != "" || st.Summary != "0 neu · 0 geändert · 0 gelöscht" {
 		t.Errorf("status = %+v", st)
 	}
@@ -372,7 +382,7 @@ func TestSyncRateLimitBackoff(t *testing.T) {
 		t.Fatalf("err = %v", err)
 	}
 	e.expectRequests(post)
-	st := e.svc.loadStatus(e.ctx, e.anna)
+	st := e.status()
 	if !st.RetryAt.Equal(e.now.Add(5*time.Minute)) || st.Backoff != 5*time.Minute || !strings.Contains(st.Error, "Anfragelimit") {
 		t.Errorf("status = %+v", st)
 	}
@@ -389,7 +399,7 @@ func TestSyncRateLimitBackoff(t *testing.T) {
 	e.now = e.now.Add(6 * time.Minute)
 	e.fake.fail(429)
 	e.sync(false)
-	if st := e.svc.loadStatus(e.ctx, e.anna); st.Backoff != 10*time.Minute {
+	if st := e.status(); st.Backoff != 10*time.Minute {
 		t.Errorf("Backoff = %v", st.Backoff)
 	}
 	e.now = e.now.Add(11 * time.Minute)
@@ -397,7 +407,7 @@ func TestSyncRateLimitBackoff(t *testing.T) {
 	if res := e.mustSync(false); res.Created != 1 {
 		t.Errorf("res = %+v", res)
 	}
-	if st := e.svc.loadStatus(e.ctx, e.anna); st.Error != "" || st.Backoff != 0 || !st.RetryAt.IsZero() {
+	if st := e.status(); st.Error != "" || st.Backoff != 0 || !st.RetryAt.IsZero() {
 		t.Errorf("status after success = %+v", st)
 	}
 	// SyncAll schedules the next run after the pause ends.
@@ -418,7 +428,7 @@ func TestSyncUnauthorized(t *testing.T) {
 	if _, err := e.sync(false); statusOf(err) != http.StatusUnauthorized {
 		t.Fatalf("err = %v", err)
 	}
-	st := e.svc.loadStatus(e.ctx, e.anna)
+	st := e.status()
 	if !st.TokenInvalid || !strings.Contains(st.Error, "Token") {
 		t.Errorf("status = %+v", st)
 	}
@@ -524,7 +534,7 @@ func TestErrorsAreRedacted(t *testing.T) {
 	if err == nil {
 		t.Fatal("no error")
 	}
-	st := e.svc.loadStatus(e.ctx, e.anna)
+	st := e.status()
 	if strings.Contains(st.Error, testToken) || !strings.Contains(st.Error, "•••") {
 		t.Errorf("Status.Error = %q", st.Error)
 	}
@@ -973,7 +983,7 @@ func TestSyncPlanNotAccessible(t *testing.T) {
 		if _, err := e.sync(false); statusOf(err) != http.StatusNotFound {
 			t.Errorf("%s: err = %v", step, err)
 		}
-		if st := e.svc.loadStatus(e.ctx, e.anna); !strings.Contains(st.Error, "Plan oder Konto") {
+		if st := e.status(); !strings.Contains(st.Error, "Plan oder Konto") {
 			t.Errorf("%s: status = %+v", step, st)
 		}
 		rows := e.syncRows()
@@ -1156,7 +1166,7 @@ func TestSettingsNewTokenDuringSync(t *testing.T) {
 	if rec.Code != http.StatusSeeOther {
 		t.Fatalf("token: %d %s", rec.Code, rec.Body)
 	}
-	if st := e.svc.loadStatus(e.ctx, e.anna); st.TokenInvalid || st.Error != "" {
+	if st := e.status(); st.TokenInvalid || st.Error != "" {
 		t.Errorf("status = %+v", st)
 	}
 	if res := e.mustSync(false); res.Created != 1 {

@@ -282,6 +282,11 @@ func TestMigrationMovesYNABStateIntoConfig(t *testing.T) {
 		if n != 0 {
 			t.Errorf("round %d: %d ynab keys left in settings", round, n)
 		}
+		// Round 1 runs migration 5 again on the migrated table: the values
+		// already in ynab_config stay.
+		if _, err := s.db.ExecContext(ctx, "PRAGMA user_version = 4"); err != nil {
+			t.Fatal(err)
+		}
 		s.Close()
 	}
 }

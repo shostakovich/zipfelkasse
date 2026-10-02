@@ -167,7 +167,10 @@ func TestUpdateRecurringTemplateFromLatest(t *testing.T) {
 	// Deleted instances do not count.
 	f.s.DeleteExpense(ctx, f.anna, id2)
 	f.s.DeleteExpense(ctx, f.anna, eid)
-	if err := f.s.UpdateRecurringTemplateFromLatest(ctx, 0, rid); !errors.Is(err, ErrNotFound) {
+	if err := f.s.UpdateRecurringTemplateFromLatest(ctx, 0, rid); !errors.Is(err, ErrNoInstance) {
 		t.Errorf("without instance: %v", err)
+	}
+	if err := f.s.UpdateRecurringTemplateFromLatest(ctx, 0, rid+1000); !errors.Is(err, ErrNotFound) {
+		t.Errorf("without rule: %v", err)
 	}
 }

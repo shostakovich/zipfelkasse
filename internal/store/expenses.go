@@ -27,6 +27,10 @@ var ErrRecurringExists = errors.New("expense for this occurrence already exists"
 // this recurrence.
 var ErrRecurringChanged = errors.New("recurring rule was paused, deleted or advanced meanwhile")
 
+// ErrNoInstance: UpdateRecurringTemplateFromLatest found no (non-deleted)
+// expense of the recurrence to take the template from.
+var ErrNoInstance = errors.New("recurring rule has no expense")
+
 // ExpenseInput is the data of an expense as supplied by the user (or by a
 // recurrence). The store computes the shares in cents itself via
 // domain.SplitConverted from SplitMode, the amounts and Parts. For
@@ -446,8 +450,11 @@ func (s *Store) Balances(ctx context.Context) (map[int64]int64, error) {
 
 // --- Reading -------------------------------------------------------------
 
+// queryer is *sql.DB, *sql.Tx or *sql.Conn: reads inside or outside a
+// transaction.
 type queryer interface {
 	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
+	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
 }
 
 const expenseSelect = `SELECT e.id, e.title, e.date, e.category_id, e.paid_by, e.notes, e.is_reimbursement,

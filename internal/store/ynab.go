@@ -62,9 +62,7 @@ func (s *Store) GetYNABConfig(ctx context.Context, participantID int64) (YNABCon
 	return getYNABConfig(ctx, s.db, participantID)
 }
 
-func getYNABConfig(ctx context.Context, q interface {
-	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
-}, participantID int64) (YNABConfig, error) {
+func getYNABConfig(ctx context.Context, q queryer, participantID int64) (YNABConfig, error) {
 	c, err := scanYNABConfig(q.QueryRowContext(ctx,
 		"SELECT "+ynabConfigCols+" FROM ynab_config WHERE participant_id = ?", participantID))
 	if errors.Is(err, sql.ErrNoRows) {

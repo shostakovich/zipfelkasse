@@ -80,9 +80,14 @@ func (e backoffError) Error() string {
 type Status = store.YNABStatus
 
 // loadStatus returns the person's status (zero value without a connection).
-func (s *Service) loadStatus(ctx context.Context, participantID int64) Status {
-	st, _ := s.d.Store.GetYNABStatus(ctx, participantID)
-	return st
+// Other errors are returned, so that nobody works with a status that only
+// looks empty.
+func (s *Service) loadStatus(ctx context.Context, participantID int64) (Status, error) {
+	st, err := s.d.Store.GetYNABStatus(ctx, participantID)
+	if errors.Is(err, store.ErrNotFound) {
+		return Status{}, nil
+	}
+	return st, err
 }
 
 // syncResult counts what a run did in YNAB.
@@ -205,7 +210,10 @@ func runLevel(err error) bool {
 // unchanged transactions that failed before.
 func (s *Service) syncOne(ctx context.Context, cfg store.YNABConfig, full bool) (syncResult, Status, error) {
 	pid := cfg.ParticipantID
-	st := s.loadStatus(ctx, pid)
+	st, err := s.loadStatus(ctx, pid)
+	if err != nil {
+		return syncResult{}, st, err
+	}
 	now := s.now()
 	if st.TokenInvalid {
 		return syncResult{}, st, errTokenInvalid

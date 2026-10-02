@@ -88,7 +88,7 @@ func (h handlers) renderParticipants(w http.ResponseWriter, r *http.Request, sta
 
 func (h handlers) participantCreate(w http.ResponseWriter, r *http.Request) {
 	name := r.FormValue("name")
-	id, err := h.d.Store.CreateParticipant(r.Context(), me(r).ID, name)
+	_, err := h.d.Store.CreateParticipant(r.Context(), me(r).ID, name)
 	if msg, ok := validationMsg(err); ok {
 		h.renderParticipants(w, r, http.StatusUnprocessableEntity, name, msg)
 		return
@@ -97,8 +97,7 @@ func (h handlers) participantCreate(w http.ResponseWriter, r *http.Request) {
 		h.d.ServerError(w, r, err)
 		return
 	}
-	p, _ := h.d.Store.GetParticipant(r.Context(), id)
-	SetFlash(w, fmt.Sprintf("„%s“ hinzugefügt.", p.Name))
+	SetFlash(w, fmt.Sprintf("„%s“ hinzugefügt.", store.NormalizeName(name)))
 	http.Redirect(w, r, "/einstellungen/teilnehmer", http.StatusSeeOther)
 }
 
@@ -209,7 +208,7 @@ func (h handlers) renderCategories(w http.ResponseWriter, r *http.Request, statu
 
 func (h handlers) categoryCreate(w http.ResponseWriter, r *http.Request) {
 	name := r.FormValue("name")
-	id, err := h.d.Store.CreateCategory(r.Context(), me(r).ID, name)
+	_, err := h.d.Store.CreateCategory(r.Context(), me(r).ID, name)
 	if msg, ok := validationMsg(err); ok {
 		h.renderCategories(w, r, http.StatusUnprocessableEntity, name, msg)
 		return
@@ -218,8 +217,7 @@ func (h handlers) categoryCreate(w http.ResponseWriter, r *http.Request) {
 		h.d.ServerError(w, r, err)
 		return
 	}
-	c, _ := h.d.Store.GetCategory(r.Context(), id)
-	SetFlash(w, fmt.Sprintf("Kategorie „%s“ hinzugefügt.", c.Name))
+	SetFlash(w, fmt.Sprintf("Kategorie „%s“ hinzugefügt.", store.NormalizeName(name)))
 	http.Redirect(w, r, "/einstellungen/kategorien", http.StatusSeeOther)
 }
 

@@ -95,7 +95,10 @@ func (s *Service) render(w http.ResponseWriter, r *http.Request, status int, err
 	if data.StartDate.IsZero() {
 		data.StartDate = s.today()
 	}
-	data.Status = s.loadStatus(ctx, me.ID)
+	if data.Status, err = s.loadStatus(ctx, me.ID); err != nil {
+		s.d.ServerError(w, r, err)
+		return
+	}
 	data.TokenInvalid = data.TokenSet && data.Status.TokenInvalid
 	if data.Status.RetryAt.After(s.now()) {
 		data.RetryAt = data.Status.RetryAt
