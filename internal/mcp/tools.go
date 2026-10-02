@@ -620,7 +620,8 @@ Tables:
   weight depends on split_mode: equal 1, shares the share count, percent basis points (sum 10000), amount cents.
 - recurring: rules for recurring expenses (template_json = template as JSON, frequency weekly|monthly|yearly, start_date, next_date, active).
 - activity: change log (at, actor_id NULL = system, action expense_created|expense_updated|expense_deleted, expense_id, details_json).
-- fx_rates: exchange rates per currency and date (foreign currency per 1 EUR), source 'ezb' or 'manuell'.
+- fx_rates: exchange rates per currency, source ('ezb' or 'manuell') and date (foreign currency per 1 EUR).
+  A day can have both an ECB and a manual rate; the most recent manual rate on or before a date takes precedence over the ECB rate.
 - settings: settings (key/value, e.g. group_name, default_currency).
 YNAB tables (credentials) are not visible via MCP.
 
