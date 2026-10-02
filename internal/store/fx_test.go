@@ -36,7 +36,7 @@ func TestFXRatesECBAndManual(t *testing.T) {
 
 	// Manual and ECB rates of the same day are stored side by side: neither
 	// overwrites the other.
-	if err := s.SetManualFXRate(ctx, " usd ", date("2026-09-30"), 1.2); err != nil {
+	if err := s.SetManualFXRate(ctx, 0, " usd ", date("2026-09-30"), 1.2); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.SaveECBRates(ctx, []domain.FXRate{{Currency: "USD", Date: date("2026-09-30"), Rate: 1.111}}); err != nil {
@@ -50,7 +50,7 @@ func TestFXRatesECBAndManual(t *testing.T) {
 	if r.Date != date("2026-09-30") || r.Rate != 1.111 || r.Source != "ezb" {
 		t.Errorf("ECB rate of Sep 30 next to the manual one: %+v", r)
 	}
-	if err := s.SetManualFXRate(ctx, "USD", date("2026-09-30"), 1.21); err != nil {
+	if err := s.SetManualFXRate(ctx, 0, "USD", date("2026-09-30"), 1.21); err != nil {
 		t.Fatal(err)
 	}
 	if r, _ = s.LookupFXRate(ctx, "USD", domain.FXSourceManual, date("2026-09-30"), time.Time{}); r.Rate != 1.21 {
@@ -61,7 +61,7 @@ func TestFXRatesECBAndManual(t *testing.T) {
 		cur  string
 		rate float64
 	}{{"EUR", 1}, {"US", 1}, {"USD", 0}, {"USD", -1}} {
-		if err := s.SetManualFXRate(ctx, bad.cur, date("2026-09-30"), bad.rate); !isValidation(err) {
+		if err := s.SetManualFXRate(ctx, 0, bad.cur, date("2026-09-30"), bad.rate); !isValidation(err) {
 			t.Errorf("SetManualFXRate(%q, %v) = %v", bad.cur, bad.rate, err)
 		}
 	}
@@ -83,10 +83,10 @@ func TestFXRatesECBAndManual(t *testing.T) {
 		t.Errorf("ListFXCurrencies = %v", curs)
 	}
 
-	if err := s.DeleteManualFXRate(ctx, "USD", date("2026-09-30")); err != nil {
+	if err := s.DeleteManualFXRate(ctx, 0, "USD", date("2026-09-30")); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.DeleteManualFXRate(ctx, "USD", date("2026-09-30")); !errors.Is(err, ErrNotFound) {
+	if err := s.DeleteManualFXRate(ctx, 0, "USD", date("2026-09-30")); !errors.Is(err, ErrNotFound) {
 		t.Errorf("second delete = %v", err)
 	}
 	// Deleting the manual rate leaves the ECB rate of that day.
@@ -97,7 +97,7 @@ func TestFXRatesECBAndManual(t *testing.T) {
 	if _, err := s.LookupFXRate(ctx, "USD", domain.FXSourceManual, date("2026-12-01"), time.Time{}); !errors.Is(err, ErrNotFound) {
 		t.Errorf("manual rate after delete: %v", err)
 	}
-	if err := s.DeleteManualFXRate(ctx, "GBP", date("2026-09-30")); !errors.Is(err, ErrNotFound) {
+	if err := s.DeleteManualFXRate(ctx, 0, "GBP", date("2026-09-30")); !errors.Is(err, ErrNotFound) {
 		t.Errorf("ECB rate must not be deleted as manual: %v", err)
 	}
 }

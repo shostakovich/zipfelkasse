@@ -75,14 +75,14 @@ func TestRecurringPauseResumeDelete(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := f.s.SetRecurringActive(ctx, rid, false, date("2026-01-10")); err != nil {
+	if err := f.s.SetRecurringActive(ctx, 0, rid, false, date("2026-01-10")); err != nil {
 		t.Fatal(err)
 	}
 	if due, _ := f.s.DueRecurring(ctx, date("2026-03-01")); len(due) != 0 {
 		t.Errorf("paused rule due: %+v", due)
 	}
 	// Resuming on Wednesday, Mar 4: next occurrence Monday, Mar 9 (no catch-up).
-	if err := f.s.SetRecurringActive(ctx, rid, true, date("2026-03-04")); err != nil {
+	if err := f.s.SetRecurringActive(ctx, 0, rid, true, date("2026-03-04")); err != nil {
 		t.Fatal(err)
 	}
 	r, _ := f.s.GetRecurring(ctx, rid)
@@ -90,13 +90,13 @@ func TestRecurringPauseResumeDelete(t *testing.T) {
 		t.Errorf("after resume: %+v", r)
 	}
 	// Resuming exactly on an occurrence: the occurrence itself counts.
-	f.s.SetRecurringActive(ctx, rid, false, date("2026-03-05"))
-	f.s.SetRecurringActive(ctx, rid, true, date("2026-03-16"))
+	f.s.SetRecurringActive(ctx, 0, rid, false, date("2026-03-05"))
+	f.s.SetRecurringActive(ctx, 0, rid, true, date("2026-03-16"))
 	r, _ = f.s.GetRecurring(ctx, rid)
 	if r.NextDate != date("2026-03-16") {
 		t.Errorf("resume on occurrence: %+v", r)
 	}
-	if err := f.s.SetRecurringActive(ctx, 999, true, date("2026-03-16")); !errors.Is(err, ErrNotFound) {
+	if err := f.s.SetRecurringActive(ctx, 0, 999, true, date("2026-03-16")); !errors.Is(err, ErrNotFound) {
 		t.Errorf("unknown rule: %v", err)
 	}
 
@@ -113,7 +113,7 @@ func TestRecurringPauseResumeDelete(t *testing.T) {
 	}
 
 	// A paused rule neither advances nor gets instances.
-	f.s.SetRecurringActive(ctx, rid, false, date("2026-03-23"))
+	f.s.SetRecurringActive(ctx, 0, rid, false, date("2026-03-23"))
 	if err := f.s.SetRecurringNextDate(ctx, rid, date("2026-03-23"), date("2026-03-30")); !errors.Is(err, ErrRecurringChanged) {
 		t.Errorf("advance a paused rule: %v", err)
 	}
@@ -122,7 +122,7 @@ func TestRecurringPauseResumeDelete(t *testing.T) {
 	if _, err := f.s.CreateExpense(ctx, 0, in); !errors.Is(err, ErrRecurringChanged) {
 		t.Errorf("instance of a paused rule: %v", err)
 	}
-	f.s.SetRecurringActive(ctx, rid, true, date("2026-03-23"))
+	f.s.SetRecurringActive(ctx, 0, rid, true, date("2026-03-23"))
 
 	if err := f.s.DeleteRecurring(ctx, f.ben, rid); err != nil {
 		t.Fatal(err)
@@ -157,7 +157,7 @@ func TestUpdateRecurringTemplateFromLatest(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := f.s.UpdateRecurringTemplateFromLatest(ctx, rid); err != nil {
+	if err := f.s.UpdateRecurringTemplateFromLatest(ctx, 0, rid); err != nil {
 		t.Fatal(err)
 	}
 	r, _ := f.s.GetRecurring(ctx, rid)
@@ -167,7 +167,10 @@ func TestUpdateRecurringTemplateFromLatest(t *testing.T) {
 	// Deleted instances do not count.
 	f.s.DeleteExpense(ctx, f.anna, id2)
 	f.s.DeleteExpense(ctx, f.anna, eid)
-	if err := f.s.UpdateRecurringTemplateFromLatest(ctx, rid); !errors.Is(err, ErrNotFound) {
+	if err := f.s.UpdateRecurringTemplateFromLatest(ctx, 0, rid); !errors.Is(err, ErrNoInstance) {
 		t.Errorf("without instance: %v", err)
+	}
+	if err := f.s.UpdateRecurringTemplateFromLatest(ctx, 0, rid+1000); !errors.Is(err, ErrNotFound) {
+		t.Errorf("without rule: %v", err)
 	}
 }

@@ -9,10 +9,6 @@ import (
 	"github.com/shostakovich/zipfelkasse/internal/store"
 )
 
-// actionSettingsUpdated logs changes to the group name, people and categories
-// (Details.Text describes the change).
-const actionSettingsUpdated = store.ActionSettingsUpdated
-
 // activityPageSize is the number of entries per page of the activity list.
 const activityPageSize = 50
 
@@ -79,17 +75,4 @@ func (h handlers) activity(w http.ResponseWriter, r *http.Request) {
 		g.Items = append(g.Items, it)
 	}
 	h.d.Render.Page(w, r, http.StatusOK, "activity.html", Page{Title: "Aktivität", Nav: NavActivity, Data: data})
-}
-
-// logSettings writes a "settings changed" entry (see Deps.LogSettings).
-func (h handlers) logSettings(r *http.Request, text string) { h.d.LogSettings(r, text) }
-
-// LogSettings writes a "settings changed" entry (store.ActionSettingsUpdated)
-// with text for the current person (Me). Errors are only logged, since the
-// actual change has already been saved.
-func (d Deps) LogSettings(r *http.Request, text string) {
-	p, _ := Me(r.Context())
-	if err := d.Store.AddActivity(r.Context(), p.ID, actionSettingsUpdated, 0, store.ActivityDetails{Text: text}); err != nil {
-		d.Log.Error("activity", "err", err)
-	}
 }

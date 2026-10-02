@@ -1,15 +1,19 @@
 package store
 
 import (
+	"cmp"
 	"context"
 	"database/sql"
 	"errors"
-	"strconv"
+	"fmt"
+	"strings"
 	"time"
+
+	"github.com/shostakovich/zipfelkasse/internal/domain"
 )
 
-// Queries for the YNAB sync (package ynab). Tables: ynab_config (per person),
-// ynab_category_map (app category → YNAB category per person) and
+// Queries for the YNAB sync (package ynab). Tables: ynab_config (connection
+// and sync status per person), ynab_category_map (app category → YNAB category per person) and
 // ynab_sync (sync state per expense and person).
 
 // YNABConfig is a person's YNAB connection. Token is secret: never print
@@ -22,17 +26,10 @@ type YNABConfig struct {
 	StartDate     time.Time // expenses from this date on; zero value = not set
 	Enabled       bool
 	UpdatedAt     time.Time
-	// ConnectedAt: since when plan and account have been chosen (settings key
-	// "ynab.connected.<id>"). Expenses entered after that go to YNAB even if
-	// their date is before the start date. Zero value = unknown (legacy data,
-	// see EnsureYNABConnectedAt).
+	// ConnectedAt: since when plan and account have been chosen. Expenses
+	// entered after that go to YNAB even if their date is before the start
+	// date. Zero value = unknown (legacy data, see EnsureYNABConnectedAt).
 	ConnectedAt time.Time
-}
-
-// ynabConnectedKey is the settings key for YNABConfig.ConnectedAt (like all
-// ynab.… keys, invisible to MCP).
-func ynabConnectedKey(participantID int64) string {
-	return "ynab.connected." + strconv.FormatInt(participantID, 10)
 }
 
 // Ready reports whether everything needed for a sync is set.
@@ -40,8 +37,7 @@ func (c YNABConfig) Ready() bool {
 	return c.Enabled && c.Token != "" && c.PlanID != "" && c.AccountID != "" && !c.StartDate.IsZero()
 }
 
-const ynabConfigCols = "participant_id, token, budget_id, account_id, start_date, enabled, updated_at, " +
-	"(SELECT value FROM settings WHERE key = 'ynab.connected.' || participant_id)"
+const ynabConfigCols = "participant_id, token, budget_id, account_id, start_date, enabled, updated_at, connected_at"
 
 func scanYNABConfig(row interface{ Scan(...any) error }) (YNABConfig, error) {
 	var c YNABConfig
@@ -63,7 +59,11 @@ func scanYNABConfig(row interface{ Scan(...any) error }) (YNABConfig, error) {
 
 // GetYNABConfig returns a person's YNAB connection or ErrNotFound.
 func (s *Store) GetYNABConfig(ctx context.Context, participantID int64) (YNABConfig, error) {
-	c, err := scanYNABConfig(s.db.QueryRowContext(ctx,
+	return getYNABConfig(ctx, s.db, participantID)
+}
+
+func getYNABConfig(ctx context.Context, q queryer, participantID int64) (YNABConfig, error) {
+	c, err := scanYNABConfig(q.QueryRowContext(ctx,
 		"SELECT "+ynabConfigCols+" FROM ynab_config WHERE participant_id = ?", participantID))
 	if errors.Is(err, sql.ErrNoRows) {
 		return c, ErrNotFound
@@ -96,13 +96,56 @@ func (s *Store) ListYNABConfigs(ctx context.Context) ([]YNABConfig, error) {
 // SetYNABToken sets (or replaces) a person's token and enables the
 // connection. token "" disconnects (plan, account, mapping and sync state are
 // kept so that reconnecting to the same account does not create duplicates).
-func (s *Store) SetYNABToken(ctx context.Context, participantID int64, token string) error {
-	_, err := s.db.ExecContext(ctx, `INSERT INTO ynab_config (participant_id, token, enabled, updated_at)
-		VALUES (?, ?, ?, ?)
-		ON CONFLICT (participant_id) DO UPDATE SET
-			token = excluded.token, enabled = excluded.enabled, updated_at = excluded.updated_at`,
-		participantID, token, token != "", s.nowString())
-	return err
+// In the same write it resets what the status says about the old token
+// (TokenInvalid, Error, RetryAt, Backoff); LastRun, LastSync and Summary
+// stay.
+//
+// reachable tells whether the new token can reach a YNAB plan. If it cannot
+// reach the chosen plan (token of another YNAB user), plan and account are
+// reset as by SetYNABTarget with empty IDs, and targetReset is true;
+// reachable nil keeps them. The activity entry names the person as actor.
+func (s *Store) SetYNABToken(ctx context.Context, participantID int64, token string, reachable func(planID string) bool) (targetReset bool, err error) {
+	err = s.inTx(ctx, func(tx *sql.Tx) error {
+		old, err := getYNABConfig(ctx, tx, participantID)
+		if err != nil && !errors.Is(err, ErrNotFound) {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `INSERT INTO ynab_config (participant_id, token, enabled, updated_at)
+			VALUES (?, ?, ?, ?)
+			ON CONFLICT (participant_id) DO UPDATE SET
+				token = excluded.token, enabled = excluded.enabled, updated_at = excluded.updated_at,
+				token_invalid = 0, error = '', retry_at = NULL, backoff_seconds = 0`,
+			participantID, token, token != "", s.nowString()); err != nil {
+			return err
+		}
+		targetReset = token != "" && old.PlanID != "" && reachable != nil && !reachable(old.PlanID)
+		if targetReset {
+			if _, err := s.setYNABTarget(ctx, tx, participantID, "", "", old.StartDate); err != nil {
+				return err
+			}
+		}
+		var text string
+		switch {
+		case token == "":
+			text = "YNAB-Verbindung getrennt"
+		case targetReset:
+			text = "YNAB-Token ersetzt (Plan und Konto zurückgesetzt)"
+		case old.Token != "":
+			text = "YNAB-Token ersetzt"
+		default:
+			text = "YNAB verbunden (Token gesetzt)"
+		}
+		return s.logSettings(ctx, tx, participantID, text)
+	})
+	return targetReset, err
+}
+
+// YNABTarget is where a person's expenses go in YNAB. The names are only for
+// the activity log (the store does not know YNAB's names; "" = the ID).
+type YNABTarget struct {
+	PlanID, AccountID     string
+	PlanName, AccountName string
+	Start                 time.Time // zero value = not set
 }
 
 // SetYNABTarget sets plan, account and start date. The connection must
@@ -110,56 +153,140 @@ func (s *Store) SetYNABToken(ctx context.Context, participantID int64, token str
 // reset and the person's sync rows are marked with YNABHashRetarget and
 // without transaction ID: transactions in the old account stay there, and
 // the sync first looks for each expense in the new account (it may be there
-// already, e.g. after switching back) before creating it anew.
-func (s *Store) SetYNABTarget(ctx context.Context, participantID int64, planID, accountID string, start time.Time) error {
-	var startVal any
-	if !start.IsZero() {
-		startVal = formatDate(start)
-	}
+// already, e.g. after switching back) before creating it anew. A change of
+// plan or account, or else of the start date, is logged with the person as
+// actor.
+func (s *Store) SetYNABTarget(ctx context.Context, participantID int64, t YNABTarget) error {
 	return s.inTx(ctx, func(tx *sql.Tx) error {
-		var oldPlan, oldAccount string
-		err := tx.QueryRowContext(ctx, "SELECT budget_id, account_id FROM ynab_config WHERE participant_id = ?",
-			participantID).Scan(&oldPlan, &oldAccount)
-		if errors.Is(err, sql.ErrNoRows) {
-			return ErrNotFound
-		}
+		old, err := s.setYNABTarget(ctx, tx, participantID, t.PlanID, t.AccountID, t.Start)
 		if err != nil {
 			return err
 		}
-		if oldPlan != planID || oldAccount != accountID {
-			if _, err := tx.ExecContext(ctx, `UPDATE ynab_sync SET ynab_txn_id = '', synced_hash = ?, synced_at = NULL, last_error = ''
-				WHERE participant_id = ?`, YNABHashRetarget, participantID); err != nil {
-				return err
-			}
-			if _, err := tx.ExecContext(ctx, `INSERT INTO settings (key, value) VALUES (?, ?)
-				ON CONFLICT (key) DO UPDATE SET value = excluded.value`, ynabConnectedKey(participantID), s.nowString()); err != nil {
-				return err
-			}
+		switch {
+		case t.PlanID != old.PlanID || t.AccountID != old.AccountID:
+			return s.logSettings(ctx, tx, participantID, fmt.Sprintf("YNAB: Konto „%s“ im Plan „%s“ gewählt, Startdatum %s",
+				cmp.Or(t.AccountName, t.AccountID), cmp.Or(t.PlanName, t.PlanID), domain.FormatDate(t.Start)))
+		case optionalDate(t.Start) != optionalDate(old.StartDate):
+			return s.logSettings(ctx, tx, participantID, fmt.Sprintf("YNAB: Startdatum %s → %s",
+				cmp.Or(domain.FormatDate(old.StartDate), "–"), domain.FormatDate(t.Start)))
 		}
-		_, err = tx.ExecContext(ctx, `UPDATE ynab_config SET budget_id = ?, account_id = ?, start_date = ?, updated_at = ?
-			WHERE participant_id = ?`, planID, accountID, startVal, s.nowString(), participantID)
-		return err
+		return nil
 	})
+}
+
+// setYNABTarget writes plan, account and start date in tx (see
+// SetYNABTarget) and returns the connection as it was before.
+func (s *Store) setYNABTarget(ctx context.Context, tx *sql.Tx, participantID int64, planID, accountID string, start time.Time) (YNABConfig, error) {
+	old, err := getYNABConfig(ctx, tx, participantID)
+	if err != nil {
+		return old, err
+	}
+	var connected any // nil: keep connected_at
+	if old.PlanID != planID || old.AccountID != accountID {
+		if _, err := tx.ExecContext(ctx, `UPDATE ynab_sync SET ynab_txn_id = '', synced_hash = ?, synced_at = NULL, last_error = ''
+			WHERE participant_id = ?`, YNABHashRetarget, participantID); err != nil {
+			return old, err
+		}
+		connected = s.nowString()
+	}
+	_, err = tx.ExecContext(ctx, `UPDATE ynab_config SET budget_id = ?, account_id = ?, start_date = ?, updated_at = ?,
+		connected_at = coalesce(?, connected_at)
+		WHERE participant_id = ?`, planID, accountID, optionalDate(start), s.nowString(), connected, participantID)
+	return old, err
+}
+
+// optionalDate formats a date column value: NULL for the zero value.
+func optionalDate(t time.Time) any {
+	if t.IsZero() {
+		return nil
+	}
+	return formatDate(t)
 }
 
 // EnsureYNABConnectedAt returns the person's ConnectedAt and sets it to now
 // if it is still missing (connections from before the value was introduced).
+// Without a connection it returns ErrNotFound.
 func (s *Store) EnsureYNABConnectedAt(ctx context.Context, participantID int64) (time.Time, error) {
-	key := ynabConnectedKey(participantID)
-	if _, err := s.db.ExecContext(ctx, "INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT (key) DO NOTHING",
-		key, s.nowString()); err != nil {
-		return time.Time{}, err
+	var v sql.NullString
+	err := s.db.QueryRowContext(ctx, `UPDATE ynab_config SET connected_at = coalesce(connected_at, ?)
+		WHERE participant_id = ? RETURNING connected_at`, s.nowString(), participantID).Scan(&v)
+	if errors.Is(err, sql.ErrNoRows) {
+		return time.Time{}, ErrNotFound
 	}
-	v, err := s.GetSetting(ctx, key)
 	if err != nil {
 		return time.Time{}, err
 	}
-	return parseTime(sql.NullString{String: v, Valid: true}), nil
+	return parseTime(v), nil
+}
+
+// YNABStatus is the sync status of a person's connection. Its meaning (and
+// the language of Summary and Error) is defined by package ynab, see
+// ynab.Status.
+type YNABStatus struct {
+	LastRun      time.Time     // last attempt
+	LastSync     time.Time     // last complete sync
+	Summary      string        // result of the last sync
+	Error        string        // error of the last attempt (without token)
+	TokenInvalid bool          // YNAB rejected the token
+	RetryAt      time.Time     // no requests before this
+	Backoff      time.Duration // last delay after 429 (whole seconds)
+}
+
+const ynabStatusCols = "last_run, last_sync, summary, error, token_invalid, retry_at, backoff_seconds"
+
+// GetYNABStatus returns a person's sync status, or ErrNotFound without a
+// connection.
+func (s *Store) GetYNABStatus(ctx context.Context, participantID int64) (YNABStatus, error) {
+	var st YNABStatus
+	var run, synced, retry sql.NullString
+	var backoff int64
+	err := s.db.QueryRowContext(ctx, "SELECT "+ynabStatusCols+" FROM ynab_config WHERE participant_id = ?", participantID).
+		Scan(&run, &synced, &st.Summary, &st.Error, &st.TokenInvalid, &retry, &backoff)
+	if errors.Is(err, sql.ErrNoRows) {
+		return YNABStatus{}, ErrNotFound
+	}
+	if err != nil {
+		return YNABStatus{}, err
+	}
+	st.LastRun, st.LastSync, st.RetryAt = parseTime(run), parseTime(synced), parseTime(retry)
+	st.Backoff = time.Duration(backoff) * time.Second
+	return st, nil
+}
+
+// SetYNABStatus overwrites a person's sync status. The connection must
+// exist (otherwise ErrNotFound).
+func (s *Store) SetYNABStatus(ctx context.Context, participantID int64, st YNABStatus) error {
+	res, err := s.db.ExecContext(ctx, `UPDATE ynab_config SET last_run = ?, last_sync = ?, summary = ?, error = ?,
+		token_invalid = ?, retry_at = ?, backoff_seconds = ? WHERE participant_id = ?`,
+		statusTime(st.LastRun), statusTime(st.LastSync), st.Summary, st.Error,
+		st.TokenInvalid, statusTime(st.RetryAt), int64(st.Backoff/time.Second), participantID)
+	if err != nil {
+		return err
+	}
+	if n, err := res.RowsAffected(); err != nil {
+		return err
+	} else if n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// statusTime formats t for the status columns: NULL for the zero value,
+// otherwise with fractional seconds so that RetryAt survives exactly.
+func statusTime(t time.Time) any {
+	if t.IsZero() {
+		return nil
+	}
+	return t.UTC().Format(time.RFC3339Nano)
 }
 
 // YNABCategoryMap returns the mapping app category → YNAB category ID.
 func (s *Store) YNABCategoryMap(ctx context.Context, participantID int64) (map[int64]string, error) {
-	rows, err := s.db.QueryContext(ctx,
+	return ynabCategoryMap(ctx, s.db, participantID)
+}
+
+func ynabCategoryMap(ctx context.Context, q queryer, participantID int64) (map[int64]string, error) {
+	rows, err := q.QueryContext(ctx,
 		"SELECT category_id, ynab_category_id FROM ynab_category_map WHERE participant_id = ?", participantID)
 	if err != nil {
 		return nil, err
@@ -178,9 +305,15 @@ func (s *Store) YNABCategoryMap(ctx context.Context, participantID int64) (map[i
 }
 
 // SetYNABCategoryMap replaces a person's complete mapping. Empty values mean
-// "no mapping" (uncategorized in YNAB).
-func (s *Store) SetYNABCategoryMap(ctx context.Context, participantID int64, m map[int64]string) error {
+// "no mapping" (uncategorized in YNAB). ynabNames (YNAB category ID → name)
+// is only for the activity log, which lists the changed mappings with the
+// person as actor.
+func (s *Store) SetYNABCategoryMap(ctx context.Context, participantID int64, m map[int64]string, ynabNames map[string]string) error {
 	return s.inTx(ctx, func(tx *sql.Tx) error {
+		old, err := ynabCategoryMap(ctx, tx, participantID)
+		if err != nil {
+			return err
+		}
 		if _, err := tx.ExecContext(ctx, "DELETE FROM ynab_category_map WHERE participant_id = ?", participantID); err != nil {
 			return err
 		}
@@ -201,8 +334,47 @@ func (s *Store) SetYNABCategoryMap(ctx context.Context, participantID int64, m m
 				return err
 			}
 		}
-		return nil
+		text, err := mappingChanges(ctx, tx, old, m, ynabNames)
+		if err != nil || text == "" {
+			return err
+		}
+		return s.logSettings(ctx, tx, participantID, "YNAB: Kategorie-Zuordnung geändert ("+text+")")
 	})
+}
+
+// mappingChanges describes the differences between the old and the new
+// category mapping for the activity log: "Lebensmittel → Lebensmittel &
+// Drogerie, Kino → unkategorisiert (vorher Freizeit)" (in the order of the
+// app categories).
+func mappingChanges(ctx context.Context, tx *sql.Tx, old, now map[int64]string, ynabNames map[string]string) (string, error) {
+	rows, err := tx.QueryContext(ctx, "SELECT "+categoryCols+" FROM categories ORDER BY position, name COLLATE NOCASE, id")
+	if err != nil {
+		return "", err
+	}
+	defer rows.Close()
+	ynabName := func(id string) string {
+		if id == "" {
+			return "unkategorisiert"
+		}
+		return cmp.Or(ynabNames[id], "(nicht mehr vorhanden)")
+	}
+	var parts []string
+	for rows.Next() {
+		c, err := scanCategory(rows)
+		if err != nil {
+			return "", err
+		}
+		o, n := old[c.ID], now[c.ID]
+		if o == n {
+			continue
+		}
+		p := c.Name + " → " + ynabName(n)
+		if o != "" {
+			p += " (vorher " + ynabName(o) + ")"
+		}
+		parts = append(parts, p)
+	}
+	return strings.Join(parts, ", "), rows.Err()
 }
 
 // YNABSync is the sync state of an expense for a person.

@@ -75,7 +75,7 @@ func newEnv(t *testing.T) *env {
 	e := &env{t: t, h: mux, st: st, logs: logs, ids: map[string]int64{}, cats: map[string]int64{}, deps: d}
 	ctx := context.Background()
 	for _, n := range []string{"Anna", "Ben", "Cleo"} {
-		if e.ids[n], err = st.CreateParticipant(ctx, n); err != nil {
+		if e.ids[n], err = st.CreateParticipant(ctx, 0, n); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -505,7 +505,7 @@ func TestCategoryNone(t *testing.T) {
 // A real category named like the special value takes precedence.
 func TestCategoryNamedNone(t *testing.T) {
 	e := newEnv(t)
-	id, err := e.st.CreateCategory(context.Background(), "None")
+	id, err := e.st.CreateCategory(context.Background(), 0, "None")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -883,7 +883,7 @@ func TestActivity(t *testing.T) {
 	if err := e.st.UpdateExpense(ctx, e.ids["Cleo"], kino.ID, in); err != nil {
 		t.Fatal(err)
 	}
-	if err := e.st.AddActivity(ctx, 0, store.ActionSettingsUpdated, 0, store.ActivityDetails{Text: "Kategorie angelegt"}); err != nil {
+	if _, err := e.st.CreateCategory(ctx, 0, "Kino"); err != nil {
 		t.Fatal(err)
 	}
 	entries := func(args map[string]any) ([]map[string]any, map[string]any) {
@@ -898,8 +898,10 @@ func TestActivity(t *testing.T) {
 		}
 		return out, sc
 	}
+	// Newest first: the category, the update, the two expenses, and the
+	// three people of newEnv (system entries).
 	all, _ := entries(nil)
-	if len(all) != 4 || all[0]["actor"] != "system" || all[0]["text"] != "Kategorie angelegt" || all[1]["actor"] != "Cleo" ||
+	if len(all) != 7 || all[0]["actor"] != "system" || all[0]["text"] != "Kategorie „Kino“ hinzugefügt" || all[1]["actor"] != "Cleo" ||
 		all[1]["action"] != "expense_updated" || all[1]["title"] != "Kino & Popcorn" || all[1]["changes"] == nil ||
 		all[3]["amount"] != "30.00" || all[3]["expense_id"] == nil {
 		t.Errorf("all = %v", all)
@@ -917,13 +919,13 @@ func TestActivity(t *testing.T) {
 	if len(got) != 3 || sc["more"] != true || !strings.Contains(sc["note"].(string), "before_id") {
 		t.Errorf("limit = %v", sc)
 	}
-	if got, _ = entries(map[string]any{"before_id": got[2]["id"]}); len(got) != 1 {
+	if got, _ = entries(map[string]any{"before_id": got[2]["id"]}); len(got) != 4 {
 		t.Errorf("before_id = %v", got)
 	}
 	// The log was written just now (real clock): today is in, yesterday is not.
 	today := time.Now().In(time.Local).Format(domain.DateLayout)
 	yesterday := time.Now().In(time.Local).AddDate(0, 0, -1).Format(domain.DateLayout)
-	if got, _ := entries(map[string]any{"from": today, "to": today}); len(got) != 4 {
+	if got, _ := entries(map[string]any{"from": today, "to": today}); len(got) != 7 {
 		t.Errorf("today = %d", len(got))
 	}
 	if got, _ := entries(map[string]any{"to": yesterday}); len(got) != 0 {
@@ -958,7 +960,8 @@ func TestDataOverviewInInstructions(t *testing.T) {
 	for _, want := range []string{
 		"4 expenses and 1 reimbursements dated 2025-03-10 to 2026-09-30.",
 		"2 of the expenses (50.0%) have no category.",
-		"Values of activity.action: expense_created.",
+		// settings_updated: newEnv's people are logged as well.
+		"Values of activity.action: expense_created, settings_updated.",
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("missing %q in %s", want, got)

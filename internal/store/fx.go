@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"math"
 	"strings"
 	"time"
@@ -16,19 +17,6 @@ import (
 // rates of the same day are stored side by side and never overwrite each
 // other. Manual rates take precedence in the lookup (fx.Service.Rate), so
 // deleting a manual rate brings back the ECB rate of that day.
-
-// ValidCurrencyCode reports whether s is a three-letter upper-case code.
-func ValidCurrencyCode(s string) bool {
-	if len(s) != 3 {
-		return false
-	}
-	for _, c := range s {
-		if c < 'A' || c > 'Z' {
-			return false
-		}
-	}
-	return true
-}
 
 // LookupFXRate returns the most recent rate from source (domain.FXSourceECB
 // or domain.FXSourceManual) for currency with notBefore ≤ date of rate ≤ date.
@@ -65,7 +53,7 @@ func (s *Store) SaveECBRates(ctx context.Context, rates []domain.FXRate) error {
 		}
 		defer stmt.Close()
 		for _, r := range rates {
-			if !(r.Rate > 0) || math.IsInf(r.Rate, 0) || !ValidCurrencyCode(r.Currency) {
+			if !(r.Rate > 0) || math.IsInf(r.Rate, 0) || !domain.ValidCurrencyCode(r.Currency) {
 				continue
 			}
 			if _, err := stmt.ExecContext(ctx, formatDate(r.Date), r.Currency, r.Rate); err != nil {
@@ -79,30 +67,42 @@ func (s *Store) SaveECBRates(ctx context.Context, rates []domain.FXRate) error {
 // SetManualFXRate stores a manually entered rate, valid from date on
 // (replacing an existing manual rate of the same day; an ECB rate of that
 // day is kept).
-func (s *Store) SetManualFXRate(ctx context.Context, currency string, date time.Time, rate float64) error {
+func (s *Store) SetManualFXRate(ctx context.Context, actorID int64, currency string, date time.Time, rate float64) error {
 	currency = strings.ToUpper(strings.TrimSpace(currency))
 	switch {
 	case currency == "EUR":
 		return invalid("Für Euro braucht es keinen Kurs.")
-	case !ValidCurrencyCode(currency):
+	case !domain.ValidCurrencyCode(currency):
 		return invalid("Bitte einen dreistelligen Währungscode angeben (z. B. USD).")
 	case date.IsZero():
 		return invalid("Bitte ein Datum angeben.")
 	case !(rate > 0) || math.IsInf(rate, 0) || rate > 1e9:
 		return invalid("Der Kurs muss größer als 0 sein.")
 	}
-	_, err := s.db.ExecContext(ctx, `INSERT INTO fx_rates (date, currency, rate, source) VALUES (?, ?, ?, 'manuell')
-		ON CONFLICT (currency, source, date) DO UPDATE SET rate = excluded.rate`,
-		formatDate(domain.DateOf(date)), currency, rate)
-	return err
+	date = domain.DateOf(date)
+	return s.inTx(ctx, func(tx *sql.Tx) error {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO fx_rates (date, currency, rate, source) VALUES (?, ?, ?, 'manuell')
+			ON CONFLICT (currency, source, date) DO UPDATE SET rate = excluded.rate`,
+			formatDate(date), currency, rate); err != nil {
+			return err
+		}
+		return s.logSettings(ctx, tx, actorID, fmt.Sprintf("Manueller Kurs für %s ab %s gespeichert: 1 € = %s %s",
+			currency, domain.FormatDate(date), domain.FormatRate(rate), currency))
+	})
 }
 
 // DeleteManualFXRate deletes a manual rate (ErrNotFound if it does not
 // exist). An ECB rate of the same day stays.
-func (s *Store) DeleteManualFXRate(ctx context.Context, currency string, date time.Time) error {
-	res, err := s.db.ExecContext(ctx, "DELETE FROM fx_rates WHERE currency = ? AND date = ? AND source = 'manuell'",
-		strings.ToUpper(currency), formatDate(date))
-	return checkAffected(res, err)
+func (s *Store) DeleteManualFXRate(ctx context.Context, actorID int64, currency string, date time.Time) error {
+	currency = strings.ToUpper(strings.TrimSpace(currency))
+	return s.inTx(ctx, func(tx *sql.Tx) error {
+		res, err := tx.ExecContext(ctx, "DELETE FROM fx_rates WHERE currency = ? AND date = ? AND source = 'manuell'",
+			currency, formatDate(date))
+		if err := checkAffected(res, err); err != nil {
+			return err
+		}
+		return s.logSettings(ctx, tx, actorID, fmt.Sprintf("Manueller Kurs für %s ab %s gelöscht", currency, domain.FormatDate(date)))
+	})
 }
 
 // ListManualFXRates returns all manual rates (by currency, then newest first).

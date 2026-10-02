@@ -96,6 +96,7 @@ func (s *Store) SchemaVersion(ctx context.Context) (int, error) {
 var goMigrations = map[int]func(s *Store, ctx context.Context, tx *sql.Tx) error{
 	2: (*Store).resplitShares,
 	4: (*Store).convertAmountWeights,
+	5: (*Store).moveYNABStateIntoConfig,
 }
 
 // migrate applies all migrations (migrations/NNN_*.sql and goMigrations)
@@ -238,9 +239,13 @@ func invalid(format string, args ...any) error {
 	return domain.ValidationError{Msg: fmt.Sprintf(format, args...)}
 }
 
+// NormalizeName returns a name of a person/category as it is stored:
+// surrounding spaces removed, inner runs of whitespace collapsed to one.
+func NormalizeName(name string) string { return strings.Join(strings.Fields(name), " ") }
+
 // cleanName validates and normalizes names of people/categories.
 func cleanName(name, what string) (string, error) {
-	name = strings.Join(strings.Fields(name), " ")
+	name = NormalizeName(name)
 	if name == "" {
 		return "", invalid("Bitte einen Namen für %s angeben.", what)
 	}

@@ -27,8 +27,7 @@ func (h handlers) renderSettings(w http.ResponseWriter, r *http.Request, status 
 
 func (h handlers) settingsSave(w http.ResponseWriter, r *http.Request) {
 	name := r.FormValue("gruppenname")
-	old := h.d.Store.GroupName(r.Context())
-	err := h.d.Store.SetGroupName(r.Context(), name)
+	err := h.d.Store.SetGroupName(r.Context(), me(r).ID, name)
 	if msg, ok := validationMsg(err); ok {
 		h.renderSettings(w, r, http.StatusUnprocessableEntity, name, msg)
 		return
@@ -36,9 +35,6 @@ func (h handlers) settingsSave(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		h.d.ServerError(w, r, err)
 		return
-	}
-	if n := h.d.Store.GroupName(r.Context()); n != old {
-		h.logSettings(r, fmt.Sprintf("Gruppe umbenannt: „%s“ → „%s“", old, n))
 	}
 	SetFlash(w, "Gespeichert.")
 	http.Redirect(w, r, "/einstellungen", http.StatusSeeOther)
@@ -92,7 +88,7 @@ func (h handlers) renderParticipants(w http.ResponseWriter, r *http.Request, sta
 
 func (h handlers) participantCreate(w http.ResponseWriter, r *http.Request) {
 	name := r.FormValue("name")
-	id, err := h.d.Store.CreateParticipant(r.Context(), name)
+	_, err := h.d.Store.CreateParticipant(r.Context(), me(r).ID, name)
 	if msg, ok := validationMsg(err); ok {
 		h.renderParticipants(w, r, http.StatusUnprocessableEntity, name, msg)
 		return
@@ -101,9 +97,7 @@ func (h handlers) participantCreate(w http.ResponseWriter, r *http.Request) {
 		h.d.ServerError(w, r, err)
 		return
 	}
-	p, _ := h.d.Store.GetParticipant(r.Context(), id)
-	h.logSettings(r, fmt.Sprintf("Person „%s“ hinzugefügt", p.Name))
-	SetFlash(w, fmt.Sprintf("„%s“ hinzugefügt.", p.Name))
+	SetFlash(w, fmt.Sprintf("„%s“ hinzugefügt.", store.NormalizeName(name)))
 	http.Redirect(w, r, "/einstellungen/teilnehmer", http.StatusSeeOther)
 }
 
@@ -112,7 +106,7 @@ func (h handlers) participantRename(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	err := h.d.Store.RenameParticipant(r.Context(), old.ID, r.FormValue("name"))
+	err := h.d.Store.RenameParticipant(r.Context(), me(r).ID, old.ID, r.FormValue("name"))
 	if msg, ok := validationMsg(err); ok {
 		h.renderParticipants(w, r, http.StatusUnprocessableEntity, "", msg)
 		return
@@ -120,10 +114,6 @@ func (h handlers) participantRename(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		h.d.ServerError(w, r, err)
 		return
-	}
-	p, _ := h.d.Store.GetParticipant(r.Context(), old.ID)
-	if p.Name != old.Name {
-		h.logSettings(r, fmt.Sprintf("Person „%s“ umbenannt in „%s“", old.Name, p.Name))
 	}
 	SetFlash(w, "Gespeichert.")
 	http.Redirect(w, r, "/einstellungen/teilnehmer", http.StatusSeeOther)
@@ -137,7 +127,7 @@ func (h handlers) participantArchive(archive bool) http.HandlerFunc {
 		if !ok {
 			return
 		}
-		err := h.d.Store.SetParticipantArchived(r.Context(), p.ID, archive)
+		err := h.d.Store.SetParticipantArchived(r.Context(), me(r).ID, p.ID, archive)
 		if msg, ok := validationMsg(err); ok {
 			h.renderParticipants(w, r, http.StatusUnprocessableEntity, "", msg)
 			return
@@ -154,14 +144,13 @@ func (h handlers) participantArchive(archive bool) http.HandlerFunc {
 		if !archive {
 			verb = "reaktiviert"
 		}
-		h.logSettings(r, fmt.Sprintf("Person „%s“ %s", p.Name, verb))
 		SetFlash(w, fmt.Sprintf("„%s“ %s.", p.Name, verb))
 		http.Redirect(w, r, "/einstellungen/teilnehmer", http.StatusSeeOther)
 	}
 }
 
 func (h handlers) loadParticipant(w http.ResponseWriter, r *http.Request) (store.Participant, bool) {
-	p, err := h.d.Store.GetParticipant(r.Context(), pathID(r))
+	p, err := h.d.Store.GetParticipant(r.Context(), PathID(r))
 	if errors.Is(err, store.ErrNotFound) {
 		h.notFound(w, r, "Person nicht gefunden.")
 		return p, false
@@ -219,7 +208,7 @@ func (h handlers) renderCategories(w http.ResponseWriter, r *http.Request, statu
 
 func (h handlers) categoryCreate(w http.ResponseWriter, r *http.Request) {
 	name := r.FormValue("name")
-	id, err := h.d.Store.CreateCategory(r.Context(), name)
+	_, err := h.d.Store.CreateCategory(r.Context(), me(r).ID, name)
 	if msg, ok := validationMsg(err); ok {
 		h.renderCategories(w, r, http.StatusUnprocessableEntity, name, msg)
 		return
@@ -228,9 +217,7 @@ func (h handlers) categoryCreate(w http.ResponseWriter, r *http.Request) {
 		h.d.ServerError(w, r, err)
 		return
 	}
-	c, _ := h.d.Store.GetCategory(r.Context(), id)
-	h.logSettings(r, fmt.Sprintf("Kategorie „%s“ hinzugefügt", c.Name))
-	SetFlash(w, fmt.Sprintf("Kategorie „%s“ hinzugefügt.", c.Name))
+	SetFlash(w, fmt.Sprintf("Kategorie „%s“ hinzugefügt.", store.NormalizeName(name)))
 	http.Redirect(w, r, "/einstellungen/kategorien", http.StatusSeeOther)
 }
 
@@ -239,7 +226,7 @@ func (h handlers) categoryRename(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	err := h.d.Store.RenameCategory(r.Context(), old.ID, r.FormValue("name"))
+	err := h.d.Store.RenameCategory(r.Context(), me(r).ID, old.ID, r.FormValue("name"))
 	if msg, ok := validationMsg(err); ok {
 		h.renderCategories(w, r, http.StatusUnprocessableEntity, "", msg)
 		return
@@ -247,10 +234,6 @@ func (h handlers) categoryRename(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		h.d.ServerError(w, r, err)
 		return
-	}
-	c, _ := h.d.Store.GetCategory(r.Context(), old.ID)
-	if c.Name != old.Name {
-		h.logSettings(r, fmt.Sprintf("Kategorie „%s“ umbenannt in „%s“", old.Name, c.Name))
 	}
 	SetFlash(w, "Gespeichert.")
 	http.Redirect(w, r, "/einstellungen/kategorien", http.StatusSeeOther)
@@ -262,7 +245,7 @@ func (h handlers) categoryArchive(archive bool) http.HandlerFunc {
 		if !ok {
 			return
 		}
-		if err := h.d.Store.SetCategoryArchived(r.Context(), c.ID, archive); err != nil {
+		if err := h.d.Store.SetCategoryArchived(r.Context(), me(r).ID, c.ID, archive); err != nil {
 			h.d.ServerError(w, r, err)
 			return
 		}
@@ -270,7 +253,6 @@ func (h handlers) categoryArchive(archive bool) http.HandlerFunc {
 		if !archive {
 			verb = "reaktiviert"
 		}
-		h.logSettings(r, fmt.Sprintf("Kategorie „%s“ %s", c.Name, verb))
 		SetFlash(w, fmt.Sprintf("Kategorie „%s“ %s.", c.Name, verb))
 		http.Redirect(w, r, "/einstellungen/kategorien", http.StatusSeeOther)
 	}
@@ -282,7 +264,7 @@ func (h handlers) categoryMove(up bool) http.HandlerFunc {
 		if !ok {
 			return
 		}
-		err := h.d.Store.MoveCategory(r.Context(), c.ID, up)
+		err := h.d.Store.MoveCategory(r.Context(), me(r).ID, c.ID, up)
 		if errors.Is(err, store.ErrNotFound) {
 			h.notFound(w, r, "Kategorie nicht gefunden.")
 			return
@@ -291,17 +273,12 @@ func (h handlers) categoryMove(up bool) http.HandlerFunc {
 			h.d.ServerError(w, r, err)
 			return
 		}
-		dir := "unten"
-		if up {
-			dir = "oben"
-		}
-		h.logSettings(r, fmt.Sprintf("Kategorie „%s“ nach %s verschoben", c.Name, dir))
 		http.Redirect(w, r, "/einstellungen/kategorien#kategorie-"+strconv.FormatInt(c.ID, 10), http.StatusSeeOther)
 	}
 }
 
 func (h handlers) loadCategory(w http.ResponseWriter, r *http.Request) (store.Category, bool) {
-	c, err := h.d.Store.GetCategory(r.Context(), pathID(r))
+	c, err := h.d.Store.GetCategory(r.Context(), PathID(r))
 	if errors.Is(err, store.ErrNotFound) {
 		h.notFound(w, r, "Kategorie nicht gefunden.")
 		return c, false

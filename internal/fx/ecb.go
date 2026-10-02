@@ -16,7 +16,6 @@ import (
 	"time"
 
 	"github.com/shostakovich/zipfelkasse/internal/domain"
-	"github.com/shostakovich/zipfelkasse/internal/store"
 )
 
 // ECB files (https://www.ecb.europa.eu/stats/eurofxref/).
@@ -220,7 +219,7 @@ func parseXML(r io.Reader) ([]domain.FXRate, error) {
 			return nil, fmt.Errorf("xml: date %q: %w", day.Time, err)
 		}
 		for _, c := range day.Rates {
-			if rate, ok := parseECBRate(c.Rate); ok && store.ValidCurrencyCode(c.Currency) {
+			if rate, ok := parseECBRate(c.Rate); ok && domain.ValidCurrencyCode(c.Currency) {
 				out = append(out, domain.FXRate{Currency: c.Currency, Date: d, Rate: rate, Source: domain.FXSourceECB})
 			}
 		}
@@ -281,7 +280,7 @@ func parseHistCSV(r io.Reader) ([]domain.FXRate, error) {
 			return nil, fmt.Errorf("csv: date %q: %w", rec[0], err)
 		}
 		for i := 1; i < len(rec) && i < len(curs); i++ {
-			if rate, ok := parseECBRate(rec[i]); ok && store.ValidCurrencyCode(curs[i]) {
+			if rate, ok := parseECBRate(rec[i]); ok && domain.ValidCurrencyCode(curs[i]) {
 				out = append(out, domain.FXRate{Currency: curs[i], Date: d, Rate: rate, Source: domain.FXSourceECB})
 			}
 		}

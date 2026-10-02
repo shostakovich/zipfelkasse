@@ -155,7 +155,7 @@ func TestCreateAndSelectPerson(t *testing.T) {
 
 func TestSelectPerson(t *testing.T) {
 	srv, d := newTestServer(t)
-	id, _ := d.Store.CreateParticipant(context.Background(), "Anna")
+	id, _ := d.Store.CreateParticipant(context.Background(), 0, "Anna")
 	for _, tc := range []struct{ ret, want string }{
 		{"/aktivitaet", "/aktivitaet"},
 		{"//evil.example", "/"},
@@ -174,7 +174,7 @@ func TestSelectPerson(t *testing.T) {
 		t.Errorf("unknown person: %d", res.StatusCode)
 	}
 	// An archived person no longer counts as an identity.
-	d.Store.SetParticipantArchived(context.Background(), id, true)
+	d.Store.SetParticipantArchived(context.Background(), 0, id, true)
 	if res, _ := get(t, srv, "/", whoCookie(id)); res.StatusCode != http.StatusSeeOther {
 		t.Errorf("archived person: %d", res.StatusCode)
 	}
@@ -182,7 +182,7 @@ func TestSelectPerson(t *testing.T) {
 
 func TestPagesRender(t *testing.T) {
 	srv, d := newTestServer(t)
-	id, _ := d.Store.CreateParticipant(context.Background(), "Anna")
+	id, _ := d.Store.CreateParticipant(context.Background(), 0, "Anna")
 	for _, p := range []string{"/", "/salden", "/aktivitaet", "/einstellungen"} {
 		res, body := get(t, srv, p, whoCookie(id))
 		if res.StatusCode != 200 || !strings.Contains(body, `aria-current="page"`) {
@@ -231,7 +231,7 @@ func TestRenderTemplateErrorGives500(t *testing.T) {
 
 func TestCrossOriginProtection(t *testing.T) {
 	srv, d := newTestServer(t)
-	id, _ := d.Store.CreateParticipant(context.Background(), "Anna")
+	id, _ := d.Store.CreateParticipant(context.Background(), 0, "Anna")
 	post := func(hdr map[string]string) *http.Response {
 		req := httptest.NewRequest("POST", "/wer", strings.NewReader(url.Values{"id": {strconv.FormatInt(id, 10)}}.Encode()))
 		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
@@ -254,7 +254,7 @@ func TestCrossOriginProtection(t *testing.T) {
 	if res := post(map[string]string{"Sec-Fetch-Site": "same-origin", "Origin": "http://example.com"}); res.StatusCode != http.StatusSeeOther {
 		t.Errorf("same-origin POST: %d", res.StatusCode)
 	}
-	// Without browser headers (curl, MCP clients) → let through.
+	// Without browser headers (curl) → let through.
 	if res := post(nil); res.StatusCode != http.StatusSeeOther {
 		t.Errorf("POST without browser headers: %d", res.StatusCode)
 	}
@@ -283,7 +283,8 @@ func TestSafeReturn(t *testing.T) {
 	}
 }
 
-// Logged paths never contain the MCP secret (/mcp/<secret>).
+// Logged paths never contain the MCP secret (/mcp/<secret>), even if such a
+// request reaches Wrap (main mounts MCP beside it).
 func TestLogsHideMCPSecret(t *testing.T) {
 	st, err := store.Open(":memory:")
 	if err != nil {
@@ -316,10 +317,10 @@ func TestLogsHideMCPSecret(t *testing.T) {
 
 // Request bodies are limited to maxBodyBytes: too large ones get a 413 with
 // an error page (JSON under /api/), whether the length is known up front or
-// not. /mcp/ applies its own limit with JSON-RPC errors.
+// not.
 func TestBodyLimit(t *testing.T) {
 	srv, d := newTestServer(t)
-	anna, _ := d.Store.CreateParticipant(context.Background(), "Anna")
+	anna, _ := d.Store.CreateParticipant(context.Background(), 0, "Anna")
 	big := url.Values{"name": {strings.Repeat("a", maxBodyBytes)}}.Encode()
 	post := func(path string, chunked bool) (*http.Response, string) {
 		req := httptest.NewRequest("POST", path, strings.NewReader(big))
@@ -343,9 +344,6 @@ func TestBodyLimit(t *testing.T) {
 			!strings.Contains(body, "zu groß") {
 			t.Errorf("api chunked=%v: %d %.200s", chunked, res.StatusCode, body)
 		}
-	}
-	if res, _ := post("/mcp/geheim", false); res.StatusCode == http.StatusRequestEntityTooLarge {
-		t.Error("/mcp/ rejected by the web limit instead of its own")
 	}
 	if ps, _ := d.Store.ListParticipants(context.Background(), true); len(ps) != 1 {
 		t.Errorf("participants: %d", len(ps))

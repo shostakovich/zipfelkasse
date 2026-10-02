@@ -39,13 +39,6 @@ func (s *Service) notFound(w http.ResponseWriter, r *http.Request) {
 	s.d.Render.Error(w, r, http.StatusNotFound, "Wiederkehrende Ausgabe nicht gefunden.")
 }
 
-func actorID(r *http.Request) int64 {
-	if me, ok := web.Me(r.Context()); ok {
-		return me.ID
-	}
-	return 0
-}
-
 // --- List --------------------------------------------------------------------
 
 type ruleRow struct {
@@ -90,28 +83,15 @@ func (s *Service) participantNames(r *http.Request) (map[int64]string, error) {
 	return m, nil
 }
 
-// ruleLabel describes a rule for the activity log:
-// `Wiederholung „Miete“ (monatlich)`.
-func ruleLabel(r store.Recurring) string {
-	return fmt.Sprintf("Wiederholung „%s“ (%s)", r.Template.Title, strings.ToLower(r.Frequency.Label()))
-}
-
-func ruleID(r *http.Request) (int64, bool) {
-	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
-	return id, err == nil && id > 0
-}
-
 func (s *Service) handleSetActive(active bool) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		id, ok := ruleID(r)
-		if !ok {
+		id := web.PathID(r)
+		if id == 0 {
 			s.notFound(w, r)
 			return
 		}
-		rule, err := s.d.Store.GetRecurring(r.Context(), id)
-		if err == nil {
-			err = s.d.Store.SetRecurringActive(r.Context(), id, active, s.today())
-		}
+		me, _ := web.Me(r.Context())
+		err := s.d.Store.SetRecurringActive(r.Context(), me.ID, id, active, s.today())
 		switch {
 		case errors.Is(err, store.ErrNotFound):
 			s.notFound(w, r)
@@ -121,11 +101,6 @@ func (s *Service) handleSetActive(active bool) http.HandlerFunc {
 			return
 		}
 		msg := "Pausiert."
-		verb := "pausiert"
-		if active {
-			verb = "fortgesetzt"
-		}
-		s.d.LogSettings(r, ruleLabel(rule)+" "+verb)
 		if active {
 			msg = "Fortgesetzt."
 			n, err := s.MaterializeRule(r.Context(), id, s.today())
@@ -142,41 +117,36 @@ func (s *Service) handleSetActive(active bool) http.HandlerFunc {
 }
 
 func (s *Service) handleRefreshTemplate(w http.ResponseWriter, r *http.Request) {
-	id, ok := ruleID(r)
-	if !ok {
+	id := web.PathID(r)
+	if id == 0 {
 		s.notFound(w, r)
 		return
 	}
-	rule, err := s.d.Store.GetRecurring(r.Context(), id)
-	if errors.Is(err, store.ErrNotFound) {
-		s.notFound(w, r)
-		return
-	}
-	if err != nil {
-		s.d.ServerError(w, r, err)
-		return
-	}
-	err = s.d.Store.UpdateRecurringTemplateFromLatest(r.Context(), id)
+	me, _ := web.Me(r.Context())
+	err := s.d.Store.UpdateRecurringTemplateFromLatest(r.Context(), me.ID, id)
 	switch {
 	case errors.Is(err, store.ErrNotFound):
+		s.notFound(w, r)
+		return
+	case errors.Is(err, store.ErrNoInstance):
 		web.SetFlash(w, "Es gibt keine Ausgabe dieser Wiederholung mehr, aus der die Vorlage übernommen werden könnte.")
 	case err != nil:
 		s.d.ServerError(w, r, err)
 		return
 	default:
-		s.d.LogSettings(r, ruleLabel(rule)+": Vorlage aus der letzten Ausgabe übernommen")
 		web.SetFlash(w, "Vorlage aus der letzten Ausgabe übernommen.")
 	}
 	http.Redirect(w, r, listPath, http.StatusSeeOther)
 }
 
 func (s *Service) handleDelete(w http.ResponseWriter, r *http.Request) {
-	id, ok := ruleID(r)
-	if !ok {
+	id := web.PathID(r)
+	if id == 0 {
 		s.notFound(w, r)
 		return
 	}
-	err := s.d.Store.DeleteRecurring(r.Context(), actorID(r), id)
+	me, _ := web.Me(r.Context())
+	err := s.d.Store.DeleteRecurring(r.Context(), me.ID, id)
 	switch {
 	case errors.Is(err, store.ErrNotFound):
 		s.notFound(w, r)
@@ -314,7 +284,8 @@ func (s *Service) handleCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	freq := domain.Frequency(r.FormValue("haeufigkeit"))
-	id, err := s.d.Store.CreateRecurringFromExpense(r.Context(), actorID(r), e.ID, freq)
+	me, _ := web.Me(r.Context())
+	id, err := s.d.Store.CreateRecurringFromExpense(r.Context(), me.ID, e.ID, freq)
 	var ve domain.ValidationError
 	switch {
 	case errors.As(err, &ve):
@@ -332,7 +303,7 @@ func (s *Service) handleCreate(w http.ResponseWriter, r *http.Request) {
 		s.d.ServerError(w, r, err)
 		return
 	}
-	msg := fmt.Sprintf("„%s“ wiederholt sich jetzt %s.", e.Title, adverb(freq))
+	msg := fmt.Sprintf("„%s“ wiederholt sich jetzt %s.", e.Title, freq.Adverb())
 	n, err := s.MaterializeRule(r.Context(), id, s.today())
 	if err != nil {
 		s.d.Log.Error("recurring expenses", "err", err)
@@ -342,18 +313,6 @@ func (s *Service) handleCreate(w http.ResponseWriter, r *http.Request) {
 	}
 	web.SetFlash(w, msg)
 	http.Redirect(w, r, listPath, http.StatusSeeOther)
-}
-
-func adverb(f domain.Frequency) string {
-	switch f {
-	case domain.FreqWeekly:
-		return "wöchentlich"
-	case domain.FreqMonthly:
-		return "monatlich"
-	case domain.FreqYearly:
-		return "jährlich"
-	}
-	return string(f)
 }
 
 func countText(n int) string {

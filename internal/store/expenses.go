@@ -27,6 +27,10 @@ var ErrRecurringExists = errors.New("expense for this occurrence already exists"
 // this recurrence.
 var ErrRecurringChanged = errors.New("recurring rule was paused, deleted or advanced meanwhile")
 
+// ErrNoInstance: UpdateRecurringTemplateFromLatest found no (non-deleted)
+// expense of the recurrence to take the template from.
+var ErrNoInstance = errors.New("recurring rule has no expense")
+
 // ExpenseInput is the data of an expense as supplied by the user (or by a
 // recurrence). The store computes the shares in cents itself via
 // domain.SplitConverted from SplitMode, the amounts and Parts. For
@@ -75,7 +79,7 @@ type Expense struct {
 func (e Expense) Deleted() bool { return !e.DeletedAt.IsZero() }
 
 // IsForeign reports whether the expense was entered in a foreign currency.
-func (e Expense) IsForeign() bool { return e.OriginalCurrency != "EUR" }
+func (e Expense) IsForeign() bool { return !domain.IsEUR(e.OriginalCurrency) }
 
 // ShareOf returns participantID's share (cents), 0 if not involved.
 func (e Expense) ShareOf(participantID int64) int64 {
@@ -176,13 +180,13 @@ func normalize(in ExpenseInput) (ExpenseInput, error) {
 		}
 		in.SplitMode = domain.SplitEqual
 	}
-	cur := strings.ToUpper(strings.TrimSpace(in.OriginalCurrency))
-	if cur == "" || cur == "EUR" {
+	if domain.IsEUR(in.OriginalCurrency) {
 		in.OriginalCurrency, in.OriginalAmountMinor, in.FXRate, in.FXSource = "EUR", in.AmountCents, 1, ""
 	} else {
+		cur := strings.ToUpper(strings.TrimSpace(in.OriginalCurrency))
 		in.OriginalCurrency = cur
 		switch {
-		case len(cur) != 3:
+		case !domain.ValidCurrencyCode(cur):
 			return in, invalid("Ungültige Währung „%s“.", cur)
 		case in.OriginalAmountMinor <= 0:
 			return in, invalid("Bitte den Betrag in %s angeben.", cur)
@@ -540,8 +544,11 @@ func (s *Store) Balances(ctx context.Context) (map[int64]int64, error) {
 
 // --- Reading -------------------------------------------------------------
 
+// queryer is *sql.DB, *sql.Tx or *sql.Conn: reads inside or outside a
+// transaction.
 type queryer interface {
 	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
+	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
 }
 
 const expenseSelect = `SELECT e.id, e.title, e.date, e.category_id, e.paid_by, e.notes, e.is_reimbursement,
@@ -686,11 +693,10 @@ func diffExpense(ctx context.Context, tx *sql.Tx, old Expense, in ExpenseInput, 
 // rateSummary describes the exchange rate: "1 € = 1,0857 USD (EZB)", or "–"
 // without foreign currency.
 func rateSummary(in ExpenseInput) string {
-	cur := strings.ToUpper(in.OriginalCurrency)
-	if cur == "" || cur == "EUR" {
+	if domain.IsEUR(in.OriginalCurrency) {
 		return "–"
 	}
-	s := "1 € = " + domain.FormatRate(in.FXRate) + " " + cur
+	s := "1 € = " + domain.FormatRate(in.FXRate) + " " + strings.ToUpper(in.OriginalCurrency)
 	switch in.FXSource {
 	case "":
 	case domain.FXSourceECB:

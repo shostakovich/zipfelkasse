@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"strings"
 	"time"
 )
@@ -69,7 +70,7 @@ const otherCategory = "Sonstiges"
 // CreateCategory creates a category directly before the active category
 // "Sonstiges" (case-insensitive), or at the end without one. The positions of
 // the active categories are then renumbered (10, 20, …), as in MoveCategory.
-func (s *Store) CreateCategory(ctx context.Context, name string) (int64, error) {
+func (s *Store) CreateCategory(ctx context.Context, actorID int64, name string) (int64, error) {
 	name, err := cleanName(name, "die Kategorie")
 	if err != nil {
 		return 0, err
@@ -105,7 +106,10 @@ func (s *Store) CreateCategory(ctx context.Context, name string) (int64, error) 
 		for _, c := range active[at:] {
 			ids = append(ids, c.ID)
 		}
-		return renumberCategories(ctx, tx, ids)
+		if err := renumberCategories(ctx, tx, ids); err != nil {
+			return err
+		}
+		return s.logSettings(ctx, tx, actorID, fmt.Sprintf("Kategorie „%s“ hinzugefügt", name))
 	})
 	if err != nil {
 		return 0, err
@@ -142,25 +146,52 @@ func renumberCategories(ctx context.Context, tx *sql.Tx, ids []int64) error {
 	return nil
 }
 
-// RenameCategory renames a category.
-func (s *Store) RenameCategory(ctx context.Context, id int64, name string) error {
+// getCategory reads a category in tx (ErrNotFound if missing).
+func getCategory(ctx context.Context, tx *sql.Tx, id int64) (Category, error) {
+	c, err := scanCategory(tx.QueryRowContext(ctx, "SELECT "+categoryCols+" FROM categories WHERE id = ?", id))
+	if errors.Is(err, sql.ErrNoRows) {
+		return c, ErrNotFound
+	}
+	return c, err
+}
+
+// RenameCategory renames a category. Only an actual change of the name is
+// logged.
+func (s *Store) RenameCategory(ctx context.Context, actorID, id int64, name string) error {
 	name, err := cleanName(name, "die Kategorie")
 	if err != nil {
 		return err
 	}
-	res, err := s.db.ExecContext(ctx, "UPDATE categories SET name = ? WHERE id = ?", name, id)
-	if isUniqueViolation(err) {
-		return invalid("Die Kategorie „%s“ gibt es schon.", name)
-	}
-	return checkAffected(res, err)
+	return s.inTx(ctx, func(tx *sql.Tx) error {
+		old, err := getCategory(ctx, tx, id)
+		if err != nil {
+			return err
+		}
+		_, err = tx.ExecContext(ctx, "UPDATE categories SET name = ? WHERE id = ?", name, id)
+		if isUniqueViolation(err) {
+			return invalid("Die Kategorie „%s“ gibt es schon.", name)
+		}
+		if err != nil || old.Name == name {
+			return err
+		}
+		return s.logSettings(ctx, tx, actorID, fmt.Sprintf("Kategorie „%s“ umbenannt in „%s“", old.Name, name))
+	})
 }
 
 // SetCategoryArchived archives or restores a category.
-func (s *Store) SetCategoryArchived(ctx context.Context, id int64, archived bool) error {
-	var v any
+func (s *Store) SetCategoryArchived(ctx context.Context, actorID, id int64, archived bool) error {
+	verb, at := "reaktiviert", any(nil)
 	if archived {
-		v = s.nowString()
+		verb, at = "archiviert", s.nowString()
 	}
-	res, err := s.db.ExecContext(ctx, "UPDATE categories SET archived_at = ? WHERE id = ?", v, id)
-	return checkAffected(res, err)
+	return s.inTx(ctx, func(tx *sql.Tx) error {
+		c, err := getCategory(ctx, tx, id)
+		if err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, "UPDATE categories SET archived_at = ? WHERE id = ?", at, id); err != nil {
+			return err
+		}
+		return s.logSettings(ctx, tx, actorID, fmt.Sprintf("Kategorie „%s“ %s", c.Name, verb))
+	})
 }

@@ -87,7 +87,7 @@ func newEnv(t *testing.T) *env {
 	svc.now = func() time.Time { return time.Date(2026, 10, 2, 12, 0, 0, 0, loc) }
 	e := &env{t: t, st: st, svc: svc, fx: fx, ctx: context.Background()}
 	for i, name := range []string{"Anna", "Ben"} {
-		id, err := st.CreateParticipant(e.ctx, name)
+		id, err := st.CreateParticipant(e.ctx, 0, name)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -243,12 +243,12 @@ func TestMaterializeIdempotentAfterCrash(t *testing.T) {
 func TestMaterializePaused(t *testing.T) {
 	e := newEnv(t)
 	rid, _ := e.rule(e.expense("Kino", "2026-01-10", 2000), domain.FreqMonthly)
-	if err := e.st.SetRecurringActive(e.ctx, rid, false, day("2026-01-20")); err != nil {
+	if err := e.st.SetRecurringActive(e.ctx, 0, rid, false, day("2026-01-20")); err != nil {
 		t.Fatal(err)
 	}
 	e.materialize("2026-05-01", 0)
 	// Resume on 1 May: the April occurrence and earlier ones are not caught up.
-	if err := e.st.SetRecurringActive(e.ctx, rid, true, day("2026-05-01")); err != nil {
+	if err := e.st.SetRecurringActive(e.ctx, 0, rid, true, day("2026-05-01")); err != nil {
 		t.Fatal(err)
 	}
 	e.materialize("2026-05-01", 0)
@@ -303,6 +303,23 @@ func TestMaterializeForeignCurrency(t *testing.T) {
 	}
 	if got := e.next(rid); got != "2026-05-05" {
 		t.Errorf("next_date = %s", got)
+	}
+}
+
+// A rate entered by hand in the template is not carried over either: each
+// occurrence uses the rate of its date.
+func TestMaterializeForeignManualTemplateRate(t *testing.T) {
+	e := newEnv(t)
+	in := e.expense("Cloud", "2026-01-05", 0)
+	in.OriginalCurrency, in.OriginalAmountMinor, in.FXRate, in.FXSource = "USD", 10000, 1.3, domain.FXSourceManual
+	rid, _ := e.rule(in, domain.FreqMonthly)
+	if got := e.instances(rid)[0]; got.AmountCents != 7692 || got.FXRate != 1.3 {
+		t.Errorf("first occurrence = %+v", got.ExpenseInput)
+	}
+	e.fx.rates["USD"] = 1.25
+	e.materialize("2026-02-05", 1)
+	if got := e.instances(rid)[1]; got.AmountCents != 8000 || got.FXRate != 1.25 || got.FXSource != domain.FXSourceECB {
+		t.Errorf("with the day's rate = %+v", got.ExpenseInput)
 	}
 }
 
@@ -465,16 +482,16 @@ func TestMaterializeRuleChangedMeanwhile(t *testing.T) {
 		next   string // next_date afterwards; "" = rule deleted
 	}{
 		{"paused", func(e *env, rid int64) error {
-			return e.st.SetRecurringActive(e.ctx, rid, false, day("2026-05-10"))
+			return e.st.SetRecurringActive(e.ctx, 0, rid, false, day("2026-05-10"))
 		}, "2026-01-05 2026-02-05", "2026-03-05"},
 		{"deleted", func(e *env, rid int64) error {
 			return e.st.DeleteRecurring(e.ctx, e.anna.ID, rid)
 		}, "", ""},
 		{"paused and resumed", func(e *env, rid int64) error {
-			if err := e.st.SetRecurringActive(e.ctx, rid, false, day("2026-05-10")); err != nil {
+			if err := e.st.SetRecurringActive(e.ctx, 0, rid, false, day("2026-05-10")); err != nil {
 				return err
 			}
-			return e.st.SetRecurringActive(e.ctx, rid, true, day("2026-05-10"))
+			return e.st.SetRecurringActive(e.ctx, 0, rid, true, day("2026-05-10"))
 		}, "2026-01-05 2026-02-05 2026-03-05", "2026-06-05"},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
@@ -540,7 +557,7 @@ func TestFlashCountsOnlyTheRule(t *testing.T) {
 		t.Errorf("other rule caught up by the request: %s", got)
 	}
 
-	if err := e.st.SetRecurringActive(e.ctx, other, false, day("2026-08-03")); err != nil {
+	if err := e.st.SetRecurringActive(e.ctx, 0, other, false, day("2026-08-03")); err != nil {
 		t.Fatal(err)
 	}
 	weekly, _ := e.rule(e.expense("Putzen", "2026-09-25", 4000), domain.FreqWeekly) // 2 Oct is due

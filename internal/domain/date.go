@@ -89,6 +89,20 @@ func (f Frequency) Label() string {
 	return string(f)
 }
 
+// Adverb returns the German adverb for running text ("wiederholt sich jetzt
+// monatlich").
+func (f Frequency) Adverb() string {
+	switch f {
+	case FreqWeekly:
+		return "wöchentlich"
+	case FreqMonthly:
+		return "monatlich"
+	case FreqYearly:
+		return "jährlich"
+	}
+	return string(f)
+}
+
 // Occurrence returns the n-th occurrence (n=0 is anchor) of a recurrence.
 // Occurrences are always computed from the anchor date: an anchor on January 31
 // yields February 28/29, then March 31 again. Invalid frequency → anchor.

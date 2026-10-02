@@ -2,7 +2,6 @@ package web
 
 import (
 	"errors"
-	"fmt"
 	"io/fs"
 	"net/http"
 	"strconv"
@@ -112,7 +111,7 @@ func (h handlers) whoSelect(w http.ResponseWriter, r *http.Request) {
 func (h handlers) whoCreate(w http.ResponseWriter, r *http.Request) {
 	ret := safeReturn(r.FormValue("zurueck"))
 	name := r.FormValue("name")
-	id, err := h.d.Store.CreateParticipant(r.Context(), name)
+	id, err := h.d.Store.JoinAsParticipant(r.Context(), name)
 	var ve domain.ValidationError
 	if errors.As(err, &ve) {
 		h.renderWho(w, r, http.StatusUnprocessableEntity, whoData{Return: ret, Name: name}, ve.Msg)
@@ -121,12 +120,6 @@ func (h handlers) whoCreate(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		h.d.ServerError(w, r, err)
 		return
-	}
-	// The actor is the new person themselves (no cookie yet, hence no Me).
-	p, _ := h.d.Store.GetParticipant(r.Context(), id)
-	if err := h.d.Store.AddActivity(r.Context(), id, actionSettingsUpdated, 0,
-		store.ActivityDetails{Text: fmt.Sprintf("Person „%s“ hinzugefügt", p.Name)}); err != nil {
-		h.d.Log.Error("activity", "err", err)
 	}
 	SetIdentity(w, r, id)
 	SetFlash(w, "Willkommen!")
@@ -146,8 +139,8 @@ func validationMsg(err error) (string, bool) {
 	return "", false
 }
 
-// pathID reads the path parameter {id}; invalid → 0.
-func pathID(r *http.Request) int64 {
+// PathID reads the path parameter {id}; invalid → 0.
+func PathID(r *http.Request) int64 {
 	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
 	if err != nil || id <= 0 {
 		return 0

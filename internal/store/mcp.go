@@ -32,7 +32,9 @@ var MCPTables = []string{
 
 // mcpRowFilter restricts individual tables when copying them into the sandbox.
 var mcpRowFilter = map[string]string{
-	"settings": `key NOT LIKE 'ynab%'`, // never show YNAB's own keys (ynab.…)
+	// YNAB keeps its state in ynab_config; should ynab… keys ever reappear in
+	// settings, they stay hidden all the same.
+	"settings": `key NOT LIKE 'ynab%'`,
 }
 
 // Limits of the SQL sandbox.

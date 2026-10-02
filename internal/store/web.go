@@ -1,29 +1,44 @@
 package store
 
 import (
+	"cmp"
 	"context"
 	"database/sql"
+	"errors"
+	"fmt"
 	"strings"
 )
 
 // Queries needed only by the web UI (package web).
 
 // SetGroupName changes the group name. Empty or overly long names yield a
-// domain.ValidationError.
-func (s *Store) SetGroupName(ctx context.Context, name string) error {
+// domain.ValidationError. Only an actual change of the name is logged.
+func (s *Store) SetGroupName(ctx context.Context, actorID int64, name string) error {
 	name, err := cleanName(name, "die Gruppe")
 	if err != nil {
 		return err
 	}
-	return s.SetSetting(ctx, SettingGroupName, name)
+	return s.inTx(ctx, func(tx *sql.Tx) error {
+		var old string
+		err := tx.QueryRowContext(ctx, "SELECT value FROM settings WHERE key = ?", SettingGroupName).Scan(&old)
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return err
+		}
+		old = cmp.Or(old, defaultGroupName)
+		if _, err := tx.ExecContext(ctx, setSettingSQL, SettingGroupName, name); err != nil || old == name {
+			return err
+		}
+		return s.logSettings(ctx, tx, actorID, fmt.Sprintf("Gruppe umbenannt: „%s“ → „%s“", old, name))
+	})
 }
 
 // MoveCategory moves an active category one position up (up) or down in
 // the display order, among the active categories. Afterwards the positions
 // of the active categories are renumbered (10, 20, …); CreateCategory still
 // sorts new categories in before "Sonstiges", wherever it is. Nothing happens
-// at the edges. Unknown or archived categories yield ErrNotFound.
-func (s *Store) MoveCategory(ctx context.Context, id int64, up bool) error {
+// (and nothing is logged) at the edges. Unknown or archived categories yield
+// ErrNotFound.
+func (s *Store) MoveCategory(ctx context.Context, actorID, id int64, up bool) error {
 	return s.inTx(ctx, func(tx *sql.Tx) error {
 		active, err := activeCategories(ctx, tx)
 		if err != nil {
@@ -40,15 +55,18 @@ func (s *Store) MoveCategory(ctx context.Context, id int64, up bool) error {
 		if idx < 0 {
 			return ErrNotFound
 		}
-		other := idx + 1
+		other, dir := idx+1, "unten"
 		if up {
-			other = idx - 1
+			other, dir = idx-1, "oben"
 		}
 		if other < 0 || other >= len(ids) {
 			return nil
 		}
 		ids[idx], ids[other] = ids[other], ids[idx]
-		return renumberCategories(ctx, tx, ids)
+		if err := renumberCategories(ctx, tx, ids); err != nil {
+			return err
+		}
+		return s.logSettings(ctx, tx, actorID, fmt.Sprintf("Kategorie „%s“ nach %s verschoben", active[idx].Name, dir))
 	})
 }
 
