@@ -265,19 +265,15 @@ func (s *Service) saveToken(w http.ResponseWriter, r *http.Request) {
 		if err != nil && !errors.Is(err, store.ErrNotFound) {
 			return err
 		}
+		// also resets locks and old errors of the old token
 		if err := s.d.Store.SetYNABToken(ctx, me.ID, token); err != nil {
 			return err
 		}
 		resetTarget = old.PlanID != "" && !slices.ContainsFunc(plans, func(p apiPlan) bool { return p.ID == old.PlanID })
 		if resetTarget {
-			if err := s.d.Store.SetYNABTarget(ctx, me.ID, "", "", old.StartDate); err != nil {
-				return err
-			}
+			return s.d.Store.SetYNABTarget(ctx, me.ID, "", "", old.StartDate)
 		}
-		// new token: reset locks and old errors
-		st := s.loadStatus(ctx, me.ID)
-		st.TokenInvalid, st.RetryAt, st.Backoff, st.Error = false, time.Time{}, 0, ""
-		return s.saveStatus(ctx, me.ID, st)
+		return nil
 	})
 	if err != nil {
 		s.d.ServerError(w, r, err)

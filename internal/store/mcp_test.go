@@ -13,7 +13,8 @@ import (
 )
 
 // newFileFixture is newFixture with a real file (the sandbox attaches the
-// file read-only, :memory: does not work for that) and a YNAB token.
+// file read-only, :memory: does not work for that) and a YNAB token and
+// status.
 func newFileFixture(t *testing.T) fixture {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "zipfelkasse.db")
@@ -27,6 +28,9 @@ func newFileFixture(t *testing.T) fixture {
 	f.food = cats[0].ID
 	ctx := context.Background()
 	if _, err := s.db.ExecContext(ctx, `INSERT INTO ynab_config (participant_id, token, updated_at) VALUES (?, 'SECRET-TOKEN', '2026-01-01T00:00:00Z')`, f.anna); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SetYNABStatus(ctx, f.anna, YNABStatus{Error: "SECRET-STATUS", LastRun: time.Now()}); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.SetSetting(ctx, "ynab.token_backup", "SECRET-TOKEN"); err != nil {

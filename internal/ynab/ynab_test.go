@@ -289,11 +289,11 @@ func TestSyncUncategorizedKeepsManualCategory(t *testing.T) {
 
 func TestSyncFilters(t *testing.T) {
 	e := newEnv(t)
-	clock := time.Date(2026, 9, 20, 10, 0, 0, 0, time.UTC)
+	// All expenses existed before the setup (otherwise created_at would count).
+	clock := time.Date(2026, 9, 21, 10, 0, 0, 0, time.UTC)
 	e.st.SetClock(func() time.Time { return clock })
 	e.connect("2026-09-10")
-	// All expenses existed before the setup (otherwise created_at would count).
-	e.st.SetSetting(e.ctx, "ynab.connected."+strconv.FormatInt(e.anna, 10), "2026-09-21T10:00:00Z")
+	clock = clock.AddDate(0, 0, -1)
 	early := e.create(e.input("Vor dem Start", 1000, "2026-09-01", e.anna, e.anna, e.ben))
 	ok := e.create(e.input("Passt", 2000, "2026-09-15", e.ben, e.anna, e.ben))
 	e.create(e.input("Ohne Anna", 3000, "2026-09-15", e.anna, e.ben, e.cleo)) // Anna pays but is not involved

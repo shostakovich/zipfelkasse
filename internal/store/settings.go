@@ -7,7 +7,7 @@ import (
 )
 
 // Known keys in the settings table. Feature packages may use their own
-// prefixed keys (e.g. "ynab.").
+// prefixed keys (e.g. "fx.").
 const (
 	SettingGroupName       = "group_name"
 	SettingDefaultCurrency = "default_currency"

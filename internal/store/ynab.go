@@ -4,12 +4,11 @@ import (
 	"context"
 	"database/sql"
 	"errors"
-	"strconv"
 	"time"
 )
 
-// Queries for the YNAB sync (package ynab). Tables: ynab_config (per person),
-// ynab_category_map (app category → YNAB category per person) and
+// Queries for the YNAB sync (package ynab). Tables: ynab_config (connection
+// and sync status per person), ynab_category_map (app category → YNAB category per person) and
 // ynab_sync (sync state per expense and person).
 
 // YNABConfig is a person's YNAB connection. Token is secret: never print
@@ -22,17 +21,10 @@ type YNABConfig struct {
 	StartDate     time.Time // expenses from this date on; zero value = not set
 	Enabled       bool
 	UpdatedAt     time.Time
-	// ConnectedAt: since when plan and account have been chosen (settings key
-	// "ynab.connected.<id>"). Expenses entered after that go to YNAB even if
-	// their date is before the start date. Zero value = unknown (legacy data,
-	// see EnsureYNABConnectedAt).
+	// ConnectedAt: since when plan and account have been chosen. Expenses
+	// entered after that go to YNAB even if their date is before the start
+	// date. Zero value = unknown (legacy data, see EnsureYNABConnectedAt).
 	ConnectedAt time.Time
-}
-
-// ynabConnectedKey is the settings key for YNABConfig.ConnectedAt (like all
-// ynab.… keys, invisible to MCP).
-func ynabConnectedKey(participantID int64) string {
-	return "ynab.connected." + strconv.FormatInt(participantID, 10)
 }
 
 // Ready reports whether everything needed for a sync is set.
@@ -40,8 +32,7 @@ func (c YNABConfig) Ready() bool {
 	return c.Enabled && c.Token != "" && c.PlanID != "" && c.AccountID != "" && !c.StartDate.IsZero()
 }
 
-const ynabConfigCols = "participant_id, token, budget_id, account_id, start_date, enabled, updated_at, " +
-	"(SELECT value FROM settings WHERE key = 'ynab.connected.' || participant_id)"
+const ynabConfigCols = "participant_id, token, budget_id, account_id, start_date, enabled, updated_at, connected_at"
 
 func scanYNABConfig(row interface{ Scan(...any) error }) (YNABConfig, error) {
 	var c YNABConfig
@@ -96,11 +87,15 @@ func (s *Store) ListYNABConfigs(ctx context.Context) ([]YNABConfig, error) {
 // SetYNABToken sets (or replaces) a person's token and enables the
 // connection. token "" disconnects (plan, account, mapping and sync state are
 // kept so that reconnecting to the same account does not create duplicates).
+// In the same write it resets what the status says about the old token
+// (TokenInvalid, Error, RetryAt, Backoff); LastRun, LastSync and Summary
+// stay.
 func (s *Store) SetYNABToken(ctx context.Context, participantID int64, token string) error {
 	_, err := s.db.ExecContext(ctx, `INSERT INTO ynab_config (participant_id, token, enabled, updated_at)
 		VALUES (?, ?, ?, ?)
 		ON CONFLICT (participant_id) DO UPDATE SET
-			token = excluded.token, enabled = excluded.enabled, updated_at = excluded.updated_at`,
+			token = excluded.token, enabled = excluded.enabled, updated_at = excluded.updated_at,
+			token_invalid = 0, error = '', retry_at = NULL, backoff_seconds = 0`,
 		participantID, token, token != "", s.nowString())
 	return err
 }
@@ -126,35 +121,96 @@ func (s *Store) SetYNABTarget(ctx context.Context, participantID int64, planID, 
 		if err != nil {
 			return err
 		}
+		var connected any // nil: keep connected_at
 		if oldPlan != planID || oldAccount != accountID {
 			if _, err := tx.ExecContext(ctx, `UPDATE ynab_sync SET ynab_txn_id = '', synced_hash = ?, synced_at = NULL, last_error = ''
 				WHERE participant_id = ?`, YNABHashRetarget, participantID); err != nil {
 				return err
 			}
-			if _, err := tx.ExecContext(ctx, `INSERT INTO settings (key, value) VALUES (?, ?)
-				ON CONFLICT (key) DO UPDATE SET value = excluded.value`, ynabConnectedKey(participantID), s.nowString()); err != nil {
-				return err
-			}
+			connected = s.nowString()
 		}
-		_, err = tx.ExecContext(ctx, `UPDATE ynab_config SET budget_id = ?, account_id = ?, start_date = ?, updated_at = ?
-			WHERE participant_id = ?`, planID, accountID, startVal, s.nowString(), participantID)
+		_, err = tx.ExecContext(ctx, `UPDATE ynab_config SET budget_id = ?, account_id = ?, start_date = ?, updated_at = ?,
+			connected_at = coalesce(?, connected_at)
+			WHERE participant_id = ?`, planID, accountID, startVal, s.nowString(), connected, participantID)
 		return err
 	})
 }
 
 // EnsureYNABConnectedAt returns the person's ConnectedAt and sets it to now
 // if it is still missing (connections from before the value was introduced).
+// Without a connection it returns ErrNotFound.
 func (s *Store) EnsureYNABConnectedAt(ctx context.Context, participantID int64) (time.Time, error) {
-	key := ynabConnectedKey(participantID)
-	if _, err := s.db.ExecContext(ctx, "INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT (key) DO NOTHING",
-		key, s.nowString()); err != nil {
-		return time.Time{}, err
+	var v sql.NullString
+	err := s.db.QueryRowContext(ctx, `UPDATE ynab_config SET connected_at = coalesce(connected_at, ?)
+		WHERE participant_id = ? RETURNING connected_at`, s.nowString(), participantID).Scan(&v)
+	if errors.Is(err, sql.ErrNoRows) {
+		return time.Time{}, ErrNotFound
 	}
-	v, err := s.GetSetting(ctx, key)
 	if err != nil {
 		return time.Time{}, err
 	}
-	return parseTime(sql.NullString{String: v, Valid: true}), nil
+	return parseTime(v), nil
+}
+
+// YNABStatus is the sync status of a person's connection. Its meaning (and
+// the language of Summary and Error) is defined by package ynab, see
+// ynab.Status.
+type YNABStatus struct {
+	LastRun      time.Time     // last attempt
+	LastSync     time.Time     // last complete sync
+	Summary      string        // result of the last sync
+	Error        string        // error of the last attempt (without token)
+	TokenInvalid bool          // YNAB rejected the token
+	RetryAt      time.Time     // no requests before this
+	Backoff      time.Duration // last delay after 429 (whole seconds)
+}
+
+const ynabStatusCols = "last_run, last_sync, summary, error, token_invalid, retry_at, backoff_seconds"
+
+// GetYNABStatus returns a person's sync status, or ErrNotFound without a
+// connection.
+func (s *Store) GetYNABStatus(ctx context.Context, participantID int64) (YNABStatus, error) {
+	var st YNABStatus
+	var run, synced, retry sql.NullString
+	var backoff int64
+	err := s.db.QueryRowContext(ctx, "SELECT "+ynabStatusCols+" FROM ynab_config WHERE participant_id = ?", participantID).
+		Scan(&run, &synced, &st.Summary, &st.Error, &st.TokenInvalid, &retry, &backoff)
+	if errors.Is(err, sql.ErrNoRows) {
+		return YNABStatus{}, ErrNotFound
+	}
+	if err != nil {
+		return YNABStatus{}, err
+	}
+	st.LastRun, st.LastSync, st.RetryAt = parseTime(run), parseTime(synced), parseTime(retry)
+	st.Backoff = time.Duration(backoff) * time.Second
+	return st, nil
+}
+
+// SetYNABStatus overwrites a person's sync status. The connection must
+// exist (otherwise ErrNotFound).
+func (s *Store) SetYNABStatus(ctx context.Context, participantID int64, st YNABStatus) error {
+	res, err := s.db.ExecContext(ctx, `UPDATE ynab_config SET last_run = ?, last_sync = ?, summary = ?, error = ?,
+		token_invalid = ?, retry_at = ?, backoff_seconds = ? WHERE participant_id = ?`,
+		statusTime(st.LastRun), statusTime(st.LastSync), st.Summary, st.Error,
+		st.TokenInvalid, statusTime(st.RetryAt), int64(st.Backoff/time.Second), participantID)
+	if err != nil {
+		return err
+	}
+	if n, err := res.RowsAffected(); err != nil {
+		return err
+	} else if n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// statusTime formats t for the status columns: NULL for the zero value,
+// otherwise with fractional seconds so that RetryAt survives exactly.
+func statusTime(t time.Time) any {
+	if t.IsZero() {
+		return nil
+	}
+	return t.UTC().Format(time.RFC3339Nano)
 }
 
 // YNABCategoryMap returns the mapping app category → YNAB category ID.

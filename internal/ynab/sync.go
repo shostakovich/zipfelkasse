@@ -5,12 +5,10 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
 	"slices"
-	"strconv"
 	"strings"
 	"time"
 
@@ -75,36 +73,16 @@ func (e backoffError) Error() string {
 	return "YNAB paused until " + e.until.Format("15:04") + " (rate limit or outage)"
 }
 
-// Status is the sync state of a person (settings key "ynab.status.<id>").
-// Summary and Error are shown on the YNAB settings page (German).
-type Status struct {
-	LastRun      time.Time     `json:"last_run,omitzero"`  // last attempt
-	LastSync     time.Time     `json:"last_sync,omitzero"` // last complete sync
-	Summary      string        `json:"summary,omitempty"`  // result of the last sync
-	Error        string        `json:"error,omitempty"`    // error of the last attempt (without token)
-	TokenInvalid bool          `json:"token_invalid,omitempty"`
-	RetryAt      time.Time     `json:"retry_at,omitzero"` // no requests before this
-	Backoff      time.Duration `json:"backoff,omitempty"` // last delay after 429
-}
+// Status is the sync state of a person, stored with the connection in
+// ynab_config. Summary and Error are shown on the YNAB settings page
+// (German). A new token resets TokenInvalid, Error, RetryAt and Backoff
+// (store.SetYNABToken).
+type Status = store.YNABStatus
 
-func statusKey(participantID int64) string {
-	return "ynab.status." + strconv.FormatInt(participantID, 10)
-}
-
+// loadStatus returns the person's status (zero value without a connection).
 func (s *Service) loadStatus(ctx context.Context, participantID int64) Status {
-	var st Status
-	if v, err := s.d.Store.GetSetting(ctx, statusKey(participantID)); err == nil {
-		json.Unmarshal([]byte(v), &st)
-	}
+	st, _ := s.d.Store.GetYNABStatus(ctx, participantID)
 	return st
-}
-
-func (s *Service) saveStatus(ctx context.Context, participantID int64, st Status) error {
-	b, err := json.Marshal(st)
-	if err != nil {
-		return err
-	}
-	return s.d.Store.SetSetting(ctx, statusKey(participantID), string(b))
 }
 
 // syncResult counts what a run did in YNAB.
@@ -261,7 +239,7 @@ func (s *Service) syncOne(ctx context.Context, cfg store.YNABConfig, full bool) 
 		st.Error, st.Backoff, st.RetryAt = "", 0, time.Time{}
 		st.LastSync, st.Summary = now, res.String()
 	}
-	if serr := s.saveStatus(ctx, pid, st); serr != nil && err == nil {
+	if serr := s.d.Store.SetYNABStatus(ctx, pid, st); serr != nil && err == nil {
 		err = serr
 	}
 	return res, st, err
