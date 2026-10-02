@@ -230,6 +230,34 @@ func ParseRate(s string) (float64, error) {
 // formatFixed formats v with the given number of decimals, a comma as
 // decimal separator and optionally dots as thousands separators.
 func formatFixed(v int64, decimals int, group bool) string {
+	return formatSep(v, decimals, ',', group)
+}
+
+// FormatDecimal formats v (in units of 10^-decimals) without thousands
+// separators and with sep as decimal separator: (123456, 2, ',') → "1234,56",
+// (-5, 2, '.') → "-0.05", (7, 0, '.') → "7".
+func FormatDecimal(v int64, decimals int, sep byte) string {
+	return formatSep(v, decimals, sep, false)
+}
+
+// FormatMinorInput formats an amount in the currency's smallest unit for an
+// input field: (123456, "USD") → "1234,56", (500, "JPY") → "500".
+func FormatMinorInput(minor int64, currency string) string {
+	return FormatDecimal(minor, CurrencyDecimals(currency), ',')
+}
+
+// FormatRate formats an exchange rate with a comma as decimal separator and
+// without superfluous zeros: 1.0876 → "1,0876". Rates <= 0 yield "".
+func FormatRate(rate float64) string {
+	if !(rate > 0) {
+		return ""
+	}
+	return strings.Replace(strconv.FormatFloat(rate, 'f', -1, 64), ".", ",", 1)
+}
+
+// formatSep formats v with the given number of decimals and sep as decimal
+// separator; with group, thousands are separated by dots.
+func formatSep(v int64, decimals int, sep byte, group bool) string {
 	neg := v < 0
 	u := uint64(v)
 	if neg {
@@ -256,7 +284,7 @@ func formatFixed(v int64, decimals int, group bool) string {
 	}
 	out := intPart
 	if decimals > 0 {
-		out += "," + frac
+		out += string(sep) + frac
 	}
 	if neg {
 		out = "-" + out

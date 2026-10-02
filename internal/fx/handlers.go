@@ -4,7 +4,6 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"strconv"
 	"strings"
 	"time"
 
@@ -103,10 +102,6 @@ type pageData struct {
 	Form       manualForm
 }
 
-func formatRate(f float64) string {
-	return strings.Replace(strconv.FormatFloat(f, 'f', -1, 64), ".", ",", 1)
-}
-
 func sourceLabel(src string) string {
 	switch src {
 	case domain.FXSourceECB:
@@ -124,7 +119,7 @@ func sourceLabel(src string) string {
 func rows(rates []domain.FXRate) []rateRow {
 	out := make([]rateRow, len(rates))
 	for i, r := range rates {
-		out[i] = rateRow{Currency: r.Currency, Date: r.Date, Rate: formatRate(r.Rate), Source: sourceLabel(r.Source)}
+		out[i] = rateRow{Currency: r.Currency, Date: r.Date, Rate: domain.FormatRate(r.Rate), Source: sourceLabel(r.Source)}
 	}
 	return out
 }
@@ -151,7 +146,7 @@ func (s *Service) renderPage(w http.ResponseWriter, r *http.Request, status int,
 		var used []store.UsedFXRate
 		if used, err = st.RecentUsedFXRates(ctx, 10); err == nil {
 			for _, u := range used {
-				data.Used = append(data.Used, rateRow{Currency: u.Currency, Date: u.Date, Rate: formatRate(u.Rate),
+				data.Used = append(data.Used, rateRow{Currency: u.Currency, Date: u.Date, Rate: domain.FormatRate(u.Rate),
 					Source: sourceLabel(u.Source), Title: u.Title, ID: u.ExpenseID})
 			}
 		}
@@ -192,7 +187,7 @@ func (s *Service) handleSaveManual(w http.ResponseWriter, r *http.Request) {
 			return err
 		}
 		logText = fmt.Sprintf("Manueller Kurs für %s ab %s gespeichert: 1 € = %s %s",
-			form.Currency, domain.FormatDate(date), formatRate(rate), form.Currency)
+			form.Currency, domain.FormatDate(date), domain.FormatRate(rate), form.Currency)
 		return s.d.Store.SetManualFXRate(r.Context(), form.Currency, date, rate)
 	}()
 	var ve domain.ValidationError

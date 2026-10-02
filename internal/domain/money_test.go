@@ -223,3 +223,34 @@ func TestParseRate(t *testing.T) {
 		}
 	}
 }
+
+func TestFormatDecimal(t *testing.T) {
+	tests := []struct {
+		v        int64
+		decimals int
+		sep      byte
+		want     string
+	}{
+		{0, 2, ',', "0,00"}, {5, 2, ',', "0,05"}, {123456, 2, ',', "1234,56"}, {-42, 2, ',', "-0,42"},
+		{1500, 0, ',', "1500"}, {1234, 3, ',', "1,234"},
+		{-5, 2, '.', "-0.05"}, {-300000, 2, '.', "-3000.00"}, {-7, 0, '.', "-7"}, {12345, 3, '.', "12.345"},
+	}
+	for _, tt := range tests {
+		if got := FormatDecimal(tt.v, tt.decimals, tt.sep); got != tt.want {
+			t.Errorf("FormatDecimal(%d, %d, %q) = %q, want %q", tt.v, tt.decimals, tt.sep, got, tt.want)
+		}
+	}
+	for in, want := range map[string]string{"USD": "1234,56", "JPY": "123456", "KWD": "123,456", "EUR": "1234,56"} {
+		if got := FormatMinorInput(123456, in); got != want {
+			t.Errorf("FormatMinorInput(123456, %s) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+func TestFormatRate(t *testing.T) {
+	for in, want := range map[float64]string{1.0876: "1,0876", 17000: "17000", 0.856: "0,856", 0: "", -1: ""} {
+		if got := FormatRate(in); got != want {
+			t.Errorf("FormatRate(%v) = %q, want %q", in, got, want)
+		}
+	}
+}

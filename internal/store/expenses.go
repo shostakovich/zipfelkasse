@@ -596,7 +596,7 @@ func rateSummary(in ExpenseInput) string {
 	if cur == "" || cur == "EUR" {
 		return "–"
 	}
-	s := "1 € = " + strings.Replace(strconv.FormatFloat(in.FXRate, 'f', -1, 64), ".", ",", 1) + " " + cur
+	s := "1 € = " + domain.FormatRate(in.FXRate) + " " + cur
 	switch in.FXSource {
 	case "":
 	case domain.FXSourceECB:

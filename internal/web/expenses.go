@@ -233,8 +233,8 @@ func formFromExpense(e store.Expense, people []store.Participant) expenseForm {
 		f.CurrencyOther = cur
 	}
 	if e.IsForeign() {
-		f.Amount = minorInput(e.OriginalAmountMinor, cur)
-		f.Rate, f.RateSource = rateInput(e.FXRate), e.FXSource
+		f.Amount = domain.FormatMinorInput(e.OriginalAmountMinor, cur)
+		f.Rate, f.RateSource = domain.FormatRate(e.FXRate), e.FXSource
 	} else {
 		f.Amount = domain.FormatCentsInput(e.AmountCents)
 	}
@@ -257,7 +257,7 @@ func formFromExpense(e store.Expense, people []store.Participant) expenseForm {
 			case domain.SplitPercent:
 				row.Value = strings.TrimSuffix(domain.FormatBasisPoints(sh.Weight), " %")
 			case domain.SplitAmount: // amount in the original currency
-				row.Value = minorInput(sh.Weight, cur)
+				row.Value = domain.FormatMinorInput(sh.Weight, cur)
 			}
 		}
 		f.Rows = append(f.Rows, row)
@@ -507,7 +507,7 @@ func (h handlers) formRate(r *http.Request, f *expenseForm, cur string, date tim
 		f.Rate, f.RateSource = "", ""
 		return 0, "", err
 	}
-	f.Rate, f.RateSource = rateInput(looked.Rate), looked.Source
+	f.Rate, f.RateSource = domain.FormatRate(looked.Rate), looked.Source
 	return looked.Rate, looked.Source, nil
 }
 

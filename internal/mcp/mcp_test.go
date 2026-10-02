@@ -494,19 +494,9 @@ func TestCategoryNamedNone(t *testing.T) {
 	}
 }
 
-func TestDecimal(t *testing.T) {
-	tests := []struct {
-		v        int64
-		decimals int
-		want     string
-	}{
-		{0, 2, "0.00"}, {5, 2, "0.05"}, {-5, 2, "-0.05"}, {123456, 2, "1234.56"}, {-300000, 2, "-3000.00"},
-		{1234, 0, "1234"}, {-7, 0, "-7"}, {12345, 3, "12.345"},
-	}
-	for _, tt := range tests {
-		if got := decimal(tt.v, tt.decimals); got != tt.want {
-			t.Errorf("decimal(%d, %d) = %q, want %q", tt.v, tt.decimals, got, tt.want)
-		}
+func TestMoney(t *testing.T) {
+	if got := eur(-300000); got != "-3000.00" {
+		t.Errorf("eur = %q", got)
 	}
 	if got := money(2340, "usd"); got != "23.40 USD" {
 		t.Errorf("money USD = %q", got)

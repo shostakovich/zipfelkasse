@@ -1,11 +1,8 @@
 package web
 
 import (
-	"strconv"
 	"strings"
 	"time"
-
-	"github.com/shostakovich/zipfelkasse/internal/domain"
 )
 
 // categoryIcon maps a category name to an icon from static/icons.svg.
@@ -43,39 +40,6 @@ var categoryIcons = []struct {
 	{"phone", []string{"handy", "internet", "telefon", "abo", "streaming"}},
 	{"shield", []string{"versicherung"}},
 	{"receipt", []string{"sonstig", "allgemein"}},
-}
-
-// minorInput formats an amount in the currency's minor unit for an input
-// field: (123456, "USD") → "1234,56", (500, "JPY") → "500".
-func minorInput(minor int64, currency string) string {
-	dec := domain.CurrencyDecimals(currency)
-	if dec == 2 {
-		return domain.FormatCentsInput(minor)
-	}
-	neg := minor < 0
-	if neg {
-		minor = -minor
-	}
-	s := strconv.FormatInt(minor, 10)
-	if dec > 0 {
-		if len(s) <= dec {
-			s = strings.Repeat("0", dec-len(s)+1) + s
-		}
-		s = s[:len(s)-dec] + "," + s[len(s)-dec:]
-	}
-	if neg {
-		s = "-" + s
-	}
-	return s
-}
-
-// rateInput formats an exchange rate for an input field (comma as decimal
-// separator, without superfluous zeros). 0 → "".
-func rateInput(rate float64) string {
-	if rate <= 0 {
-		return ""
-	}
-	return strings.Replace(strconv.FormatFloat(rate, 'f', -1, 64), ".", ",", 1)
 }
 
 // Periods of the expense list as in Spliit (the week starts on Monday).

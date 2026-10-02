@@ -293,20 +293,6 @@ func TestExpensePeriod(t *testing.T) {
 }
 
 func TestFormatHelpers(t *testing.T) {
-	for in, want := range map[[2]string]string{
-		{"123456", "USD"}: "1234,56", {"500", "JPY"}: "500", {"1234", "KWD"}: "1,234", {"5", "EUR"}: "0,05",
-	} {
-		var n int64
-		for _, c := range in[0] {
-			n = n*10 + int64(c-'0')
-		}
-		if got := minorInput(n, in[1]); got != want {
-			t.Errorf("minorInput(%s) = %q, want %q", in, got, want)
-		}
-	}
-	if rateInput(1.0876) != "1,0876" || rateInput(0) != "" {
-		t.Error("rateInput")
-	}
 	for name, want := range map[string]string{"Lebensmittel": "cart", "Miete & Nebenkosten": "key", "Restaurant": "utensils", "Was anderes": "tag", "Sonstiges": "receipt"} {
 		if got := categoryIcon(name); got != want {
 			t.Errorf("categoryIcon(%q) = %q, want %q", name, got, want)

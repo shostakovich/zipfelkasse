@@ -258,19 +258,6 @@ func TestYNABCSVGolden(t *testing.T) {
 	}
 }
 
-func TestDecimal(t *testing.T) {
-	tests := []struct {
-		minor int64
-		dec   int
-		want  string
-	}{{0, 2, "0,00"}, {5, 2, "0,05"}, {123456, 2, "1234,56"}, {-42, 2, "-0,42"}, {1500, 0, "1500"}, {1234, 3, "1,234"}}
-	for _, tt := range tests {
-		if got := decimal(tt.minor, tt.dec, ','); got != tt.want {
-			t.Errorf("decimal(%d, %d) = %q, want %q", tt.minor, tt.dec, got, tt.want)
-		}
-	}
-}
-
 // --- Handlers --------------------------------------------------------------------
 
 type fixture struct {
