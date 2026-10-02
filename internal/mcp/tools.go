@@ -105,7 +105,11 @@ const (
 var detailLevels = []string{detailCompact, detailFull}
 
 // groupings are the valid group_by values of statistics.
-var groupings = []string{store.StatsByCategory, store.StatsByMonth, store.StatsByPerson, store.StatsByCategoryMonth}
+var groupings = []string{store.StatsByCategory, store.StatsByTitle, store.StatsByYear, store.StatsByMonth, store.StatsByWeek,
+	store.StatsByPerson, store.StatsByCategoryMonth}
+
+// comparePreviousYear is the (only) compare value of statistics.
+const comparePreviousYear = "previous_year"
 
 func newServer(d web.Deps) *server {
 	s := &server{d: d, log: newLogger(d), tools: map[string]tool{}, sqlSem: make(chan struct{}, 2), now: time.Now}
@@ -162,18 +166,24 @@ func newServer(d web.Deps) *server {
 		s.searchExpenses)
 
 	add("statistics", "Statistics",
-		"Expense totals grouped by category, month (YYYY-MM), person or category_month, optionally for a period. "+
+		"Expense totals grouped by category, title (merchant), year, month (YYYY-MM), ISO week (YYYY-Www), person or category_month, optionally for a period. "+
 			"Without share_of: total amounts of the expenses. With share_of: only that person's share of each expense, i.e. what they consumed themselves "+
 			`(e.g. "How much did I spend on restaurants in 2026?"). With group_by=person, amount is each person's share (consumption) `+
-			"and paid is what they paid up front. Reimbursements and deleted expenses never count.",
+			"and paid is what they paid up front. year, month and week list periods without expenses with 0. "+
+			"compare=previous_year adds the amount of the same group one year earlier and the change. Reimbursements and deleted expenses never count.",
 		map[string]any{
 			"type": "object",
 			"properties": map[string]any{
-				"group_by": map[string]any{"type": "string", "enum": groupings, "description": "What to group by."},
+				"group_by": map[string]any{"type": "string", "enum": groupings, "description": "What to group by. title groups by expense title (case-insensitive), i.e. by merchant."},
 				"from":     dateProp("First date (inclusive)."),
 				"to":       dateProp("Last date (inclusive)."),
 				"share_of": map[string]any{"type": "string", "description": "Name of a person: only their share counts (that person's perspective). Empty = total amounts."},
 				"category": map[string]any{"type": "string", "description": "Only count expenses of this category (name, case-insensitive). " + categoryHint},
+				"text":     textProp,
+				"compare": map[string]any{"type": "string", "enum": []string{comparePreviousYear},
+					"description": "previous_year: compare each row with the same group one year earlier (month 2026-03 with 2025-03, category in from…to with from…to minus one year). " +
+						"For category, title and person, from is required."},
+				"limit": map[string]any{"type": "integer", "minimum": 1, "maximum": store.SQLMaxRows, "description": fmt.Sprintf("Maximum number of rows, default %d. total always covers all rows.", store.SQLMaxRows)},
 			},
 			"required":             []string{"group_by"},
 			"additionalProperties": false,
@@ -608,28 +618,39 @@ func cmpOr(v, fallback string) string {
 // --- statistics ------------------------------------------------------------------
 
 type statOut struct {
-	Category    string `json:"category,omitempty"`
-	Month       string `json:"month,omitempty"`
-	Person      string `json:"person,omitempty"`
-	Count       int64  `json:"count"`
-	Amount      string `json:"amount"`
-	AmountCents int64  `json:"amount_cents"`
-	Paid        string `json:"paid,omitempty"`
-	PaidCents   *int64 `json:"paid_cents,omitempty"`
+	Category      string   `json:"category,omitempty"`
+	Title         string   `json:"title,omitempty"`
+	Year          string   `json:"year,omitempty"`
+	Month         string   `json:"month,omitempty"`
+	Week          string   `json:"week,omitempty"`
+	Person        string   `json:"person,omitempty"`
+	Count         int64    `json:"count"`
+	Amount        string   `json:"amount"`
+	AmountCents   int64    `json:"amount_cents"`
+	Paid          string   `json:"paid,omitempty"`
+	PaidCents     *int64   `json:"paid_cents,omitempty"`
+	Previous      string   `json:"previous,omitempty"`
+	PreviousCents *int64   `json:"previous_cents,omitempty"`
+	Change        string   `json:"change,omitempty"`
+	ChangeCents   *int64   `json:"change_cents,omitempty"`
+	ChangePercent *float64 `json:"change_percent,omitempty"`
 }
 
 func (s *server) statistics(ctx context.Context, raw json.RawMessage) (toolResult, error) {
 	var args struct {
-		GroupBy  string `json:"group_by"`
-		From     string `json:"from"`
-		To       string `json:"to"`
-		ShareOf  string `json:"share_of"`
-		Category string `json:"category"`
+		GroupBy  string     `json:"group_by"`
+		From     string     `json:"from"`
+		To       string     `json:"to"`
+		ShareOf  string     `json:"share_of"`
+		Category string     `json:"category"`
+		Text     stringList `json:"text"`
+		Compare  string     `json:"compare"`
+		Limit    int        `json:"limit"`
 	}
 	if err := decodeArgs(raw, &args); err != nil {
 		return toolResult{}, err
 	}
-	f := store.StatsFilter{GroupBy: strings.TrimSpace(args.GroupBy)}
+	f := store.StatsFilter{GroupBy: strings.TrimSpace(args.GroupBy), AnyText: args.Text}
 	if !slices.Contains(groupings, f.GroupBy) {
 		return toolResult{}, invalid("group_by must be one of %s.", strings.Join(groupings, ", "))
 	}
@@ -649,34 +670,167 @@ func (s *server) statistics(ctx context.Context, raw json.RawMessage) (toolResul
 		f.ParticipantID = p.ID
 		perspective = "only the share of " + p.Name
 	}
+	limit := args.Limit
+	switch {
+	case limit == 0:
+		limit = store.SQLMaxRows
+	case limit < 1 || limit > store.SQLMaxRows:
+		return toolResult{}, invalid("limit must be between 1 and %d.", store.SQLMaxRows)
+	}
+	today := domain.DateOf(s.now().In(s.location()))
+	compare := strings.TrimSpace(args.Compare)
+	timeKeyed := store.IsTimeGrouping(f.GroupBy) || f.GroupBy == store.StatsByCategoryMonth
+	switch {
+	case compare == "":
+	case compare != comparePreviousYear:
+		return toolResult{}, invalid(`compare must be "%s".`, comparePreviousYear)
+	case !timeKeyed && f.From.IsZero():
+		return toolResult{}, invalid("compare=previous_year with group_by=%s needs from (and optionally to): the period to compare.", f.GroupBy)
+	case !timeKeyed && f.To.IsZero():
+		f.To = today
+	}
+
 	rows, err := s.d.Store.Stats(ctx, f)
 	if err != nil {
 		return toolResult{}, err
 	}
+	if store.IsTimeGrouping(f.GroupBy) {
+		rows = fillGaps(rows, f, today)
+	}
 	var total int64
 	out := []statOut{}
 	for _, r := range rows {
-		o := statOut{Category: r.Category, Month: r.Month, Person: r.Person, Count: r.Count, Amount: eur(r.AmountCents), AmountCents: r.AmountCents}
-		if f.GroupBy == store.StatsByPerson {
-			paid := r.PaidCents
-			o.Paid, o.PaidCents = eur(paid), &paid
-		}
 		total += r.AmountCents
-		out = append(out, o)
+		out = append(out, statToOut(r, f.GroupBy))
+	}
+	data := map[string]any{
+		"group_by":    f.GroupBy,
+		"perspective": perspective,
+		"period":      describeRange(f.From, f.To),
+	}
+	if compare != "" {
+		prev := f
+		if !prev.From.IsZero() {
+			prev.From = prev.From.AddDate(-1, 0, 0)
+		}
+		if !prev.To.IsZero() {
+			prev.To = prev.To.AddDate(-1, 0, 0)
+		}
+		prevRows, err := s.d.Store.Stats(ctx, prev)
+		if err != nil {
+			return toolResult{}, err
+		}
+		out = comparePrevious(out, prevRows, f.GroupBy, timeKeyed)
+		var prevTotal int64
+		for _, o := range out {
+			prevTotal += *o.PreviousCents
+		}
+		data["previous_period"] = describeRange(prev.From, prev.To)
+		if timeKeyed {
+			data["previous_period"] = "each " + strings.TrimPrefix(f.GroupBy, "category_") + " one year earlier"
+		}
+		data["previous_total"], data["previous_total_cents"] = eur(prevTotal), prevTotal
+	}
+	data["rows_total"], data["truncated"] = len(out), len(out) > limit
+	if len(out) > limit {
+		out = out[:limit]
 	}
 	note := "Reimbursements and deleted expenses are not included. count = number of expenses."
 	if f.GroupBy == store.StatsByPerson {
 		note += " amount = the person's share (consumption), paid = what they paid for the group."
 	}
-	return toolResult{data: map[string]any{
-		"group_by":    f.GroupBy,
-		"perspective": perspective,
-		"period":      describeRange(f.From, f.To),
-		"rows":        out,
-		"total":       eur(total),
-		"total_cents": total,
-		"note":        note,
-	}}, nil
+	if compare != "" {
+		note += " previous = same group one year earlier, change = amount − previous, change_percent relative to previous (missing if previous is 0)."
+	}
+	data["rows"], data["total"], data["total_cents"], data["note"] = out, eur(total), total, note
+	return toolResult{data: data}, nil
+}
+
+// fillGaps lists the periods without expenses of a time grouping with 0:
+// from from (or the first row) to to (or the last row), never beyond today.
+func fillGaps(rows []store.StatRow, f store.StatsFilter, today time.Time) []store.StatRow {
+	first, last := f.From, f.To
+	if len(rows) > 0 {
+		if first.IsZero() {
+			first = store.PeriodStart(f.GroupBy, rows[0].Period)
+		}
+		if last.IsZero() {
+			last = store.PeriodStart(f.GroupBy, rows[len(rows)-1].Period)
+		}
+	}
+	if first.IsZero() || last.IsZero() {
+		return rows
+	}
+	if last.After(today) {
+		last = today
+	}
+	return store.FillPeriods(rows, f.GroupBy, first, last)
+}
+
+func statToOut(r store.StatRow, groupBy string) statOut {
+	o := statOut{Category: r.Category, Title: r.Title, Person: r.Person, Count: r.Count, Amount: eur(r.AmountCents), AmountCents: r.AmountCents}
+	switch groupBy {
+	case store.StatsByYear:
+		o.Year = r.Period
+	case store.StatsByWeek:
+		o.Week = r.Period
+	default:
+		o.Month = r.Period
+	}
+	if groupBy == store.StatsByPerson {
+		paid := r.PaidCents
+		o.Paid, o.PaidCents = eur(paid), &paid
+	}
+	return o
+}
+
+// comparePrevious adds previous and change to each row. prev are the rows of
+// the period one year earlier; their periods are shifted by one year to match.
+// Groups that only exist in prev are appended with 0 (not for time-keyed
+// groupings, whose periods would lie outside the requested range).
+func comparePrevious(out []statOut, prev []store.StatRow, groupBy string, timeKeyed bool) []statOut {
+	key := func(o statOut) string {
+		return strings.Join([]string{o.Category, strings.ToLower(o.Title), o.Person, o.Year, o.Month, o.Week}, "\x00")
+	}
+	prevBy := map[string]statOut{}
+	var order []string
+	for _, r := range prev {
+		r.Period = store.ShiftPeriodYear(r.Period, 1)
+		o := statToOut(r, groupBy)
+		prevBy[key(o)] = o
+		order = append(order, key(o))
+	}
+	set := func(o *statOut, p int64) {
+		change := o.AmountCents - p
+		o.Previous, o.PreviousCents = eur(p), &p
+		o.Change, o.ChangeCents = eur(change), &change
+		if p != 0 {
+			pct := math.Round(float64(change)*1000/float64(p)) / 10
+			o.ChangePercent = &pct
+		}
+	}
+	for i := range out {
+		k := key(out[i])
+		set(&out[i], prevBy[k].AmountCents)
+		delete(prevBy, k)
+	}
+	if timeKeyed {
+		return out
+	}
+	for _, k := range order {
+		p, ok := prevBy[k]
+		if !ok {
+			continue
+		}
+		o := statOut{Category: p.Category, Title: p.Title, Person: p.Person, Amount: eur(0)}
+		if groupBy == store.StatsByPerson {
+			var zero int64
+			o.Paid, o.PaidCents = eur(0), &zero
+		}
+		set(&o, p.AmountCents)
+		out = append(out, o)
+	}
+	return out
 }
 
 // --- schema -----------------------------------------------------------------------

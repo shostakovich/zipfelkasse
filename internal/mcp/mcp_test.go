@@ -616,7 +616,8 @@ func TestTools(t *testing.T) {
 	if r := sc["rows"].([]any); len(r) != 3 || sc["period"] != "all time" || r[0].(map[string]any)["month"] == "" || r[0].(map[string]any)["category"] == "" {
 		t.Errorf("statistics category_month: %v", sc)
 	}
-	for _, args := range []map[string]any{nil, {"group_by": "year"}, {"group_by": "month", "person": "Anna"}, {"group_by": "month", "share_of": "Dora"}} {
+	for _, args := range []map[string]any{nil, {"group_by": "decade"}, {"group_by": "month", "person": "Anna"},
+		{"group_by": "category", "compare": "previous_year"}, {"group_by": "month", "compare": "last_week"}, {"group_by": "month", "limit": 0.5}, {"group_by": "month", "share_of": "Dora"}} {
 		if _, text, isErr := e.call("statistics", args); !isErr || strings.Contains(text, "Internal error") {
 			t.Errorf("statistics %v: isError=%v %s", args, isErr, text)
 		}
@@ -704,5 +705,72 @@ func TestSearchExpensesOptions(t *testing.T) {
 	_, text, _ = e.call("search_expenses", map[string]any{"text": "Kino", "detail": "full"})
 	if !strings.Contains(text, `"shares"`) || !strings.Contains(text, `"split":"equal"`) {
 		t.Errorf("full: %s", text)
+	}
+}
+
+func TestStatisticsOptions(t *testing.T) {
+	e := newEnv(t)
+	e.expense("Rewe", 3000, "2025-03-10", "Anna", "Lebensmittel", "Anna", "Ben")
+	e.expense("Pizza", 1000, "2025-05-02", "Anna", "Restaurant", "Anna")
+	e.expense("Rewe", 4000, "2026-01-05", "Anna", "Lebensmittel", "Anna", "Ben")
+	e.expense("REWE", 2000, "2026-03-20", "Ben", "Lebensmittel", "Anna", "Ben")
+	e.expense("Kino", 1500, "2026-03-21", "Ben", "", "Ben")
+	rows := func(args map[string]any) ([]map[string]any, map[string]any) {
+		t.Helper()
+		sc, text, isErr := e.call("statistics", args)
+		if isErr {
+			t.Fatalf("%v: %s", args, text)
+		}
+		var out []map[string]any
+		for _, r := range sc["rows"].([]any) {
+			out = append(out, r.(map[string]any))
+		}
+		return out, sc
+	}
+
+	// Months without expenses appear with 0, from the first to the last row.
+	r, _ := rows(map[string]any{"group_by": "month", "from": "2026-01-01"})
+	if len(r) != 3 || r[0]["month"] != "2026-01" || r[1]["month"] != "2026-02" || r[1]["amount_cents"].(float64) != 0 || r[2]["amount_cents"].(float64) != 3500 {
+		t.Errorf("months: %v", r)
+	}
+	r, _ = rows(map[string]any{"group_by": "year"})
+	if len(r) != 2 || r[0]["year"] != "2025" || r[1]["amount_cents"].(float64) != 7500 {
+		t.Errorf("years: %v", r)
+	}
+	r, _ = rows(map[string]any{"group_by": "week", "from": "2026-03-16", "to": "2026-03-29"})
+	if len(r) != 2 || r[0]["week"] != "2026-W12" || r[0]["count"].(float64) != 2 || r[1]["week"] != "2026-W13" || r[1]["amount_cents"].(float64) != 0 {
+		t.Errorf("weeks: %v", r)
+	}
+	// title groups case-insensitively, text filters.
+	r, _ = rows(map[string]any{"group_by": "title", "from": "2026-01-01"})
+	if len(r) != 2 || !strings.EqualFold(r[0]["title"].(string), "rewe") || r[0]["count"].(float64) != 2 || r[0]["amount_cents"].(float64) != 6000 {
+		t.Errorf("titles: %v", r)
+	}
+	r, _ = rows(map[string]any{"group_by": "category", "text": []string{"kino", "pizza"}})
+	if len(r) != 2 {
+		t.Errorf("text: %v", r)
+	}
+	// limit truncates the rows, but total covers all of them.
+	r, sc := rows(map[string]any{"group_by": "month", "limit": 2})
+	if len(r) != 2 || sc["truncated"] != true || sc["rows_total"].(float64) != 13 || sc["total_cents"].(float64) != 11500 {
+		t.Errorf("limit: %d rows, %v %v %v", len(r), sc["truncated"], sc["rows_total"], sc["total_cents"])
+	}
+
+	// compare=previous_year by month: each month against the same month a year earlier.
+	r, sc = rows(map[string]any{"group_by": "month", "from": "2026-01-01", "to": "2026-03-31", "compare": "previous_year"})
+	if len(r) != 3 || r[2]["month"] != "2026-03" || r[2]["previous_cents"].(float64) != 3000 || r[2]["change_cents"].(float64) != 500 ||
+		r[2]["change_percent"].(float64) != 16.7 || r[0]["previous_cents"].(float64) != 0 || r[0]["change_percent"] != nil ||
+		sc["previous_total_cents"].(float64) != 3000 {
+		t.Errorf("compare months: %v %v", r, sc)
+	}
+	// By category: groups only present a year earlier appear with 0.
+	r, sc = rows(map[string]any{"group_by": "category", "from": "2026-01-01", "to": "2026-12-31", "compare": "previous_year"})
+	got := map[string][2]float64{}
+	for _, x := range r {
+		got[x["category"].(string)] = [2]float64{x["amount_cents"].(float64), x["previous_cents"].(float64)}
+	}
+	if len(r) != 3 || got["Lebensmittel"] != [2]float64{6000, 3000} || got["No category"] != [2]float64{1500, 0} || got["Restaurant"] != [2]float64{0, 1000} ||
+		sc["previous_period"] != "2025-01-01 to 2025-12-31" {
+		t.Errorf("compare categories: %v %v", got, sc["previous_period"])
 	}
 }

@@ -12,7 +12,7 @@ values from the database (names, titles, categories, notes) are returned as ente
 |---|---|
 | `balances` | balance per person and a settlement proposal |
 | `search_expenses` | individual expenses, filtered by date, category, people, text, amount and `reimbursements`, sortable, compact or with shares (`detail`) |
-| `statistics` | totals by `group_by` = `category`, `month`, `person` or `category_month`. Either total amounts or – with `share_of` – only one person's share. Reimbursements never count |
+| `statistics` | totals by `group_by` = `category`, `title`, `year`, `month`, `week`, `person` or `category_month`. Either total amounts or – with `share_of` – only one person's share, optionally compared with the previous year. Reimbursements never count |
 | `schema` | explains tables and columns, lists people and categories, returns the CREATE statements |
 | `sql_query` | any `SELECT`/`WITH` (SQLite) as `query`, at most 500 rows, aborted after 5 s |
 
@@ -24,7 +24,15 @@ Parameters in detail:
   `include`, `only`), `sort` (`date_desc` = default, `date_asc`, `amount_desc`, `amount_asc`), `detail` (`compact` =
   default, `full` adds split, shares, notes and foreign currency), `limit` (1–500, default 50).
 - `statistics`: `group_by` (required), `from`, `to`, `share_of` (only this person's share counts; empty = total
-  amounts), `category`.
+  amounts), `category`, `text` (as in `search_expenses`), `compare` (`previous_year`), `limit` (1–500, default 500;
+  `total` always covers all rows).
+  - `title` groups by expense title, case-insensitively (i.e. by merchant). `week` is the ISO week (`2026-W40`).
+  - `year`, `month` and `week` list periods without expenses with 0: from `from` (or the first expense) to `to` (or
+    the last expense), never beyond today. `category_month` is not filled.
+  - `compare: "previous_year"` adds `previous`, `change` and `change_percent` to each row. Time groupings compare
+    each period with the same period a year earlier. `category`, `title` and `person` compare `from`…`to` (`to`
+    defaults to today) with the same range a year earlier and need `from`; groups that only existed a year earlier
+    appear with 0.
 
 `category: "none"` selects expenses without a category, both in `search_expenses` and in `statistics` (which labels
 them "No category"; that label is accepted as input too). A real category with that name takes precedence. The
@@ -42,8 +50,10 @@ Main output keys:
 - `search_expenses`: `matches`, `shown`, `truncated`, `total`, `total_cents`, `expenses[]` (`id`, `date`, `title`,
   `category`, `paid_by`, `amount`, `amount_cents`, `reimbursement`, `recipient`; with `detail=full` also `original`,
   `fx_rate`, `fx_source`, `notes`, `split`, `shares[]`), with `person` or `involved` also `person_share`.
-- `statistics`: `group_by`, `perspective`, `period`, `rows[]` (`category`, `month`, `person`, `count`, `amount`,
-  `amount_cents`, with `group_by=person` also `paid`, `paid_cents`), `total`, `total_cents`, `note`.
+- `statistics`: `group_by`, `perspective`, `period`, `rows[]` (`category`, `title`, `year`, `month`, `week`,
+  `person`, `count`, `amount`, `amount_cents`, with `group_by=person` also `paid`, `paid_cents`, with `compare` also
+  `previous`, `previous_cents`, `change`, `change_cents`, `change_percent`), `rows_total`, `truncated`, `total`,
+  `total_cents`, with `compare` also `previous_period`, `previous_total`, `previous_total_cents`, `note`.
 - `sql_query`: `columns`, `rows`, `row_count`, `truncated`, and `note` when truncated.
 
 **Protection in `sql_query`:** the query does not run on the real database. It runs on a fresh in-memory copy. The
