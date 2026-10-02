@@ -14,7 +14,17 @@ const (
 	testToken   = "geheimer-token-123"
 	testPlan    = "plan-1"
 	testAccount = "acc-geteilt"
+	// otherToken is valid, but belongs to another YNAB user: plan-1 is
+	// unknown to it (404).
+	otherToken = "token-anderer-nutzer"
 )
+
+var testAccounts = []map[string]any{
+	{"id": testAccount, "name": "Geteilt", "type": "cash", "on_budget": true, "closed": false, "deleted": false},
+	{"id": "acc-giro", "name": "Girokonto", "type": "checking", "on_budget": true, "closed": false, "deleted": false},
+	{"id": "acc-depot", "name": "Depot", "type": "otherAsset", "on_budget": false, "closed": false, "deleted": false},
+	{"id": "acc-alt", "name": "Altes Konto", "type": "checking", "on_budget": true, "closed": true, "deleted": false},
+}
 
 // fakeYNAB is a minimal in-memory YNAB API, as an http.RoundTripper (no
 // ports can be opened in the sandbox).
@@ -28,7 +38,8 @@ type fakeYNAB struct {
 	failNext []int
 	// lostPost: the next POST is executed, but the response gets lost (500).
 	lostPost bool
-	// hold: if set, every request waits until the channel is closed.
+	// hold: if set, every request except the plan list (token check) waits
+	// until the channel is closed.
 	hold chan struct{}
 	mux  *http.ServeMux
 }
@@ -41,6 +52,7 @@ func newFake() *fakeYNAB {
 	m.HandleFunc("POST /v1/plans/{plan}/transactions", f.create)
 	m.HandleFunc("PATCH /v1/plans/{plan}/transactions", f.update)
 	m.HandleFunc("DELETE /v1/plans/{plan}/transactions/{id}", f.delete)
+	m.HandleFunc("GET /v1/plans/{plan}/accounts/{acc}", f.account)
 	m.HandleFunc("GET /v1/plans/{plan}/accounts/{acc}/transactions", f.list)
 	f.mux = m
 	return f
@@ -55,12 +67,13 @@ func (f *fakeYNAB) RoundTrip(req *http.Request) (*http.Response, error) {
 	}
 	hold := f.hold
 	f.mu.Unlock()
-	if hold != nil {
+	if hold != nil && req.URL.Path != "/v1/plans" {
 		<-hold
 	}
 	rec := httptest.NewRecorder()
+	auth := req.Header.Get("Authorization")
 	switch {
-	case req.Header.Get("Authorization") != "Bearer "+testToken:
+	case auth != "Bearer "+testToken && auth != "Bearer "+otherToken:
 		writeErr(rec, 401, "401", "unauthorized", "Unauthorized")
 	case fail == 429:
 		rec.Header().Set("Retry-After", "60")
@@ -69,6 +82,8 @@ func (f *fakeYNAB) RoundTrip(req *http.Request) (*http.Response, error) {
 		writeErr(rec, fail, fmt.Sprint(fail), "error", "Fehler "+fmt.Sprint(fail)+" mit "+testToken)
 	case req.URL.Host != "api.test":
 		writeErr(rec, 404, "404", "not_found", "falscher Host")
+	case auth == "Bearer "+otherToken:
+		otherUser(rec, req)
 	default:
 		f.mux.ServeHTTP(rec, req)
 	}
@@ -95,13 +110,33 @@ func (f *fakeYNAB) plans(w http.ResponseWriter, r *http.Request) {
 	writeData(w, 200, map[string]any{"plans": []map[string]any{{
 		"id": testPlan, "name": "Haushalt",
 		"currency_format": map[string]any{"iso_code": "EUR"},
-		"accounts": []map[string]any{
-			{"id": testAccount, "name": "Geteilt", "type": "cash", "on_budget": true, "closed": false, "deleted": false},
-			{"id": "acc-giro", "name": "Girokonto", "type": "checking", "on_budget": true, "closed": false, "deleted": false},
-			{"id": "acc-depot", "name": "Depot", "type": "otherAsset", "on_budget": false, "closed": false, "deleted": false},
-			{"id": "acc-alt", "name": "Altes Konto", "type": "checking", "on_budget": true, "closed": true, "deleted": false},
-		},
+		"accounts":        testAccounts,
 	}}})
+}
+
+// otherUser answers like YNAB for otherToken: an own plan, everything below
+// /plans/plan-1 does not exist.
+func otherUser(w http.ResponseWriter, r *http.Request) {
+	if r.Method == http.MethodGet && r.URL.Path == "/v1/plans" {
+		writeData(w, 200, map[string]any{"plans": []map[string]any{{
+			"id": "plan-2", "name": "Anderer Haushalt",
+			"accounts": []map[string]any{
+				{"id": "acc-2", "name": "Geteilt", "type": "cash", "on_budget": true, "closed": false, "deleted": false},
+			},
+		}}})
+		return
+	}
+	writeErr(w, 404, "404.2", "resource_not_found", "Resource not found")
+}
+
+func (f *fakeYNAB) account(w http.ResponseWriter, r *http.Request) {
+	for _, a := range testAccounts {
+		if r.PathValue("plan") == testPlan && a["id"] == r.PathValue("acc") {
+			writeData(w, 200, map[string]any{"account": a})
+			return
+		}
+	}
+	writeErr(w, 404, "404.2", "resource_not_found", "Resource not found")
 }
 
 func (f *fakeYNAB) categories(w http.ResponseWriter, r *http.Request) {
@@ -266,6 +301,12 @@ func (f *fakeYNAB) takeRequests() []string {
 	r := f.requests
 	f.requests = nil
 	return r
+}
+
+func (f *fakeYNAB) requestCount() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return len(f.requests)
 }
 
 func (f *fakeYNAB) fail(statuses ...int) {

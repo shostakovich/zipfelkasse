@@ -4,7 +4,6 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"strconv"
 	"strings"
 	"time"
 
@@ -103,10 +102,6 @@ type pageData struct {
 	Form       manualForm
 }
 
-func formatRate(f float64) string {
-	return strings.Replace(strconv.FormatFloat(f, 'f', -1, 64), ".", ",", 1)
-}
-
 func sourceLabel(src string) string {
 	switch src {
 	case domain.FXSourceECB:
@@ -124,7 +119,7 @@ func sourceLabel(src string) string {
 func rows(rates []domain.FXRate) []rateRow {
 	out := make([]rateRow, len(rates))
 	for i, r := range rates {
-		out[i] = rateRow{Currency: r.Currency, Date: r.Date, Rate: formatRate(r.Rate), Source: sourceLabel(r.Source)}
+		out[i] = rateRow{Currency: r.Currency, Date: r.Date, Rate: domain.FormatRate(r.Rate), Source: sourceLabel(r.Source)}
 	}
 	return out
 }
@@ -151,7 +146,7 @@ func (s *Service) renderPage(w http.ResponseWriter, r *http.Request, status int,
 		var used []store.UsedFXRate
 		if used, err = st.RecentUsedFXRates(ctx, 10); err == nil {
 			for _, u := range used {
-				data.Used = append(data.Used, rateRow{Currency: u.Currency, Date: u.Date, Rate: formatRate(u.Rate),
+				data.Used = append(data.Used, rateRow{Currency: u.Currency, Date: u.Date, Rate: domain.FormatRate(u.Rate),
 					Source: sourceLabel(u.Source), Title: u.Title, ID: u.ExpenseID})
 			}
 		}
@@ -160,15 +155,10 @@ func (s *Service) renderPage(w http.ResponseWriter, r *http.Request, status int,
 		data.Currencies, err = st.ListFXCurrencies(ctx)
 	}
 	if err != nil {
-		s.serverError(w, r, err)
+		s.d.ServerError(w, r, err)
 		return
 	}
 	s.pages.Render(w, r, status, "kurse.html", web.Page{Title: "Wechselkurse", Nav: web.NavSettings, Error: errMsg, Data: data})
-}
-
-func (s *Service) serverError(w http.ResponseWriter, r *http.Request, err error) {
-	s.d.Log.Error("request", "method", r.Method, "path", r.URL.Path, "err", err)
-	s.d.Render.Error(w, r, http.StatusInternalServerError, "Da ist etwas schiefgegangen.")
 }
 
 func (s *Service) handlePage(w http.ResponseWriter, r *http.Request) {
@@ -192,7 +182,7 @@ func (s *Service) handleSaveManual(w http.ResponseWriter, r *http.Request) {
 			return err
 		}
 		logText = fmt.Sprintf("Manueller Kurs für %s ab %s gespeichert: 1 € = %s %s",
-			form.Currency, domain.FormatDate(date), formatRate(rate), form.Currency)
+			form.Currency, domain.FormatDate(date), domain.FormatRate(rate), form.Currency)
 		return s.d.Store.SetManualFXRate(r.Context(), form.Currency, date, rate)
 	}()
 	var ve domain.ValidationError
@@ -201,7 +191,7 @@ func (s *Service) handleSaveManual(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err != nil {
-		s.serverError(w, r, err)
+		s.d.ServerError(w, r, err)
 		return
 	}
 	s.d.LogSettings(r, logText)
@@ -221,7 +211,7 @@ func (s *Service) handleDeleteManual(w http.ResponseWriter, r *http.Request) {
 		s.renderPage(w, r, http.StatusNotFound, manualForm{}, "Diesen manuellen Kurs gibt es nicht (mehr).")
 		return
 	case err != nil:
-		s.serverError(w, r, err)
+		s.d.ServerError(w, r, err)
 		return
 	}
 	s.d.LogSettings(r, fmt.Sprintf("Manueller Kurs für %s ab %s gelöscht", cur, domain.FormatDate(date)))
@@ -237,7 +227,7 @@ func (s *Service) handleRefresh(w http.ResponseWriter, r *http.Request) {
 		s.renderPage(w, r, http.StatusBadGateway, manualForm{}, fe.Error())
 		return
 	case err != nil:
-		s.serverError(w, r, err)
+		s.d.ServerError(w, r, err)
 		return
 	}
 	web.SetFlash(w, "EZB-Kurse aktualisiert (Stand "+domain.FormatDate(latest)+").")

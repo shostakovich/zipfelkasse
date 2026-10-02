@@ -63,6 +63,8 @@ func TestParseCents(t *testing.T) {
 		{"1.234", 123400, false},
 		{"1.234.567", 123456700, false},
 		{"1.234.567,89", 123456789, false},
+		{"0.123", 0, true}, // after a leading 0 the dot is a decimal point: too many decimals
+		{"0.50", 50, false},
 		{"-12,34", -1234, false},
 		{"+3", 300, false},
 		{"", 0, true},
@@ -108,6 +110,14 @@ func TestParseMinorDecimals(t *testing.T) {
 		{"15,5", 0, 0, true},
 		{"1,234", 3, 1234, false},
 		{"1.5", 3, 1500, false},
+		{"0.500", 0, 0, true}, // 0.5 yen, not 500 yen
+		{"0.123", 3, 123, false},
+		// superfluous zeros are fine, e.g. after switching from EUR to JPY
+		{"1200,00", 0, 1200, false},
+		{"1.200,00", 0, 1200, false},
+		{"1200,50", 0, 0, true},
+		{"12,340", 2, 1234, false},
+		{"12,345", 2, 0, true},
 	}
 	for _, tt := range tests {
 		got, err := ParseMinor(tt.in, tt.decimals)
@@ -196,6 +206,10 @@ func TestParseRate(t *testing.T) {
 		{"17.000,5", 17000.5},
 		{"17,000.5", 17000.5},
 		{"17.000", 17000}, // dot before exactly three digits = thousands (as for amounts)
+		{"1.085", 1085},
+		{"0.856", 0.856}, // ... but not after a leading 0
+		{"00.856", 0.856},
+		{"0.8565", 0.8565},
 		{"1.234.567,25", 1234567.25},
 		{" 0,8653 ", 0.8653},
 		{"162,45", 162.45},
@@ -207,11 +221,42 @@ func TestParseRate(t *testing.T) {
 			t.Errorf("ParseRate(%q) = %v, %v; want %v", tt.in, got, err, tt.want)
 		}
 	}
-	for _, in := range []string{"", "0", "0,0", "-1,2", "abc", "1,2,3", "1.2.3", "17.00.0", "1e5", "NaN", "Inf", "1,", ",5x"} {
+	for _, in := range []string{"", "0", "0,0", "-1,2", "abc", "1,2,3", "1.2.3", "17.00.0", "1e5", "NaN", "Inf", "1,", ",5x", "0.000"} {
 		if v, err := ParseRate(in); err == nil {
 			t.Errorf("ParseRate(%q) = %v, want error", in, v)
 		} else if _, ok := err.(ValidationError); !ok {
 			t.Errorf("ParseRate(%q): %T", in, err)
+		}
+	}
+}
+
+func TestFormatDecimal(t *testing.T) {
+	tests := []struct {
+		v        int64
+		decimals int
+		sep      byte
+		want     string
+	}{
+		{0, 2, ',', "0,00"}, {5, 2, ',', "0,05"}, {123456, 2, ',', "1234,56"}, {-42, 2, ',', "-0,42"},
+		{1500, 0, ',', "1500"}, {1234, 3, ',', "1,234"},
+		{-5, 2, '.', "-0.05"}, {-300000, 2, '.', "-3000.00"}, {-7, 0, '.', "-7"}, {12345, 3, '.', "12.345"},
+	}
+	for _, tt := range tests {
+		if got := FormatDecimal(tt.v, tt.decimals, tt.sep); got != tt.want {
+			t.Errorf("FormatDecimal(%d, %d, %q) = %q, want %q", tt.v, tt.decimals, tt.sep, got, tt.want)
+		}
+	}
+	for in, want := range map[string]string{"USD": "1234,56", "JPY": "123456", "KWD": "123,456", "EUR": "1234,56"} {
+		if got := FormatMinorInput(123456, in); got != want {
+			t.Errorf("FormatMinorInput(123456, %s) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+func TestFormatRate(t *testing.T) {
+	for in, want := range map[float64]string{1.0876: "1,0876", 17000: "17000", 0.856: "0,856", 0: "", -1: ""} {
+		if got := FormatRate(in); got != want {
+			t.Errorf("FormatRate(%v) = %q, want %q", in, got, want)
 		}
 	}
 }

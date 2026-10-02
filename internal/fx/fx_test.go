@@ -582,11 +582,12 @@ func TestSettingsPage(t *testing.T) {
 	if r, _ := st.LookupFXRate(ctx, "IDR", domain.FXSourceManual, day("2026-10-01"), time.Time{}); r.Rate != 20274.71 {
 		t.Errorf("IDR = %v", r.Rate)
 	}
-	// Thousands separator as for amounts: "17.000" = 17000, also English "17,000.5".
+	// Thousands separator as for amounts: "17.000" = 17000, also English
+	// "17,000.5"; after a leading zero the dot is a decimal point.
 	for _, tt := range []struct {
 		in   string
 		want float64
-	}{{"17.000", 17000}, {"17,000.5", 17000.5}} {
+	}{{"0.856", 0.856}, {"17.000", 17000}, {"17,000.5", 17000.5}} {
 		rec = do(mux, "POST", "/einstellungen/kurse", url.Values{"waehrung": {"VND"}, "datum": {"2026-09-03"}, "kurs": {tt.in}})
 		if r, _ := st.LookupFXRate(ctx, "VND", domain.FXSourceManual, day("2026-10-01"), time.Time{}); rec.Code != http.StatusSeeOther || r.Rate != tt.want {
 			t.Errorf("VND %q: %d, %v", tt.in, rec.Code, r.Rate)

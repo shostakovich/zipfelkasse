@@ -2,6 +2,7 @@ package recurring
 
 import (
 	"context"
+	"encoding/base64"
 	"errors"
 	"io"
 	"log/slog"
@@ -27,17 +28,26 @@ func day(s string) time.Time {
 	return t
 }
 
-// fakeFX returns fixed rates; an error if there is no entry.
+// fakeFX returns fixed rates; err if set (ECB not reachable), otherwise a
+// domain.ValidationError if there is no entry (no rate exists).
 type fakeFX struct {
-	rates map[string]float64 // currency → rate
-	calls []time.Time
+	rates  map[string]float64 // currency → rate
+	err    error
+	calls  []time.Time
+	onRate func() // called on every request, e.g. to change a rule meanwhile
 }
 
 func (f *fakeFX) Rate(_ context.Context, cur string, date time.Time) (domain.FXRate, error) {
 	f.calls = append(f.calls, date)
+	if f.onRate != nil {
+		f.onRate()
+	}
+	if f.err != nil {
+		return domain.FXRate{}, f.err
+	}
 	r, ok := f.rates[cur]
 	if !ok {
-		return domain.FXRate{}, errors.New("ECB not reachable")
+		return domain.FXRate{}, domain.ValidationError{Msg: "Für " + cur + " gibt es keinen EZB-Kurs."}
 	}
 	return domain.FXRate{Currency: cur, Date: date, Rate: r, Source: domain.FXSourceECB}, nil
 }
@@ -221,7 +231,7 @@ func TestMaterializeIdempotentAfterCrash(t *testing.T) {
 		t.Errorf("after restart = %d, %v", n, err)
 	}
 	// A reset next_date creates no duplicates.
-	if err := e.st.SetRecurringNextDate(e.ctx, rid, day("2026-01-15")); err != nil {
+	if err := e.st.SetRecurringNextDate(e.ctx, rid, day("2026-04-15"), day("2026-01-15")); err != nil {
 		t.Fatal(err)
 	}
 	e.materialize("2026-03-20", 0)
@@ -265,43 +275,54 @@ func TestMaterializeForeignCurrency(t *testing.T) {
 		t.Errorf("rate requested for %v", e.fx.calls)
 	}
 
-	// Rate not available → the template's rate.
-	delete(e.fx.rates, "USD")
+	// ECB not reachable: the occurrence is not created and next_date stays,
+	// so that the next run catches up with the day's rate.
+	e.fx.err = errors.New("ECB not reachable")
+	if n, err := e.svc.Materialize(e.ctx, day("2026-03-05")); n != 0 || err == nil {
+		t.Errorf("Materialize without ECB = %d, %v; want 0 and an error", n, err)
+	}
+	if got := e.next(rid); got != "2026-03-05" {
+		t.Errorf("next_date after a failed rate fetch = %s", got)
+	}
+	if got := e.dates(rid); got != "2026-01-05 2026-02-05" {
+		t.Errorf("occurrences after a failed rate fetch = %s", got)
+	}
+	e.fx.err = nil
 	e.materialize("2026-03-05", 1)
-	got = e.instances(rid)[2]
+	if got := e.instances(rid)[2]; got.Date != day("2026-03-05") || got.AmountCents != 8000 || got.FXRate != 1.25 {
+		t.Errorf("caught up = %+v", got.ExpenseInput)
+	}
+
+	// No rate exists for the date (e.g. a currency the ECB does not publish):
+	// waiting would block the rule forever, so the template's rate is used.
+	delete(e.fx.rates, "USD")
+	e.materialize("2026-04-05", 1)
+	got = e.instances(rid)[3]
 	if got.AmountCents != 9091 || got.FXRate != 1.1 {
 		t.Errorf("without rate = %+v", got.ExpenseInput)
 	}
+	if got := e.next(rid); got != "2026-05-05" {
+		t.Errorf("next_date = %s", got)
+	}
 }
 
+// By amounts in a foreign currency: the amounts stay in USD, the euro shares
+// follow the rate of the occurrence date.
 func TestMaterializeForeignFixedAmounts(t *testing.T) {
 	e := newEnv(t)
-	in := e.expense("Hotel", "2026-01-05", 9091)
+	in := e.expense("Hotel", "2026-01-05", 0)
 	in.OriginalCurrency, in.OriginalAmountMinor, in.FXRate, in.FXSource = "USD", 10000, 1.1, domain.FXSourceECB
 	in.SplitMode = domain.SplitAmount
-	in.Parts = []domain.Part{{ParticipantID: e.anna.ID, Weight: 6000}, {ParticipantID: e.ben.ID, Weight: 3091}}
+	in.Parts = []domain.Part{{ParticipantID: e.anna.ID, Weight: 6000}, {ParticipantID: e.ben.ID, Weight: 4000}}
 	rid, _ := e.rule(in, domain.FreqMonthly)
 	e.fx.rates["USD"] = 1.25
 	e.materialize("2026-02-05", 1)
 	got := e.instances(rid)[1]
-	if got.AmountCents != 8000 || got.ShareOf(e.anna.ID)+got.ShareOf(e.ben.ID) != 8000 || got.ShareOf(e.anna.ID) != 5280 {
+	if got.AmountCents != 8000 || got.ShareOf(e.anna.ID) != 4800 || got.ShareOf(e.ben.ID) != 3200 {
 		t.Errorf("fixed amounts converted = %+v", got.Shares)
 	}
-}
-
-func TestRescale(t *testing.T) {
-	parts := []domain.Part{{ParticipantID: 1, Weight: 1}, {ParticipantID: 2, Weight: 1}, {ParticipantID: 3, Weight: 1}}
-	got := rescale(parts, 100)
-	if got[0].Weight != 34 || got[1].Weight != 33 || got[2].Weight != 33 {
-		t.Errorf("rescale = %+v", got)
-	}
-	if parts[0].Weight != 1 {
-		t.Error("rescale modifies its input")
-	}
-	big := []domain.Part{{ParticipantID: 1, Weight: domain.MaxAmountCents - 1}, {ParticipantID: 2, Weight: 1}}
-	got = rescale(big, domain.MaxAmountCents/2)
-	if got[0].Weight+got[1].Weight != domain.MaxAmountCents/2 {
-		t.Errorf("rescale large = %+v", got)
+	if got.Parts[0].Weight != 6000 || got.Parts[1].Weight != 4000 {
+		t.Errorf("amounts in USD = %+v", got.Parts)
 	}
 }
 
@@ -430,5 +451,238 @@ func TestMaterializeCapPerRun(t *testing.T) {
 	e.materialize("2026-10-02", 400)
 	if n := len(e.instances(rid)); n != 801 {
 		t.Errorf("%d instances", n)
+	}
+}
+
+// Pausing, deleting or resuming a rule while Materialize catches it up stops
+// the catch-up of that rule without an error; the run works on a snapshot of
+// the rule and must not override the change.
+func TestMaterializeRuleChangedMeanwhile(t *testing.T) {
+	for _, tt := range []struct {
+		name   string
+		change func(e *env, rid int64) error
+		dates  string // occurrences afterwards
+		next   string // next_date afterwards; "" = rule deleted
+	}{
+		{"paused", func(e *env, rid int64) error {
+			return e.st.SetRecurringActive(e.ctx, rid, false, day("2026-05-10"))
+		}, "2026-01-05 2026-02-05", "2026-03-05"},
+		{"deleted", func(e *env, rid int64) error {
+			return e.st.DeleteRecurring(e.ctx, e.anna.ID, rid)
+		}, "", ""},
+		{"paused and resumed", func(e *env, rid int64) error {
+			if err := e.st.SetRecurringActive(e.ctx, rid, false, day("2026-05-10")); err != nil {
+				return err
+			}
+			return e.st.SetRecurringActive(e.ctx, rid, true, day("2026-05-10"))
+		}, "2026-01-05 2026-02-05 2026-03-05", "2026-06-05"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			e := newEnv(t)
+			e.fx.rates["USD"] = 1.25
+			in := e.expense("Cloud", "2026-01-05", 9091)
+			in.OriginalCurrency, in.OriginalAmountMinor, in.FXRate, in.FXSource = "USD", 10000, 1.1, domain.FXSourceECB
+			rid, _ := e.rule(in, domain.FreqMonthly)
+			e.fx.onRate = func() {
+				if len(e.fx.calls) == 2 { // while building the occurrence of 5 Mar
+					if err := tt.change(e, rid); err != nil {
+						t.Fatal(err)
+					}
+				}
+			}
+			n, err := e.svc.Materialize(e.ctx, day("2026-05-10"))
+			if err != nil {
+				t.Errorf("Materialize: %v", err)
+			}
+			if tt.next == "" {
+				if n != 1 {
+					t.Errorf("created %d", n)
+				}
+				if got := e.titled("Cloud"); got != "2026-01-05 2026-02-05" {
+					t.Errorf("expenses = %s", got)
+				}
+				return
+			}
+			if got := e.dates(rid); got != tt.dates {
+				t.Errorf("occurrences = %s, want %s", got, tt.dates)
+			}
+			if got := e.next(rid); got != tt.next {
+				t.Errorf("next_date = %s, want %s", got, tt.next)
+			}
+		})
+	}
+}
+
+// flash returns the flash message set by the response.
+func flash(rec *httptest.ResponseRecorder) string {
+	for _, c := range rec.Result().Cookies() {
+		if b, err := base64.RawURLEncoding.DecodeString(c.Value); err == nil && c.Value != "" {
+			return string(b)
+		}
+	}
+	return ""
+}
+
+// The flash after creating or resuming a rule counts only that rule's
+// expenses, not those of other due rules.
+func TestFlashCountsOnlyTheRule(t *testing.T) {
+	e := newEnv(t)
+	other, _ := e.rule(e.expense("Strom", "2026-08-02", 5000), domain.FreqMonthly) // 2 Sep is due
+	eid, err := e.st.CreateExpense(e.ctx, e.anna.ID, e.expense("Miete", "2026-08-31", 100000))
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec := e.do("POST", "/einstellungen/wiederkehrend/neu", url.Values{"ausgabe": {strconv.FormatInt(eid, 10)}, "haeufigkeit": {"monthly"}})
+	if got := flash(rec); got != "„Miete“ wiederholt sich jetzt monatlich. 1 Ausgabe nachgetragen." {
+		t.Errorf("flash after create = %q", got)
+	}
+	if got := e.dates(other); got != "2026-08-02" {
+		t.Errorf("other rule caught up by the request: %s", got)
+	}
+
+	if err := e.st.SetRecurringActive(e.ctx, other, false, day("2026-08-03")); err != nil {
+		t.Fatal(err)
+	}
+	weekly, _ := e.rule(e.expense("Putzen", "2026-09-25", 4000), domain.FreqWeekly) // 2 Oct is due
+	// Resumed on 2 Oct: the occurrence of that day is created.
+	rec = e.do("POST", "/einstellungen/wiederkehrend/"+strconv.FormatInt(other, 10)+"/fortsetzen", nil)
+	if got := flash(rec); got != "Fortgesetzt. 1 Ausgabe angelegt." {
+		t.Errorf("flash after resume = %q", got)
+	}
+	if got := e.dates(weekly); got != "2026-09-25" {
+		t.Errorf("other rule caught up by the request: %s", got)
+	}
+}
+
+// The preview says honestly how many missed occurrences are created right
+// away and when the rest follows.
+func TestFreqOptionNote(t *testing.T) {
+	for _, tt := range []struct {
+		o    freqOption
+		want string
+	}{
+		{freqOption{}, ""},
+		{freqOption{Missed: 1}, "1 verpasster Termin wird sofort eingetragen"},
+		{freqOption{Missed: 4, Existing: 1}, "3 verpasste Termine werden sofort eingetragen; 1 bereits als Ausgabe vorhandener Termin wird übersprungen"},
+		{freqOption{Missed: 2, Existing: 2}, "2 bereits als Ausgabe vorhandene Termine werden übersprungen"},
+		{freqOption{Missed: 400}, "400 verpasste Termine werden sofort eingetragen"},
+		{freqOption{Missed: 610, Existing: 10}, "600 verpasste Termine werden eingetragen – die ersten 400 Termine sofort, der Rest in den nächsten Stunden; " +
+			"10 bereits als Ausgabe vorhandene Termine werden übersprungen"},
+		{freqOption{Missed: 1001}, "mehr als 1000 verpasste Termine werden eingetragen – die ersten 400 Termine sofort, der Rest in den nächsten Stunden"},
+		{freqOption{Missed: 1001, Existing: 3}, "mehr als 1000 verpasste Termine werden eingetragen – die ersten 400 Termine sofort, der Rest in den nächsten Stunden; " +
+			"mindestens 3 bereits als Ausgabe vorhandene Termine werden übersprungen"},
+	} {
+		if got := tt.o.Note(); got != tt.want {
+			t.Errorf("%+v: Note() = %q, want %q", tt.o, got, tt.want)
+		}
+	}
+
+	e := newEnv(t)
+	eid, err := e.st.CreateExpense(e.ctx, e.anna.ID, e.expense("Putzen", "2000-01-03", 100))
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec := e.do("GET", "/einstellungen/wiederkehrend/neu?ausgabe="+strconv.FormatInt(eid, 10), nil)
+	if body := rec.Body.String(); !strings.Contains(body, "mehr als 1000 verpasste Termine") ||
+		!strings.Contains(body, "der Rest in den nächsten Stunden") {
+		t.Errorf("preview: %s", body)
+	}
+}
+
+// titled returns the dates of all non-deleted expenses with this title, in
+// ascending order.
+func (e *env) titled(title string) string {
+	e.t.Helper()
+	all, err := e.st.ListExpenses(e.ctx, store.ExpenseFilter{})
+	if err != nil {
+		e.t.Fatal(err)
+	}
+	var ds []string
+	for i := len(all) - 1; i >= 0; i-- {
+		if all[i].Title == title {
+			ds = append(ds, all[i].Date.Format(domain.DateLayout))
+		}
+	}
+	return strings.Join(ds, " ")
+}
+
+// Catching up skips occurrences for which an expense with the same title,
+// amount and payer already exists, e.g. entered by hand or created by a
+// deleted rule; next_date advances past them as usual.
+func TestMaterializeSkipsExistingExpenses(t *testing.T) {
+	e := newEnv(t)
+	rid, _ := e.rule(e.expense("Miete", "2026-01-31", 100000), domain.FreqMonthly)
+	byHand := []store.ExpenseInput{
+		e.expense("Miete", "2026-02-28", 100000),  // duplicate → skipped
+		e.expense("Miete", "2026-03-31", 99999),   // different amount
+		e.expense("Mieten", "2026-03-31", 100000), // different title
+	}
+	otherPayer := e.expense("Miete", "2026-03-31", 100000)
+	otherPayer.PaidBy = e.ben.ID
+	deleted := e.expense("Miete", "2026-04-30", 100000)
+	byHand = append(byHand, otherPayer, deleted)
+	for i, in := range byHand {
+		id, err := e.st.CreateExpense(e.ctx, e.anna.ID, in)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if i == len(byHand)-1 {
+			if err := e.st.DeleteExpense(e.ctx, e.anna.ID, id); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	e.materialize("2026-05-15", 2)
+	if got := e.dates(rid); got != "2026-01-31 2026-03-31 2026-04-30" {
+		t.Errorf("occurrences = %s", got)
+	}
+	if got := e.next(rid); got != "2026-05-31" {
+		t.Errorf("next_date = %s", got)
+	}
+}
+
+// For a foreign currency, the original amount and currency count (the euro
+// amount depends on the rate).
+func TestMaterializeSkipsExistingForeignExpenses(t *testing.T) {
+	e := newEnv(t)
+	e.fx.rates["USD"] = 1.25
+	in := e.expense("Cloud", "2026-01-05", 9091)
+	in.OriginalCurrency, in.OriginalAmountMinor, in.FXRate, in.FXSource = "USD", 10000, 1.1, domain.FXSourceECB
+	rid, _ := e.rule(in, domain.FreqMonthly)
+	dup := in
+	dup.Date, dup.AmountCents, dup.FXRate = day("2026-02-05"), 9000, 1.111
+	if _, err := e.st.CreateExpense(e.ctx, e.anna.ID, dup); err != nil {
+		t.Fatal(err)
+	}
+	e.materialize("2026-03-05", 1)
+	if got := e.dates(rid); got != "2026-01-05 2026-03-05" {
+		t.Errorf("occurrences = %s", got)
+	}
+	if len(e.fx.calls) != 1 {
+		t.Errorf("rates requested for %v, want only 2026-03-05", e.fx.calls)
+	}
+}
+
+// Deleting a rule and creating it again from the same expense does not enter
+// the occurrences of the old rule a second time; the preview says so.
+func TestRecreateRuleSkipsExistingOccurrences(t *testing.T) {
+	e := newEnv(t)
+	rid, eid := e.rule(e.expense("Miete", "2026-01-31", 100000), domain.FreqMonthly)
+	e.materialize("2026-05-15", 3)
+	if err := e.st.DeleteRecurring(e.ctx, e.anna.ID, rid); err != nil {
+		t.Fatal(err)
+	}
+	sid := strconv.FormatInt(eid, 10)
+	rec := e.do("GET", "/einstellungen/wiederkehrend/neu?ausgabe="+sid, nil)
+	if body := rec.Body.String(); !strings.Contains(body, "5 verpasste Termine werden sofort eingetragen") ||
+		!strings.Contains(body, "3 bereits als Ausgabe vorhandene Termine werden übersprungen") {
+		t.Errorf("preview: %s", body)
+	}
+	rec = e.do("POST", "/einstellungen/wiederkehrend/neu", url.Values{"ausgabe": {sid}, "haeufigkeit": {"monthly"}})
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("create: %d %s", rec.Code, rec.Body)
+	}
+	if got := e.titled("Miete"); got != "2026-01-31 2026-02-28 2026-03-31 2026-04-30 2026-05-31 2026-06-30 2026-07-31 2026-08-31 2026-09-30" {
+		t.Errorf("expenses = %s", got)
 	}
 }

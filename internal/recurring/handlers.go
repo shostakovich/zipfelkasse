@@ -1,6 +1,7 @@
 package recurring
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net/http"
@@ -34,11 +35,6 @@ func (s *Service) Register(mux *http.ServeMux) {
 
 const listPath = "/einstellungen/wiederkehrend"
 
-func (s *Service) serverError(w http.ResponseWriter, r *http.Request, err error) {
-	s.d.Log.Error("request", "method", r.Method, "path", r.URL.Path, "err", err)
-	s.d.Render.Error(w, r, http.StatusInternalServerError, "Da ist etwas schiefgegangen.")
-}
-
 func (s *Service) notFound(w http.ResponseWriter, r *http.Request) {
 	s.d.Render.Error(w, r, http.StatusNotFound, "Wiederkehrende Ausgabe nicht gefunden.")
 }
@@ -65,12 +61,12 @@ func (s *Service) handleList(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	rules, err := s.d.Store.ListRecurring(ctx)
 	if err != nil {
-		s.serverError(w, r, err)
+		s.d.ServerError(w, r, err)
 		return
 	}
 	names, err := s.participantNames(r)
 	if err != nil {
-		s.serverError(w, r, err)
+		s.d.ServerError(w, r, err)
 		return
 	}
 	data := listData{Rules: make([]ruleRow, len(rules))}
@@ -121,7 +117,7 @@ func (s *Service) handleSetActive(active bool) http.HandlerFunc {
 			s.notFound(w, r)
 			return
 		case err != nil:
-			s.serverError(w, r, err)
+			s.d.ServerError(w, r, err)
 			return
 		}
 		msg := "Pausiert."
@@ -132,9 +128,11 @@ func (s *Service) handleSetActive(active bool) http.HandlerFunc {
 		s.d.LogSettings(r, ruleLabel(rule)+" "+verb)
 		if active {
 			msg = "Fortgesetzt."
-			if n, err := s.Materialize(r.Context(), s.today()); err != nil {
+			n, err := s.MaterializeRule(r.Context(), id, s.today())
+			if err != nil {
 				s.d.Log.Error("recurring expenses", "err", err)
-			} else if n > 0 {
+			}
+			if n > 0 {
 				msg += fmt.Sprintf(" %s angelegt.", countText(n))
 			}
 		}
@@ -155,7 +153,7 @@ func (s *Service) handleRefreshTemplate(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	if err != nil {
-		s.serverError(w, r, err)
+		s.d.ServerError(w, r, err)
 		return
 	}
 	err = s.d.Store.UpdateRecurringTemplateFromLatest(r.Context(), id)
@@ -163,7 +161,7 @@ func (s *Service) handleRefreshTemplate(w http.ResponseWriter, r *http.Request) 
 	case errors.Is(err, store.ErrNotFound):
 		web.SetFlash(w, "Es gibt keine Ausgabe dieser Wiederholung mehr, aus der die Vorlage übernommen werden könnte.")
 	case err != nil:
-		s.serverError(w, r, err)
+		s.d.ServerError(w, r, err)
 		return
 	default:
 		s.d.LogSettings(r, ruleLabel(rule)+": Vorlage aus der letzten Ausgabe übernommen")
@@ -184,7 +182,7 @@ func (s *Service) handleDelete(w http.ResponseWriter, r *http.Request) {
 		s.notFound(w, r)
 		return
 	case err != nil:
-		s.serverError(w, r, err)
+		s.d.ServerError(w, r, err)
 		return
 	}
 	web.SetFlash(w, "Wiederholung gelöscht. Bereits angelegte Ausgaben bleiben erhalten.")
@@ -194,11 +192,43 @@ func (s *Service) handleDelete(w http.ResponseWriter, r *http.Request) {
 // --- New ---------------------------------------------------------------------
 
 type freqOption struct {
-	Value   domain.Frequency
-	Label   string
-	Next    time.Time // first occurrence after the template
-	Missed  int       // occurrences up to today that are created right away
-	Checked bool
+	Value    domain.Frequency
+	Label    string
+	Next     time.Time // first occurrence after the template
+	Missed   int       // occurrences up to today (counted up to maxMissedCount+1)
+	Existing int       // of these, occurrences skipped as an equal expense exists
+	Checked  bool
+}
+
+// Note describes what happens to the missed occurrences, e.g. "3 verpasste
+// Termine werden sofort eingetragen; 1 bereits als Ausgabe vorhandener Termin
+// wird übersprungen"; "" if there are none. Materialize processes at most
+// maxInstancesPerRun occurrences per run, the rest in the next (hourly) runs.
+func (o freqOption) Note() string {
+	capped := o.Missed > maxMissedCount
+	when := "sofort eingetragen"
+	if o.Missed > maxInstancesPerRun {
+		when = fmt.Sprintf("eingetragen – die ersten %d Termine sofort, der Rest in den nächsten Stunden", maxInstancesPerRun)
+	}
+	var parts []string
+	switch n := o.Missed - o.Existing; {
+	case capped:
+		parts = append(parts, fmt.Sprintf("mehr als %d verpasste Termine werden %s", maxMissedCount, when))
+	case n == 1:
+		parts = append(parts, "1 verpasster Termin wird "+when)
+	case n > 1:
+		parts = append(parts, fmt.Sprintf("%d verpasste Termine werden %s", n, when))
+	}
+	atLeast := ""
+	if capped {
+		atLeast = "mindestens "
+	}
+	if o.Existing == 1 {
+		parts = append(parts, atLeast+"1 bereits als Ausgabe vorhandener Termin wird übersprungen")
+	} else if o.Existing > 1 {
+		parts = append(parts, fmt.Sprintf("%s%d bereits als Ausgabe vorhandene Termine werden übersprungen", atLeast, o.Existing))
+	}
+	return strings.Join(parts, "; ")
 }
 
 type newData struct {
@@ -207,20 +237,32 @@ type newData struct {
 	Existing int64 // the expense already belongs to this recurring rule
 }
 
-// maxMissedCount caps counting missed occurrences for the preview.
+// maxMissedCount caps counting missed occurrences for the preview: beyond
+// it, the preview says "mehr als 1000".
 const maxMissedCount = 1000
 
-func (s *Service) newData(e store.Expense, selected domain.Frequency) newData {
+func (s *Service) newData(ctx context.Context, e store.Expense, selected domain.Frequency) (newData, error) {
 	today := s.today()
 	data := newData{Expense: &e, Existing: e.RecurringID}
+	var existing map[time.Time]bool
+	if e.Date.Before(today) {
+		var err error
+		existing, err = s.d.Store.ExpenseDatesLike(ctx, e.ExpenseInput, e.Date.AddDate(0, 0, 1), today)
+		if err != nil {
+			return data, err
+		}
+	}
 	for _, f := range domain.Frequencies {
 		o := freqOption{Value: f, Label: f.Label(), Next: domain.NextDate(f, e.Date, e.Date), Checked: f == selected}
-		for d := o.Next; !d.After(today) && o.Missed < maxMissedCount; d = domain.NextDate(f, e.Date, d) {
+		for d := o.Next; !d.After(today) && o.Missed <= maxMissedCount; d = domain.NextDate(f, e.Date, d) {
 			o.Missed++
+			if existing[d] {
+				o.Existing++
+			}
 		}
 		data.Options = append(data.Options, o)
 	}
-	return data
+	return data, nil
 }
 
 func (s *Service) renderNew(w http.ResponseWriter, r *http.Request, status int, data newData, errMsg string) {
@@ -243,7 +285,7 @@ func (s *Service) loadExpense(w http.ResponseWriter, r *http.Request) (store.Exp
 		return e, false
 	}
 	if err != nil {
-		s.serverError(w, r, err)
+		s.d.ServerError(w, r, err)
 		return e, false
 	}
 	return e, true
@@ -258,7 +300,12 @@ func (s *Service) handleNew(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	s.renderNew(w, r, http.StatusOK, s.newData(e, domain.FreqMonthly), "")
+	data, err := s.newData(r.Context(), e, domain.FreqMonthly)
+	if err != nil {
+		s.d.ServerError(w, r, err)
+		return
+	}
+	s.renderNew(w, r, http.StatusOK, data, "")
 }
 
 func (s *Service) handleCreate(w http.ResponseWriter, r *http.Request) {
@@ -267,23 +314,30 @@ func (s *Service) handleCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	freq := domain.Frequency(r.FormValue("haeufigkeit"))
-	_, err := s.d.Store.CreateRecurringFromExpense(r.Context(), actorID(r), e.ID, freq)
+	id, err := s.d.Store.CreateRecurringFromExpense(r.Context(), actorID(r), e.ID, freq)
 	var ve domain.ValidationError
 	switch {
 	case errors.As(err, &ve):
-		s.renderNew(w, r, http.StatusUnprocessableEntity, s.newData(e, freq), ve.Msg)
+		data, err := s.newData(r.Context(), e, freq)
+		if err != nil {
+			s.d.ServerError(w, r, err)
+			return
+		}
+		s.renderNew(w, r, http.StatusUnprocessableEntity, data, ve.Msg)
 		return
 	case errors.Is(err, store.ErrNotFound):
 		s.d.Render.Error(w, r, http.StatusNotFound, "Ausgabe nicht gefunden.")
 		return
 	case err != nil:
-		s.serverError(w, r, err)
+		s.d.ServerError(w, r, err)
 		return
 	}
 	msg := fmt.Sprintf("„%s“ wiederholt sich jetzt %s.", e.Title, adverb(freq))
-	if n, err := s.Materialize(r.Context(), s.today()); err != nil {
+	n, err := s.MaterializeRule(r.Context(), id, s.today())
+	if err != nil {
 		s.d.Log.Error("recurring expenses", "err", err)
-	} else if n > 0 {
+	}
+	if n > 0 {
 		msg += fmt.Sprintf(" %s nachgetragen.", countText(n))
 	}
 	web.SetFlash(w, msg)

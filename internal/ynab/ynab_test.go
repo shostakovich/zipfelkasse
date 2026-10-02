@@ -1,6 +1,7 @@
 package ynab
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
 	"errors"
@@ -741,11 +742,71 @@ func TestSettingsChangeAccountResetsSync(t *testing.T) {
 	if err := e.st.SetYNABTarget(e.ctx, e.anna, testPlan, "acc-giro", day("2026-09-01")); err != nil {
 		t.Fatal(err)
 	}
-	if len(e.syncRows()) != 0 {
-		t.Error("changing the account does not reset the sync")
+	for _, r := range e.syncRows() {
+		if r.TxnID != "" {
+			t.Errorf("changing the account keeps the old transaction: %+v", r)
+		}
 	}
+	e.fake.takeRequests()
 	if res := e.mustSync(false); res.Created != 1 {
 		t.Errorf("res = %+v", res)
+	}
+	// Looked for in the new account first (it could be there already).
+	e.expectRequests("GET /v1/plans/plan-1/accounts/acc-giro/transactions", post)
+}
+
+// Switching to another account and back must not create the transactions in
+// the first account a second time: they are found again via the memo marker.
+func TestSyncTargetChangeBackNoDuplicates(t *testing.T) {
+	e := newEnv(t)
+	e.connect("2026-09-01")
+	a := e.create(e.input("A", 1000, "2026-09-20", e.anna, e.anna, e.ben))
+	b := e.create(e.input("B", 2000, "2026-09-21", e.anna, e.anna, e.ben))
+	gone := e.create(e.input("Weg", 3000, "2026-09-22", e.anna, e.anna, e.ben))
+	e.mustSync(false)
+	inA := e.syncRows()
+
+	if err := e.st.SetYNABTarget(e.ctx, e.anna, testPlan, "acc-giro", day("2026-09-01")); err != nil {
+		t.Fatal(err)
+	}
+	if res := e.mustSync(false); res.Created != 3 {
+		t.Errorf("account B: %+v", res)
+	}
+	// While syncing to B: one expense changes, one is deleted.
+	e.st.UpdateExpense(e.ctx, e.anna, a, e.input("A2", 1000, "2026-09-20", e.anna, e.anna, e.ben))
+	e.st.DeleteExpense(e.ctx, e.anna, gone)
+	e.mustSync(false)
+
+	if err := e.st.SetYNABTarget(e.ctx, e.anna, testPlan, testAccount, day("2026-09-01")); err != nil {
+		t.Fatal(err)
+	}
+	e.fake.takeRequests()
+	res := e.mustSync(false)
+	if res.Created != 0 || res.Updated != 2 || res.Deleted != 0 {
+		t.Errorf("back to A: %+v", res)
+	}
+	// No DELETE with transaction IDs of account B (they do not belong to A).
+	e.expectRequests("GET /v1/plans/plan-1/accounts/acc-geteilt/transactions", patch)
+	rows := e.syncRows()
+	if rows[a].TxnID != inA[a].TxnID || rows[b].TxnID != inA[b].TxnID {
+		t.Errorf("rows = %+v, in A before %+v", rows, inA)
+	}
+	if _, ok := rows[gone]; ok {
+		t.Errorf("row of the deleted expense kept: %+v", rows[gone])
+	}
+	var inAccountA []string
+	for _, tx := range e.fake.live() {
+		if tx.AccountID == testAccount {
+			inAccountA = append(inAccountA, str(tx.PayeeName))
+		}
+	}
+	// "Weg" was created in A before the switch and stays there (the app no
+	// longer knows its transaction); A and B are not duplicated.
+	if !slices.Equal(inAccountA, []string{"A2", "B", "Weg"}) {
+		t.Errorf("account A = %q", inAccountA)
+	}
+	if res := e.mustSync(false); res != (syncResult{}) {
+		t.Errorf("afterwards: %+v", res)
 	}
 }
 
@@ -775,6 +836,45 @@ func TestSyncBackdatedExpenseAfterConnect(t *testing.T) {
 	}
 	if res := e.mustSync(false); res.Created != 0 {
 		t.Errorf("after account change: %+v", res)
+	}
+}
+
+// A backdated expense whose creation had an unclear outcome is looked for
+// from its own date on, not only from the start date – also if it has been
+// deleted in the meantime.
+func TestSyncLostResponseBackdatedNoDuplicate(t *testing.T) {
+	for _, deleted := range []bool{false, true} {
+		e := newEnv(t)
+		clock := time.Date(2026, 9, 20, 10, 0, 0, 0, time.UTC)
+		e.st.SetClock(func() time.Time { return clock })
+		e.connect("2026-09-10")
+		clock = clock.Add(time.Hour)
+		id := e.create(e.input("Nachgetragen", 2000, "2026-09-05", e.ben, e.anna, e.ben))
+		e.fake.lostPost = true
+		if _, err := e.sync(false); !uncertain(err) {
+			t.Fatalf("err = %v", err)
+		}
+		e.now = e.now.Add(6 * time.Minute)
+		e.fake.takeRequests()
+		if !deleted {
+			e.mustSync(false)
+			e.expectRequests("GET /v1/plans/plan-1/accounts/acc-geteilt/transactions", patch)
+			live := e.fake.live()
+			if len(live) != 1 || live[0].Date != "2026-09-05" {
+				t.Fatalf("duplicate: %+v", live)
+			}
+			if r := e.syncRows()[id]; r.TxnID != live[0].ID {
+				t.Errorf("row = %+v", r)
+			}
+			continue
+		}
+		created := e.fake.live()[0].ID
+		e.st.DeleteExpense(e.ctx, e.ben, id)
+		e.mustSync(false)
+		e.expectRequests("GET /v1/plans/plan-1/accounts/acc-geteilt/transactions", "DELETE "+pathTxns+"/"+created)
+		if live := e.fake.live(); len(live) != 0 {
+			t.Errorf("deleted: live = %+v", live)
+		}
 	}
 }
 
@@ -830,6 +930,132 @@ func TestSyncDeletesAfterFailedPatch(t *testing.T) {
 	}
 }
 
+// A token of another YNAB user does not know the chosen plan: plan and account
+// are reset so that they are chosen anew.
+func TestSaveTokenOfOtherYNABUser(t *testing.T) {
+	e := newEnv(t)
+	e.connect("2026-09-01")
+	// The same YNAB user: the target stays.
+	if rec := e.post("/einstellungen/ynab/token", url.Values{"token": {testToken}}); rec.Code != http.StatusSeeOther {
+		t.Fatalf("token: %d %s", rec.Code, rec.Body)
+	}
+	if cfg, _ := e.st.GetYNABConfig(e.ctx, e.anna); cfg.PlanID != testPlan || cfg.AccountID != testAccount {
+		t.Errorf("same user: cfg = %+v", cfg)
+	}
+	rec := e.post("/einstellungen/ynab/token", url.Values{"token": {otherToken}})
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("token: %d %s", rec.Code, rec.Body)
+	}
+	if msg := flashOf(rec); !strings.Contains(msg, "neu wählen") {
+		t.Errorf("Flash = %q", msg)
+	}
+	cfg, _ := e.st.GetYNABConfig(e.ctx, e.anna)
+	if cfg.Token != otherToken || cfg.PlanID != "" || cfg.AccountID != "" || cfg.Ready() {
+		t.Errorf("other user: cfg = %+v", cfg)
+	}
+}
+
+// If plan or account are unknown to YNAB (e.g. token of another YNAB user),
+// the 404 for single transactions must not be taken as "transaction gone":
+// the run stops, the sync state stays as it is.
+func TestSyncPlanNotAccessible(t *testing.T) {
+	e := newEnv(t)
+	e.connect("2026-09-01")
+	a := e.create(e.input("A", 1000, "2026-09-20", e.anna, e.anna, e.ben))
+	b := e.create(e.input("B", 2000, "2026-09-21", e.anna, e.anna, e.ben))
+	e.mustSync(false)
+	before := e.syncRows()
+	if err := e.st.SetYNABToken(e.ctx, e.anna, otherToken); err != nil {
+		t.Fatal(err)
+	}
+	check := func(step string) {
+		t.Helper()
+		if _, err := e.sync(false); statusOf(err) != http.StatusNotFound {
+			t.Errorf("%s: err = %v", step, err)
+		}
+		if st := e.svc.loadStatus(e.ctx, e.anna); !strings.Contains(st.Error, "Plan oder Konto") {
+			t.Errorf("%s: status = %+v", step, st)
+		}
+		rows := e.syncRows()
+		if rows[a].TxnID != before[a].TxnID || rows[b].TxnID != before[b].TxnID {
+			t.Errorf("%s: rows = %+v", step, rows)
+		}
+	}
+	e.st.DeleteExpense(e.ctx, e.anna, b)
+	check("delete")
+	e.st.UpdateExpense(e.ctx, e.anna, a, e.input("A2", 1000, "2026-09-20", e.anna, e.anna, e.ben))
+	check("update")
+
+	if err := e.st.SetYNABToken(e.ctx, e.anna, testToken); err != nil {
+		t.Fatal(err)
+	}
+	if res := e.mustSync(false); res.Updated != 1 || res.Deleted != 1 || res.Created != 0 {
+		t.Errorf("res = %+v", res)
+	}
+	if live := e.fake.live(); len(live) != 1 || str(live[0].PayeeName) != "A2" {
+		t.Errorf("live = %+v", live)
+	}
+}
+
+// A DELETE rejected by YNAB is retried only in the full sync, not in every run
+// after a change (each attempt costs a request of the hourly limit).
+func TestSyncFailedDeleteRetriedOnlyInFullSync(t *testing.T) {
+	e := newEnv(t)
+	e.connect("2026-09-01")
+	id := e.create(e.input("Kino", 2400, "2026-09-20", e.anna, e.anna, e.ben))
+	e.mustSync(false)
+	del := "DELETE " + pathTxns + "/" + e.fake.live()[0].ID
+	e.st.DeleteExpense(e.ctx, e.anna, id)
+	e.fake.takeRequests()
+	e.fake.fail(400)
+	if res := e.mustSync(false); res.Failed != 1 {
+		t.Errorf("res = %+v", res)
+	}
+	e.expectRequests(del)
+	if r := e.syncRows()[id]; r.TxnID == "" || r.LastError == "" {
+		t.Errorf("row = %+v", r)
+	}
+	// The next change does not repeat it.
+	e.create(e.input("Pizza", 3000, "2026-09-21", e.anna, e.anna, e.ben))
+	if res := e.mustSync(false); res.Created != 1 || res.Failed+res.Deleted != 0 {
+		t.Errorf("res = %+v", res)
+	}
+	e.expectRequests(post)
+	if res := e.mustSync(true); res.Deleted != 1 {
+		t.Errorf("full: %+v", res)
+	}
+	e.expectRequests(del)
+}
+
+// The log of "Jetzt synchronisieren" never contains the token; an invalid
+// token (already shown on the page) is not logged again on every click.
+func TestSyncNowLog(t *testing.T) {
+	e := newEnv(t)
+	var buf bytes.Buffer
+	e.svc.d.Log = slog.New(slog.NewTextHandler(&buf, nil))
+	e.connect("2026-09-01")
+	e.create(e.input("Kino", 2400, "2026-09-20", e.anna, e.anna, e.ben))
+	syncNow := func() string {
+		t.Helper()
+		buf.Reset()
+		if rec := e.post("/einstellungen/ynab/sync", nil); rec.Code != http.StatusSeeOther {
+			t.Fatalf("sync: %d", rec.Code)
+		}
+		e.svc.waitBackground()
+		return buf.String()
+	}
+	e.fake.fail(503) // the detail contains the token
+	if log := syncNow(); !strings.Contains(log, "sync (now) failed") || strings.Contains(log, testToken) || !strings.Contains(log, "•••") {
+		t.Errorf("log = %s", log)
+	}
+	e.now = e.now.Add(6 * time.Minute)
+	e.st.SetYNABToken(e.ctx, e.anna, "abgelaufen")
+	syncNow() // 401: the token is marked invalid
+	if log := syncNow(); strings.Contains(log, "failed") {
+		t.Errorf("invalid token logged again: %s", log)
+	}
+}
+
 // "Jetzt synchronisieren" does not wait for YNAB.
 func TestSyncNowDoesNotBlock(t *testing.T) {
 	e := newEnv(t)
@@ -855,6 +1081,86 @@ func TestSyncNowDoesNotBlock(t *testing.T) {
 	e.svc.waitBackground()
 	if len(e.fake.live()) != 1 {
 		t.Errorf("live = %+v", e.fake.live())
+	}
+}
+
+// postDuringSync sends a form while a sync (SyncAll) hangs in its first
+// request to YNAB. It lets the sync go on once the handler has answered or
+// after a short wait (if the handler waits for the sync), and returns after
+// both have finished.
+func (e *env) postDuringSync(path string, v url.Values) *httptest.ResponseRecorder {
+	e.t.Helper()
+	hold := make(chan struct{})
+	e.fake.hold = hold
+	e.fake.takeRequests()
+	synced := make(chan struct{})
+	go func() { e.svc.SyncAll(e.ctx, false); close(synced) }()
+	for deadline := time.Now().Add(3 * time.Second); e.fake.requestCount() == 0; time.Sleep(time.Millisecond) {
+		if time.Now().After(deadline) {
+			close(hold)
+			e.t.Fatal("sync did not start")
+		}
+	}
+	answered := make(chan *httptest.ResponseRecorder, 1)
+	go func() { answered <- e.post(path, v) }()
+	var rec *httptest.ResponseRecorder
+	select {
+	case rec = <-answered:
+	case <-time.After(100 * time.Millisecond):
+	}
+	close(hold)
+	<-synced
+	if rec == nil {
+		rec = <-answered
+	}
+	e.fake.hold = nil
+	return rec
+}
+
+// Changing the account while a sync runs must not end up with transaction
+// IDs of the old account in the new sync state.
+func TestSettingsChangeAccountDuringSync(t *testing.T) {
+	e := newEnv(t)
+	e.connect("2026-09-01")
+	id := e.create(e.input("Kino", 2400, "2026-09-20", e.anna, e.anna, e.ben))
+	if _, err := e.svc.plans(e.ctx, testToken, true); err != nil { // the handler uses the cache
+		t.Fatal(err)
+	}
+	rec := e.postDuringSync("/einstellungen/ynab/konto", url.Values{"ziel": {"plan-1|acc-giro"}, "start": {"2026-09-01"}})
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("account: %d %s", rec.Code, rec.Body)
+	}
+	if r := e.syncRows()[id]; r.TxnID != "" {
+		t.Errorf("row after account change = %+v", r)
+	}
+	e.mustSync(false)
+	byID := map[string]apiTxn{}
+	for _, tx := range e.fake.live() {
+		byID[tx.ID] = tx
+	}
+	if tx := byID[e.syncRows()[id].TxnID]; tx.AccountID != "acc-giro" {
+		t.Errorf("row points to %+v, live %+v", tx, e.fake.live())
+	}
+}
+
+// A new token saved while a sync with the old (invalid) token runs stays
+// valid: the end of the sync must not overwrite the reset status.
+func TestSettingsNewTokenDuringSync(t *testing.T) {
+	e := newEnv(t)
+	e.connect("2026-09-01")
+	if err := e.st.SetYNABToken(e.ctx, e.anna, "abgelaufen"); err != nil {
+		t.Fatal(err)
+	}
+	e.create(e.input("Kino", 2400, "2026-09-20", e.anna, e.anna, e.ben))
+	rec := e.postDuringSync("/einstellungen/ynab/token", url.Values{"token": {testToken}})
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("token: %d %s", rec.Code, rec.Body)
+	}
+	if st := e.svc.loadStatus(e.ctx, e.anna); st.TokenInvalid || st.Error != "" {
+		t.Errorf("status = %+v", st)
+	}
+	if res := e.mustSync(false); res.Created != 1 {
+		t.Errorf("res = %+v", res)
 	}
 }
 

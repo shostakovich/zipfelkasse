@@ -10,7 +10,7 @@
   <div class="activity-main">
     <div>
       {{- if $a.Verb -}}
-      <strong>{{template "activity-actor" $a}}</strong> hat <em>„{{$a.Details.Title}}“</em> {{$a.Verb}}{{if and $a.Details.AmountCents (ne $a.Action "expense_updated")}} <span class="amount muted">({{eur $a.Details.AmountCents}})</span>{{end}}.
+      <strong>{{template "activity-actor" $a}}</strong> hat <em>„{{$a.Details.Title}}“</em> {{$a.Verb}}{{if $a.ShowAmount}} <span class="amount muted">({{eur $a.Details.AmountCents}})</span>{{end}}.
       {{- else -}}
       <strong>{{template "activity-actor" $a}}</strong>: {{with $a.Details.Text}}{{.}}{{else}}{{$a.Action}}{{end}}
       {{- end -}}

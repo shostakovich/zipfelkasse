@@ -1,7 +1,6 @@
 package web
 
 import (
-	"cmp"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -71,22 +70,22 @@ func (h handlers) home(w http.ResponseWriter, r *http.Request) {
 		Text: f.Text, CategoryID: f.CategoryID, ParticipantID: f.ParticipantID, Limit: limit + 1,
 	})
 	if err != nil {
-		h.serverError(w, r, err)
+		h.d.ServerError(w, r, err)
 		return
 	}
 	balances, err := h.d.Store.Balances(ctx)
 	if err != nil {
-		h.serverError(w, r, err)
+		h.d.ServerError(w, r, err)
 		return
 	}
 	people, err := h.d.Store.ListParticipants(ctx, true)
 	if err != nil {
-		h.serverError(w, r, err)
+		h.d.ServerError(w, r, err)
 		return
 	}
 	cats, err := h.d.Store.ListCategories(ctx, true)
 	if err != nil {
-		h.serverError(w, r, err)
+		h.d.ServerError(w, r, err)
 		return
 	}
 	data := homeData{Balance: balances[me.ID], Today: h.d.Today(), Filter: f}
@@ -97,11 +96,11 @@ func (h handlers) home(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	names := map[int64]string{}
-	active := 0
+	active := map[int64]bool{}
 	for _, p := range people {
 		names[p.ID] = p.Name
 		if !p.Archived() {
-			active++
+			active[p.ID] = true
 		}
 		if !p.Archived() || p.ID == f.ParticipantID {
 			data.Participants = append(data.Participants, p)
@@ -127,13 +126,16 @@ func (h handlers) home(w http.ResponseWriter, r *http.Request) {
 }
 
 // groupExpenses splits the expenses (sorted by date, descending) into periods
-// and prepares the rows.
-func groupExpenses(es []store.Expense, today time.Time, meID int64, names map[int64]string, activeCount int) []expenseGroup {
+// and prepares the rows. active holds the IDs of the active people.
+func groupExpenses(es []store.Expense, today time.Time, meID int64, names map[int64]string, active map[int64]bool) []expenseGroup {
 	var groups []expenseGroup
 	last := -1
 	for _, e := range es {
-		row := expenseRow{Expense: e, Everyone: len(e.Shares) == activeCount && activeCount >= 4}
+		row := expenseRow{Expense: e, Everyone: len(active) >= 4 && len(e.Shares) == len(active)}
 		for _, sh := range e.Shares {
+			// Shares are unique per person: same count and all active means
+			// exactly the active people.
+			row.Everyone = row.Everyone && active[sh.ParticipantID]
 			row.ForNames = append(row.ForNames, names[sh.ParticipantID])
 			if sh.ParticipantID == meID {
 				row.Involved = true
@@ -231,20 +233,10 @@ func formFromExpense(e store.Expense, people []store.Participant) expenseForm {
 		f.CurrencyOther = cur
 	}
 	if e.IsForeign() {
-		f.Amount = minorInput(e.OriginalAmountMinor, cur)
-		f.Rate, f.RateSource = rateInput(e.FXRate), e.FXSource
+		f.Amount = domain.FormatMinorInput(e.OriginalAmountMinor, cur)
+		f.Rate, f.RateSource = domain.FormatRate(e.FXRate), e.FXSource
 	} else {
 		f.Amount = domain.FormatCentsInput(e.AmountCents)
-	}
-	// For "by amounts" in a foreign currency, the form holds amounts in the
-	// foreign currency; euro cents are stored → convert back proportionally.
-	var origWeights []int64
-	if e.IsForeign() && e.SplitMode == domain.SplitAmount {
-		w := make([]int64, len(e.Shares))
-		for i, sh := range e.Shares {
-			w[i] = sh.Weight
-		}
-		origWeights = allocate(e.OriginalAmountMinor, w)
 	}
 	shareIdx := map[int64]int{}
 	for i, sh := range e.Shares {
@@ -264,12 +256,8 @@ func formFromExpense(e store.Expense, people []store.Participant) expenseForm {
 				row.Value = strconv.FormatInt(sh.Weight, 10)
 			case domain.SplitPercent:
 				row.Value = strings.TrimSuffix(domain.FormatBasisPoints(sh.Weight), " %")
-			case domain.SplitAmount:
-				if origWeights != nil {
-					row.Value = minorInput(origWeights[i], cur)
-				} else {
-					row.Value = domain.FormatCentsInput(sh.Weight)
-				}
+			case domain.SplitAmount: // amount in the original currency
+				row.Value = domain.FormatMinorInput(sh.Weight, cur)
 			}
 		}
 		f.Rows = append(f.Rows, row)
@@ -357,140 +345,170 @@ func readExpenseForm(r *http.Request, id int64, people []store.Participant, exis
 // toInput validates the form and builds the store input from it. Errors are
 // domain.ValidationError with a German message. If the rate is missing for a
 // foreign currency, it is fetched via d.FX and copied into the form.
-func (h handlers) toInput(r *http.Request, f *expenseForm) (store.ExpenseInput, error) {
+func (h handlers) toInput(r *http.Request, f *expenseForm, existing *store.Expense) (store.ExpenseInput, error) {
 	in := store.ExpenseInput{
 		Title: f.Title, CategoryID: f.Category, PaidBy: f.PaidBy, Notes: f.Notes,
 		IsReimbursement: f.IsReimbursement, SplitMode: f.SplitMode,
 	}
-	if strings.TrimSpace(f.Title) == "" {
-		return in, invalidf("Bitte einen Titel angeben.")
-	}
-	date, err := domain.ParseDate(f.Date)
-	if err != nil {
+	var err error
+	if in.Date, err = f.titleAndDate(); err != nil {
 		return in, err
 	}
-	in.Date = date
+	if err := h.setAmount(r, f, &in, existing); err != nil {
+		return in, err
+	}
+	rows := f.checkedRows()
+	if f.IsReimbursement {
+		in.SplitMode = domain.SplitEqual
+		in.Parts, err = reimbursementParts(rows)
+		return in, err
+	}
+	in.Parts, err = splitParts(in.SplitMode, f.CurrencyCode(), rows)
+	return in, err
+}
 
+// titleAndDate checks that there is a title and parses the date.
+func (f expenseForm) titleAndDate() (time.Time, error) {
+	if strings.TrimSpace(f.Title) == "" {
+		return time.Time{}, invalidf("Bitte einen Titel angeben.")
+	}
+	return domain.ParseDate(f.Date)
+}
+
+// setAmount reads currency and amount into in: euro amounts directly; for a
+// foreign currency the original amount plus rate and source (formRate). The
+// store converts foreign amounts itself; f.EURCents is only for the form.
+func (h handlers) setAmount(r *http.Request, f *expenseForm, in *store.ExpenseInput, existing *store.Expense) error {
 	cur := f.CurrencyCode()
 	if !isCurrencyCode(cur) {
-		return in, invalidf("Ungültige Währung „%s“ – bitte einen dreistelligen ISO-Code wie USD angeben.", cur)
+		return invalidf("Ungültige Währung „%s“ – bitte einen dreistelligen ISO-Code wie USD angeben.", cur)
 	}
+	var err error
 	if cur == "EUR" {
 		if in.AmountCents, err = domain.ParseCents(f.Amount); err != nil {
-			return in, err
+			return err
 		}
-	} else {
-		dec := domain.CurrencyDecimals(cur)
-		if in.OriginalAmountMinor, err = domain.ParseMinor(f.Amount, dec); err != nil {
-			return in, err
-		}
-		if in.OriginalAmountMinor <= 0 {
-			return in, invalidf("Der Betrag muss größer als 0 sein.")
-		}
-		in.OriginalCurrency = cur
-		if f.Rate != "" {
-			if in.FXRate, err = domain.ParseRate(f.Rate); err != nil {
-				return in, err
-			}
-			in.FXSource = domain.FXSourceManual
-			if f.RateSource == domain.FXSourceECB {
-				in.FXSource = domain.FXSourceECB
-			}
-		} else {
-			rate, err := h.lookupRate(r, cur, date)
-			if err != nil {
-				return in, err
-			}
-			in.FXRate, in.FXSource = rate.Rate, rate.Source
-			f.Rate, f.RateSource = rateInput(rate.Rate), rate.Source
-		}
-		in.AmountCents = domain.ToEURCents(in.OriginalAmountMinor, cur, in.FXRate)
 		if in.AmountCents <= 0 {
-			return in, invalidf("Umgerechnet ergibt der Betrag 0 € – bitte Betrag und Kurs prüfen.")
+			return invalidf("Der Betrag muss größer als 0 sein.")
 		}
-		f.EURCents = in.AmountCents
+		return nil
 	}
-	if in.AmountCents <= 0 {
-		return in, invalidf("Der Betrag muss größer als 0 sein.")
+	if in.OriginalAmountMinor, err = domain.ParseMinor(f.Amount, domain.CurrencyDecimals(cur)); err != nil {
+		return err
 	}
+	if in.OriginalAmountMinor <= 0 {
+		return invalidf("Der Betrag muss größer als 0 sein.")
+	}
+	in.OriginalCurrency = cur
+	if in.FXRate, in.FXSource, err = h.formRate(r, f, cur, in.Date, existing); err != nil {
+		return err
+	}
+	f.EURCents = domain.ToEURCents(in.OriginalAmountMinor, cur, in.FXRate)
+	return nil
+}
 
-	// Split.
+// checkedRows returns the people ticked in the split.
+func (f expenseForm) checkedRows() []splitRow {
 	var rows []splitRow
 	for _, row := range f.Rows {
 		if row.Checked {
 			rows = append(rows, row)
 		}
 	}
-	if f.IsReimbursement {
-		if len(rows) != 1 {
-			return in, invalidf("Eine Rückzahlung geht an genau eine Person – bitte genau einen Empfänger ankreuzen.")
-		}
-		in.SplitMode = domain.SplitEqual
-		in.Parts = []domain.Part{{ParticipantID: rows[0].ID}}
-		return in, nil
+	return rows
+}
+
+// reimbursementParts: a reimbursement goes to exactly one ticked person.
+func reimbursementParts(rows []splitRow) ([]domain.Part, error) {
+	if len(rows) != 1 {
+		return nil, invalidf("Eine Rückzahlung geht an genau eine Person – bitte genau einen Empfänger ankreuzen.")
 	}
+	return []domain.Part{{ParticipantID: rows[0].ID}}, nil
+}
+
+// splitParts reads the values of the ticked people as weights for mode;
+// amounts are in currency cur. Error messages name the person.
+func splitParts(mode domain.SplitMode, cur string, rows []splitRow) ([]domain.Part, error) {
 	if len(rows) == 0 {
-		return in, invalidf("Bitte mindestens eine Person ankreuzen, für die bezahlt wurde.")
+		return nil, invalidf("Bitte mindestens eine Person ankreuzen, für die bezahlt wurde.")
 	}
-	foreignAmounts := cur != "EUR" && in.SplitMode == domain.SplitAmount
-	var origSum int64
+	var parts []domain.Part
 	for _, row := range rows {
-		p := domain.Part{ParticipantID: row.ID}
-		v := row.Value
-		var err error
-		switch in.SplitMode {
-		case domain.SplitShares:
-			if v == "" {
-				v = "1"
-			}
-			p.Weight, err = strconv.ParseInt(v, 10, 64)
-			if err != nil {
-				err = invalidf("%s: Anteile müssen ganze Zahlen sein („%s“).", row.Name, v)
-			}
-		case domain.SplitPercent:
-			if v == "" {
-				v = "0"
-			}
-			p.Weight, err = domain.ParseBasisPoints(v)
-		case domain.SplitAmount:
-			if v == "" {
-				v = "0"
-			}
-			if foreignAmounts {
-				p.Weight, err = domain.ParseMinor(v, domain.CurrencyDecimals(cur))
-				origSum += p.Weight
-			} else {
-				p.Weight, err = domain.ParseCents(v)
-			}
-		}
+		w, err := splitWeight(mode, cur, row)
 		if err != nil {
 			if msg, ok := validationMsg(err); ok && !strings.HasPrefix(msg, row.Name) {
 				err = invalidf("%s: %s", row.Name, msg)
 			}
-			return in, err
+			return nil, err
 		}
-		if p.Weight < 0 {
-			return in, invalidf("%s: Negative Werte sind nicht erlaubt.", row.Name)
+		if w < 0 {
+			return nil, invalidf("%s: Negative Werte sind nicht erlaubt.", row.Name)
 		}
-		in.Parts = append(in.Parts, p)
+		parts = append(parts, domain.Part{ParticipantID: row.ID, Weight: w})
 	}
-	if foreignAmounts {
-		if origSum != in.OriginalAmountMinor {
-			return in, invalidf("Die Beträge müssen zusammen %s ergeben (aktuell %s).",
-				domain.FormatMoney(in.OriginalAmountMinor, cur), domain.FormatMoney(origSum, cur))
+	return parts, nil
+}
+
+// splitWeight parses a person's value: shares (empty = 1), percent as basis
+// points or an amount in the original currency (empty = 0); 0 for "equal".
+func splitWeight(mode domain.SplitMode, cur string, row splitRow) (int64, error) {
+	v := row.Value
+	switch mode {
+	case domain.SplitShares:
+		if v == "" {
+			v = "1"
 		}
-		// Sort by ID: a tie in the remainder → smaller ID, as in domain.Split
-		// and in the JS preview (independent of the order in the form).
-		slices.SortFunc(in.Parts, func(a, b domain.Part) int { return cmp.Compare(a.ParticipantID, b.ParticipantID) })
-		w := make([]int64, len(in.Parts))
-		for i, p := range in.Parts {
-			w[i] = p.Weight
+		w, err := strconv.ParseInt(v, 10, 64)
+		if err != nil {
+			return 0, invalidf("%s: Anteile müssen ganze Zahlen sein („%s“).", row.Name, v)
 		}
-		for i, c := range allocate(in.AmountCents, w) {
-			in.Parts[i].Weight = c
+		return w, nil
+	case domain.SplitPercent:
+		if v == "" {
+			v = "0"
+		}
+		return domain.ParseBasisPoints(v)
+	case domain.SplitAmount:
+		if v == "" {
+			v = "0"
+		}
+		return domain.ParseMinor(v, domain.CurrencyDecimals(cur))
+	}
+	return 0, nil
+}
+
+// formRate returns rate and source for a foreign currency expense:
+//   - no rate in the form: the rate of cur on date via d.FX (copied into the
+//     form);
+//   - a rate marked as ECB (hidden field kurs_quelle, set by expense-form.js):
+//     it is checked against the ECB rate of cur on date, since without JS a
+//     rate fetched for another currency or date stays in the field. A
+//     differing rate is replaced by the looked-up one (copied into the form);
+//     if none is available, the form asks for a manual rate. Saving an
+//     expense with unchanged currency, date and rate keeps its rate without
+//     a lookup, so that a later published rate does not change it;
+//   - any other rate counts as entered by hand.
+func (h handlers) formRate(r *http.Request, f *expenseForm, cur string, date time.Time, existing *store.Expense) (float64, string, error) {
+	if f.Rate != "" {
+		rate, err := domain.ParseRate(f.Rate)
+		if err != nil {
+			return 0, "", err
+		}
+		if f.RateSource != domain.FXSourceECB {
+			return rate, domain.FXSourceManual, nil
+		}
+		if existing != nil && existing.FXSource == domain.FXSourceECB && existing.OriginalCurrency == cur &&
+			existing.Date.Equal(date) && existing.FXRate == rate {
+			return rate, domain.FXSourceECB, nil
 		}
 	}
-	return in, nil
+	looked, err := h.lookupRate(r, cur, date)
+	if err != nil {
+		f.Rate, f.RateSource = "", ""
+		return 0, "", err
+	}
+	f.Rate, f.RateSource = domain.FormatRate(looked.Rate), looked.Source
+	return looked.Rate, looked.Source, nil
 }
 
 // lookupRate fetches the rate via d.FX (may be nil in tests).
@@ -533,18 +551,18 @@ func (h handlers) renderExpense(w http.ResponseWriter, r *http.Request, status i
 	ctx := r.Context()
 	cats, err := h.d.Store.ListCategories(ctx, true)
 	if err != nil {
-		h.serverError(w, r, err)
+		h.d.ServerError(w, r, err)
 		return
 	}
 	people, err := h.d.Store.ListParticipants(ctx, true)
 	if err != nil {
-		h.serverError(w, r, err)
+		h.d.ServerError(w, r, err)
 		return
 	}
 	p := expensePage{Form: f, Expense: e, Currencies: commonCurrencies, SplitModes: domain.SplitModes, Rotation: f.ID}
 	if p.Rotation == 0 {
 		if p.Rotation, err = h.d.Store.NextExpenseID(ctx); err != nil {
-			h.serverError(w, r, err)
+			h.d.ServerError(w, r, err)
 			return
 		}
 	}
@@ -555,12 +573,12 @@ func (h handlers) renderExpense(w http.ResponseWriter, r *http.Request, status i
 	}
 	hist, err := h.d.Store.CategoryHistory(ctx)
 	if err != nil {
-		h.serverError(w, r, err)
+		h.d.ServerError(w, r, err)
 		return
 	}
 	suggest, err := json.Marshal(suggestCategories(hist))
 	if err != nil {
-		h.serverError(w, r, err)
+		h.d.ServerError(w, r, err)
 		return
 	}
 	p.Suggest = string(suggest)
@@ -574,7 +592,7 @@ func (h handlers) renderExpense(w http.ResponseWriter, r *http.Request, status i
 		title = e.Title
 		acts, err := h.d.Store.ListActivity(ctx, store.ActivityFilter{ExpenseID: e.ID, Limit: 50})
 		if err != nil {
-			h.serverError(w, r, err)
+			h.d.ServerError(w, r, err)
 			return
 		}
 		p.History = activityItems(acts)
@@ -585,7 +603,7 @@ func (h handlers) renderExpense(w http.ResponseWriter, r *http.Request, status i
 func (h handlers) expenseNew(w http.ResponseWriter, r *http.Request) {
 	people, err := h.d.Store.ListParticipants(r.Context(), true)
 	if err != nil {
-		h.serverError(w, r, err)
+		h.d.ServerError(w, r, err)
 		return
 	}
 	f := newExpenseForm(r.URL.Query(), h.d.Today(), me(r).ID, people)
@@ -603,7 +621,7 @@ func (h handlers) expenseShow(w http.ResponseWriter, r *http.Request) {
 	}
 	people, err := h.d.Store.ListParticipants(r.Context(), true)
 	if err != nil {
-		h.serverError(w, r, err)
+		h.d.ServerError(w, r, err)
 		return
 	}
 	h.renderExpense(w, r, http.StatusOK, formFromExpense(e, people), &e, "")
@@ -630,7 +648,7 @@ func (h handlers) saveExpense(w http.ResponseWriter, r *http.Request, existing *
 	}
 	people, err := h.d.Store.ListParticipants(ctx, true)
 	if err != nil {
-		h.serverError(w, r, err)
+		h.d.ServerError(w, r, err)
 		return
 	}
 	var id int64
@@ -638,7 +656,7 @@ func (h handlers) saveExpense(w http.ResponseWriter, r *http.Request, existing *
 		id = existing.ID
 	}
 	f := readExpenseForm(r, id, people, existing)
-	in, err := h.toInput(r, &f)
+	in, err := h.toInput(r, &f, existing)
 	if err == nil {
 		if existing == nil {
 			_, err = h.d.Store.CreateExpense(ctx, me(r).ID, in)
@@ -655,7 +673,7 @@ func (h handlers) saveExpense(w http.ResponseWriter, r *http.Request, existing *
 		return
 	}
 	if err != nil {
-		h.serverError(w, r, err)
+		h.d.ServerError(w, r, err)
 		return
 	}
 	kind := "Ausgabe"
@@ -681,7 +699,7 @@ func (h handlers) expenseDelete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err != nil {
-		h.serverError(w, r, err)
+		h.d.ServerError(w, r, err)
 		return
 	}
 	SetFlash(w, fmt.Sprintf("„%s“ gelöscht.", e.Title))
@@ -702,7 +720,7 @@ func (h handlers) loadExpense(w http.ResponseWriter, r *http.Request) (store.Exp
 		return e, false
 	}
 	if err != nil {
-		h.serverError(w, r, err)
+		h.d.ServerError(w, r, err)
 		return e, false
 	}
 	return e, true

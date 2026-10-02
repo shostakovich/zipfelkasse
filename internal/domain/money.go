@@ -95,6 +95,11 @@ func parseFixed(s string, decimals int) (int64, error) {
 	if !ok {
 		return 0, invalid("Ungültiger Betrag „%s“.", s)
 	}
+	// Superfluous zeros are fine: "1200,00" is 1200 yen (e.g. after
+	// switching the currency of an amount from EUR to JPY).
+	for len(frac) > decimals && frac[len(frac)-1] == '0' {
+		frac = frac[:len(frac)-1]
+	}
 	if len(frac) > decimals {
 		if decimals == 0 {
 			return 0, invalid("Dieser Betrag darf keine Nachkommastellen haben.")
@@ -121,7 +126,9 @@ func parseFixed(s string, decimals int) (int64, error) {
 // occur, the last one is the decimal separator; repeated occurrences of the
 // same kind are thousands separators. A single dot before exactly three
 // digits counts as a thousands separator if dotThousands is set
-// ("17.000" = 17000).
+// ("17.000" = 17000), unless the digits before it are only zeros: then it is
+// a decimal point ("0.856" = 0,856), since no number starts with a zero
+// thousands group.
 func splitNumber(s string, dotThousands bool) (neg bool, intPart, frac string, ok bool) {
 	if s == "" {
 		return false, "", "", false
@@ -171,7 +178,7 @@ func splitNumber(s string, dotThousands bool) (neg bool, intPart, frac string, o
 		// Exactly one separator.
 		pos := max(lastDot, lastComma)
 		after := len(s) - pos - 1
-		if s[pos] == '.' && after == 3 && dotThousands && pos > 0 {
+		if s[pos] == '.' && after == 3 && dotThousands && strings.Trim(s[:pos], "0") != "" {
 			thousands = '.'
 		} else {
 			intPart, frac = s[:pos], s[pos+1:]
@@ -207,8 +214,9 @@ func splitNumber(s string, dotThousands bool) (neg bool, intPart, frac string, o
 // ParseRate parses an exchange rate (units of the currency per 1 €) such as
 // "1,0857", "1.0857", "17000", "17.000,5" or "17,000.5". Separators work as
 // for amounts (ParseMinor): a single dot before exactly three digits is a
-// thousands separator ("17.000" = 17000, "1.085" = 1085), so decimals must be
-// given with a comma or with more/fewer than three digits. Rates ≤ 0 are invalid.
+// thousands separator ("17.000" = 17000, "1.085" = 1085), except after a
+// leading zero ("0.856" = 0,856); otherwise decimals must be given with a
+// comma or with more/fewer than three digits. Rates ≤ 0 are invalid.
 func ParseRate(s string) (float64, error) {
 	s = strings.ReplaceAll(strings.TrimSpace(s), " ", "")
 	s = strings.ReplaceAll(s, " ", "")
@@ -227,6 +235,34 @@ func ParseRate(s string) (float64, error) {
 // formatFixed formats v with the given number of decimals, a comma as
 // decimal separator and optionally dots as thousands separators.
 func formatFixed(v int64, decimals int, group bool) string {
+	return formatSep(v, decimals, ',', group)
+}
+
+// FormatDecimal formats v (in units of 10^-decimals) without thousands
+// separators and with sep as decimal separator: (123456, 2, ',') → "1234,56",
+// (-5, 2, '.') → "-0.05", (7, 0, '.') → "7".
+func FormatDecimal(v int64, decimals int, sep byte) string {
+	return formatSep(v, decimals, sep, false)
+}
+
+// FormatMinorInput formats an amount in the currency's smallest unit for an
+// input field: (123456, "USD") → "1234,56", (500, "JPY") → "500".
+func FormatMinorInput(minor int64, currency string) string {
+	return FormatDecimal(minor, CurrencyDecimals(currency), ',')
+}
+
+// FormatRate formats an exchange rate with a comma as decimal separator and
+// without superfluous zeros: 1.0876 → "1,0876". Rates <= 0 yield "".
+func FormatRate(rate float64) string {
+	if !(rate > 0) {
+		return ""
+	}
+	return strings.Replace(strconv.FormatFloat(rate, 'f', -1, 64), ".", ",", 1)
+}
+
+// formatSep formats v with the given number of decimals and sep as decimal
+// separator; with group, thousands are separated by dots.
+func formatSep(v int64, decimals int, sep byte, group bool) string {
 	neg := v < 0
 	u := uint64(v)
 	if neg {
@@ -253,7 +289,7 @@ func formatFixed(v int64, decimals int, group bool) string {
 	}
 	out := intPart
 	if decimals > 0 {
-		out += "," + frac
+		out += string(sep) + frac
 	}
 	if neg {
 		out = "-" + out

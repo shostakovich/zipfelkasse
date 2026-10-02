@@ -68,9 +68,15 @@ func TestYNABTargetChangeResetsSync(t *testing.T) {
 	if rows, _ := f.s.ListYNABSync(ctx, f.anna); len(rows) != 1 {
 		t.Error("start date discarded sync state")
 	}
+	// Changing the account: the rows stay (the sync looks for their
+	// transactions in the new account), but without the old transaction.
 	f.s.SetYNABTarget(ctx, f.anna, "p", "b", date("2026-08-01"))
-	if rows, _ := f.s.ListYNABSync(ctx, f.anna); len(rows) != 0 {
-		t.Error("account change did not discard sync state")
+	rows, _ = f.s.ListYNABSync(ctx, f.anna)
+	if len(rows) != 1 || rows[0].TxnID != "" || rows[0].Hash != YNABHashRetarget || !rows[0].SyncedAt.IsZero() {
+		t.Errorf("after account change: %+v", rows)
+	}
+	if n, _, _ := f.s.YNABSyncSummary(ctx, f.anna); n != 0 {
+		t.Errorf("synced after account change = %d", n)
 	}
 }
 

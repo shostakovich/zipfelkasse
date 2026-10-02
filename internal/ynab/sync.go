@@ -30,10 +30,17 @@ import (
 //   - "error:" + fingerprint: transferring this state failed; it is retried
 //     only on change, in the hourly full sync or via "Jetzt
 //     synchronisieren"
+//   - "error:delete": deleting the transaction (expense gone) failed; it is
+//     retried only in the full sync (like above)
 //   - "pending": creation is in progress or its outcome is unknown (timeout,
 //     5xx). The next run looks for the transaction in the account via the memo
 //     marker "zipfelkasse #ID" instead of blindly creating it again (which
 //     could create duplicates).
+//   - "retarget" (store.YNABHashRetarget, without transaction ID): plan or
+//     account changed. Like "pending", the next run looks for the
+//     transaction in the new account via the memo marker (it is there already
+//     after switching back) – but only for expenses that belong there; the
+//     rows of the others are simply dropped.
 //   - "": unknown, or create/update
 //
 // Transactions deliberately get no import_id: YNAB tries to merge imported
@@ -44,7 +51,9 @@ import (
 // longer be right. The "pending" mechanism prevents duplicates instead.
 const (
 	pendingHash      = "pending"
+	retargetHash     = store.YNABHashRetarget
 	errorHashPrefix  = "error:"
+	deleteFailedHash = errorHashPrefix + "delete"
 	hashVersion      = "v1"
 	chunkSize        = 100 // transactions per POST/PATCH
 	maxDeletesPerRun = 40  // each DELETE costs one request
@@ -274,13 +283,14 @@ func (s *Service) syncParticipant(ctx context.Context, cfg store.YNABConfig, ful
 	var pending []int64
 	for _, r := range list {
 		rows[r.ExpenseID] = r
-		if r.TxnID == "" && r.Hash == pendingHash {
+		_, wanted := wants[r.ExpenseID]
+		if r.TxnID == "" && (r.Hash == pendingHash || r.Hash == retargetHash && wanted) {
 			pending = append(pending, r.ExpenseID)
 		}
 	}
 	c := s.client(cfg.Token)
 	if len(pending) > 0 {
-		if err := s.resolvePending(ctx, c, cfg, rows, pending); err != nil {
+		if err := s.resolvePending(ctx, c, cfg, wants, rows, pending); err != nil {
 			return res, err
 		}
 	}
@@ -305,11 +315,13 @@ func (s *Service) syncParticipant(ctx context.Context, cfg store.YNABConfig, ful
 		if _, ok := wants[id]; ok {
 			continue
 		}
-		// Gone (deleted or share 0): always delete, even if the last
-		// attempt (e.g. a PATCH) failed.
-		if r.TxnID == "" {
+		// Gone (deleted or share 0): delete, even if the last attempt (e.g.
+		// a PATCH) failed. Only a failed DELETE waits for the full sync.
+		switch {
+		case r.TxnID == "":
 			forget = append(forget, id)
-		} else {
+		case !full && r.Hash == deleteFailedHash:
+		default:
 			deletes = append(deletes, r)
 		}
 	}
@@ -334,10 +346,15 @@ func (s *Service) syncParticipant(ctx context.Context, cfg store.YNABConfig, ful
 	return res, nil
 }
 
-// resolvePending resolves creations with an unknown outcome via the memo
-// marker of the transactions in the account (one request).
-func (s *Service) resolvePending(ctx context.Context, c *client, cfg store.YNABConfig, rows map[int64]store.YNABSync, pending []int64) error {
-	txns, err := c.accountTransactions(ctx, cfg.PlanID, cfg.AccountID, cfg.StartDate)
+// resolvePending resolves creations with an unknown outcome and rows after a
+// change of the target (retargetHash) via the memo marker of the
+// transactions in the account (one request).
+func (s *Service) resolvePending(ctx context.Context, c *client, cfg store.YNABConfig, wants map[int64]want, rows map[int64]store.YNABSync, pending []int64) error {
+	since, err := s.pendingSince(ctx, cfg, wants, pending)
+	if err != nil {
+		return err
+	}
+	txns, err := c.accountTransactions(ctx, cfg.PlanID, cfg.AccountID, since)
 	if err != nil {
 		return err
 	}
@@ -358,6 +375,29 @@ func (s *Service) resolvePending(ctx context.Context, c *client, cfg store.YNABC
 		upd = append(upd, r)
 	}
 	return s.d.Store.PutYNABSync(ctx, upd...)
+}
+
+// pendingSince is the date from which resolvePending searches: the start
+// date, or the earliest date of the pending expenses if earlier (backdated
+// expenses belong too, see Selection).
+func (s *Service) pendingSince(ctx context.Context, cfg store.YNABConfig, wants map[int64]want, pending []int64) (time.Time, error) {
+	since := cfg.StartDate
+	for _, id := range pending {
+		w, ok := wants[id]
+		date := w.Date
+		if !ok {
+			// no longer wanted (e.g. deleted): its date from the expense
+			e, err := s.d.Store.GetExpense(ctx, id)
+			if err != nil {
+				return since, err
+			}
+			date = e.Date
+		}
+		if date.Before(since) {
+			since = date
+		}
+	}
+	return since, nil
 }
 
 func (s *Service) row(cfg store.YNABConfig, w want) store.YNABSync {
@@ -391,8 +431,7 @@ func (s *Service) create(ctx context.Context, c *client, cfg store.YNABConfig, w
 		case uncertain(err):
 			return err // stays "pending", the next run resolves it
 		case runLevel(err):
-			// certainly not created: undo the pending mark
-			s.markPending(ctx, cfg, chunk, "")
+			s.unmarkPending(ctx, cfg, chunk) // certainly not created
 			return err
 		default:
 			// Batch call rejected (400/409/…): try one by one to find the
@@ -412,6 +451,16 @@ func (s *Service) markPending(ctx context.Context, cfg store.YNABConfig, ws []wa
 		rows[i].Hash = hash
 	}
 	return s.d.Store.PutYNABSync(ctx, rows...)
+}
+
+// unmarkPending undoes the pending mark of transactions that were certainly
+// not created. A failure is only logged (the run already ends with an
+// error): rows left "pending" cost the next run one search request
+// (resolvePending), which does not find them and creates them normally.
+func (s *Service) unmarkPending(ctx context.Context, cfg store.YNABConfig, ws []want) {
+	if err := s.markPending(ctx, cfg, ws, ""); err != nil {
+		s.d.Log.Warn("ynab: undo pending mark", "person", cfg.ParticipantID, "err", err)
+	}
 }
 
 func (s *Service) applyCreated(ctx context.Context, cfg store.YNABConfig, ws []want, got []apiTxn, res *syncResult) error {
@@ -454,10 +503,10 @@ func (s *Service) createEach(ctx context.Context, c *client, cfg store.YNABConfi
 				return err
 			}
 		case uncertain(err):
-			s.markPending(ctx, cfg, ws[i+1:], "")
+			s.unmarkPending(ctx, cfg, ws[i+1:]) // not tried yet
 			return err
 		case runLevel(err):
-			s.markPending(ctx, cfg, ws[i:], "")
+			s.unmarkPending(ctx, cfg, ws[i:])
 			return err
 		default:
 			res.Failed++
@@ -557,8 +606,10 @@ func (s *Service) updateEach(ctx context.Context, c *client, cfg store.YNABConfi
 				return err
 			}
 		case statusOf(err) == http.StatusNotFound:
-			// The transaction no longer exists in YNAB: create it again. (If
-			// the whole plan is gone, creating then fails with a clear error.)
+			// The transaction no longer exists in YNAB: create it again.
+			if err := s.confirmTarget(ctx, c, cfg); err != nil {
+				return err
+			}
 			succeeded = true
 			res.Again = true
 			if err := s.d.Store.PutYNABSync(ctx, s.row(cfg, w)); err != nil {
@@ -579,7 +630,8 @@ func (s *Service) updateEach(ctx context.Context, c *client, cfg store.YNABConfi
 	return nil
 }
 
-// remove deletes transactions that are gone (one by one; 404 counts as done).
+// remove deletes transactions that are gone (one by one; 404 counts as done
+// if plan and account exist).
 func (s *Service) remove(ctx context.Context, c *client, cfg store.YNABConfig, rows []store.YNABSync, res *syncResult) error {
 	for i, r := range rows {
 		if i >= maxDeletesPerRun {
@@ -587,8 +639,14 @@ func (s *Service) remove(ctx context.Context, c *client, cfg store.YNABConfig, r
 			return nil
 		}
 		err := c.deleteTransaction(ctx, cfg.PlanID, r.TxnID)
+		if statusOf(err) == http.StatusNotFound {
+			if err := s.confirmTarget(ctx, c, cfg); err != nil {
+				return err
+			}
+			err = nil // already deleted in YNAB
+		}
 		switch {
-		case err == nil || statusOf(err) == http.StatusNotFound:
+		case err == nil:
 			res.Deleted++
 			if err := s.d.Store.DeleteYNABSync(ctx, cfg.ParticipantID, r.ExpenseID); err != nil {
 				return err
@@ -597,12 +655,34 @@ func (s *Service) remove(ctx context.Context, c *client, cfg store.YNABConfig, r
 			return err
 		default:
 			res.Failed++
-			r.LastError = redact(err.Error(), cfg.Token)
+			r.Hash, r.LastError = deleteFailedHash, redact(err.Error(), cfg.Token)
 			if err := s.d.Store.PutYNABSync(ctx, r); err != nil {
 				return err
 			}
 		}
 	}
+	return nil
+}
+
+// confirmTarget checks – once per run, with one request – that plan and
+// account exist before a 404 for a single transaction is taken as "the
+// transaction is gone". YNAB answers 404 for every transaction as well if the
+// whole plan is gone or invisible to the token (token of another YNAB user);
+// dropping transaction IDs or counting DELETEs as done would then lead to
+// duplicates and leftovers once the setup is corrected. Its error stops the
+// run (404: "Plan oder Konto gibt es nicht").
+func (s *Service) confirmTarget(ctx context.Context, c *client, cfg store.YNABConfig) error {
+	if c.targetOK {
+		return nil
+	}
+	a, err := c.account(ctx, cfg.PlanID, cfg.AccountID)
+	if err == nil && a.Deleted {
+		err = &APIError{Status: http.StatusNotFound, Detail: "Konto gelöscht"}
+	}
+	if err != nil {
+		return err
+	}
+	c.targetOK = true
 	return nil
 }
 

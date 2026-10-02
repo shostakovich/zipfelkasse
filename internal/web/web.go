@@ -86,7 +86,7 @@ type whoData struct {
 func (h handlers) renderWho(w http.ResponseWriter, r *http.Request, status int, data whoData, errMsg string) {
 	ps, err := h.d.Store.ListParticipants(r.Context(), false)
 	if err != nil {
-		h.serverError(w, r, err)
+		h.d.ServerError(w, r, err)
 		return
 	}
 	data.Participants = ps
@@ -119,7 +119,7 @@ func (h handlers) whoCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err != nil {
-		h.serverError(w, r, err)
+		h.d.ServerError(w, r, err)
 		return
 	}
 	// The actor is the new person themselves (no cookie yet, hence no Me).
@@ -131,11 +131,6 @@ func (h handlers) whoCreate(w http.ResponseWriter, r *http.Request) {
 	SetIdentity(w, r, id)
 	SetFlash(w, "Willkommen!")
 	http.Redirect(w, r, ret, http.StatusSeeOther)
-}
-
-func (h handlers) serverError(w http.ResponseWriter, r *http.Request, err error) {
-	h.d.Log.Error("request", "method", r.Method, "path", r.URL.Path, "err", err)
-	h.d.Render.Error(w, r, http.StatusInternalServerError, "Da ist etwas schiefgegangen.")
 }
 
 func (h handlers) notFound(w http.ResponseWriter, r *http.Request, msg string) {

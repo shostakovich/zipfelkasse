@@ -109,11 +109,6 @@ func (h handlers) invalid(w http.ResponseWriter, r *http.Request, err error) {
 	h.render(w, r, http.StatusUnprocessableEntity, msg, period{})
 }
 
-func (h handlers) serverError(w http.ResponseWriter, r *http.Request, err error) {
-	h.d.Log.Error("request", "method", r.Method, "path", r.URL.Path, "err", err)
-	h.d.Render.Error(w, r, http.StatusInternalServerError, "Da ist etwas schiefgegangen.")
-}
-
 // expenses loads the non-deleted expenses in the range, chronologically.
 func (h handlers) expenses(r *http.Request, p period, participantID int64) ([]store.Expense, error) {
 	es, err := h.d.Store.ListExpenses(r.Context(), store.ExpenseFilter{From: p.From, To: p.To, ParticipantID: participantID})
@@ -133,7 +128,7 @@ func (h handlers) load(w http.ResponseWriter, r *http.Request, participantID int
 	}
 	es, err := h.expenses(r, p, participantID)
 	if err != nil {
-		h.serverError(w, r, err)
+		h.d.ServerError(w, r, err)
 		return p, nil, false
 	}
 	return p, es, true
@@ -155,12 +150,12 @@ func (h handlers) expensesCSV(w http.ResponseWriter, r *http.Request) {
 	}
 	people, err := h.d.Store.ListParticipants(r.Context(), true)
 	if err != nil {
-		h.serverError(w, r, err)
+		h.d.ServerError(w, r, err)
 		return
 	}
 	var buf bytes.Buffer
 	if err := writeExpensesCSV(&buf, people, es); err != nil {
-		h.serverError(w, r, err)
+		h.d.ServerError(w, r, err)
 		return
 	}
 	send(w, "text/csv; charset=utf-8", "zipfelkasse-ausgaben-"+p.suffix(h.d.Today())+".csv", buf.Bytes())
@@ -173,12 +168,12 @@ func (h handlers) expensesJSON(w http.ResponseWriter, r *http.Request) {
 	}
 	people, err := h.d.Store.ListParticipants(r.Context(), true)
 	if err != nil {
-		h.serverError(w, r, err)
+		h.d.ServerError(w, r, err)
 		return
 	}
 	var buf bytes.Buffer
 	if err := writeExpensesJSON(&buf, h.d.Store.GroupName(r.Context()), h.now(), p, people, es); err != nil {
-		h.serverError(w, r, err)
+		h.d.ServerError(w, r, err)
 		return
 	}
 	send(w, "application/json; charset=utf-8", "zipfelkasse-ausgaben-"+p.suffix(h.d.Today())+".json", buf.Bytes())
@@ -195,7 +190,7 @@ func (h handlers) postings(w http.ResponseWriter, r *http.Request) (store.Partic
 	}
 	sel, err := ynab.SelectionFor(r.Context(), h.d.Store, me.ID, ynab.Today(h.now(), h.d.Config.Location))
 	if err != nil {
-		h.serverError(w, r, err)
+		h.d.ServerError(w, r, err)
 		return me, p, nil, false
 	}
 	return me, p, sel.Postings(es, me.ID), true
@@ -209,7 +204,7 @@ func (h handlers) ynabOFX(w http.ResponseWriter, r *http.Request) {
 	var buf bytes.Buffer
 	acct := "ZIPFELKASSE-" + strconv.FormatInt(me.ID, 10)
 	if err := writeOFX(&buf, ps, acct, p.From, p.To, h.now()); err != nil {
-		h.serverError(w, r, err)
+		h.d.ServerError(w, r, err)
 		return
 	}
 	send(w, "application/x-ofx", "zipfelkasse-ynab-"+p.suffix(h.d.Today())+".ofx", buf.Bytes())
@@ -222,7 +217,7 @@ func (h handlers) ynabCSV(w http.ResponseWriter, r *http.Request) {
 	}
 	var buf bytes.Buffer
 	if err := writeYNABCSV(&buf, ps); err != nil {
-		h.serverError(w, r, err)
+		h.d.ServerError(w, r, err)
 		return
 	}
 	send(w, "text/csv; charset=utf-8", "zipfelkasse-ynab-"+p.suffix(h.d.Today())+".csv", buf.Bytes())

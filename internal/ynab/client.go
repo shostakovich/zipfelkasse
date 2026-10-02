@@ -31,6 +31,8 @@ type client struct {
 	http    *http.Client
 	baseURL string
 	token   string
+
+	targetOK bool // plan and account confirmed in this sync run (see Service.confirmTarget)
 }
 
 // APIError is an error response of the YNAB API. Its message (German) is
@@ -235,6 +237,17 @@ func (c *client) categories(ctx context.Context, planID string) ([]apiCategoryGr
 	}
 	err := c.do(ctx, http.MethodGet, planPath(planID)+"/categories", nil, &out)
 	return out.Data.CategoryGroups, err
+}
+
+// account returns an account of a plan.
+func (c *client) account(ctx context.Context, planID, accountID string) (apiAccount, error) {
+	var out struct {
+		Data struct {
+			Account apiAccount `json:"account"`
+		} `json:"data"`
+	}
+	err := c.do(ctx, http.MethodGet, planPath(planID)+"/accounts/"+url.PathEscape(accountID), nil, &out)
+	return out.Data.Account, err
 }
 
 type saveResult struct {

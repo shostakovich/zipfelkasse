@@ -54,7 +54,7 @@ func (h handlers) manifest(w http.ResponseWriter, r *http.Request) {
 func (h handlers) serviceWorker(w http.ResponseWriter, r *http.Request) {
 	b, err := staticFS.ReadFile("static/sw.js")
 	if err != nil {
-		h.serverError(w, r, err)
+		h.d.ServerError(w, r, err)
 		return
 	}
 	w.Header().Set("Content-Type", "text/javascript; charset=utf-8")
@@ -65,7 +65,7 @@ func (h handlers) serviceWorker(w http.ResponseWriter, r *http.Request) {
 func (h handlers) favicon(w http.ResponseWriter, r *http.Request) {
 	b, err := staticFS.ReadFile("static/icons/favicon-32.png")
 	if err != nil {
-		h.serverError(w, r, err)
+		h.d.ServerError(w, r, err)
 		return
 	}
 	w.Header().Set("Content-Type", "image/png")

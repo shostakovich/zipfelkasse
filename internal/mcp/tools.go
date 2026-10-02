@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"log/slog"
 	"slices"
-	"strconv"
 	"strings"
 	"time"
 
@@ -207,30 +206,13 @@ func decodeArgs(raw json.RawMessage, v any) error {
 
 // eur formats cents as a locale-neutral amount: 123456 → "1234.56" (dot as
 // decimal separator, no thousands separator, no currency sign).
-func eur(c int64) string { return decimal(c, 2) }
-
-// decimal formats v (in units of 10^-decimals) with a dot as decimal
-// separator: (1234, 2) → "12.34", (-5, 2) → "-0.05", (7, 0) → "7".
-func decimal(v int64, decimals int) string {
-	sign, u := "", uint64(v)
-	if v < 0 {
-		sign, u = "-", uint64(-v)
-	}
-	if decimals <= 0 {
-		return sign + strconv.FormatUint(u, 10)
-	}
-	p := uint64(1)
-	for range decimals {
-		p *= 10
-	}
-	return fmt.Sprintf("%s%d.%0*d", sign, u/p, decimals, u%p)
-}
+func eur(c int64) string { return domain.FormatDecimal(c, 2, '.') }
 
 // money formats an amount in the smallest unit of a currency: (2340, "USD")
 // → "23.40 USD".
 func money(minor int64, currency string) string {
 	currency = strings.ToUpper(strings.TrimSpace(currency))
-	return decimal(minor, domain.CurrencyDecimals(currency)) + " " + currency
+	return domain.FormatDecimal(minor, domain.CurrencyDecimals(currency), '.') + " " + currency
 }
 
 func parseDateArg(name, v string) (time.Time, error) {
@@ -617,10 +599,11 @@ Tables:
     fx_rate (units of foreign currency per 1 EUR, ECB format), fx_source ('ezb' = ECB reference rate, 'manuell' = entered manually, or '' for EUR). amount_cents is already converted.
   * recurring_id: created automatically from a recurring rule. created_at/updated_at: timestamps.
 - expense_shares: split of each expense across people. amount_cents = this person's share in cents (sum per expense = expenses.amount_cents).
-  weight depends on split_mode: equal 1, shares the share count, percent basis points (sum 10000), amount cents.
+  weight depends on split_mode: equal 1, shares the share count, percent basis points (sum 10000), amount the amount in the smallest unit of original_currency (sum = original_amount_minor; cents for EUR).
 - recurring: rules for recurring expenses (template_json = template as JSON, frequency weekly|monthly|yearly, start_date, next_date, active).
 - activity: change log (at, actor_id NULL = system, action expense_created|expense_updated|expense_deleted, expense_id, details_json).
-- fx_rates: exchange rates per currency and date (foreign currency per 1 EUR), source 'ezb' or 'manuell'.
+- fx_rates: exchange rates per currency, source ('ezb' or 'manuell') and date (foreign currency per 1 EUR).
+  A day can have both an ECB and a manual rate; the most recent manual rate on or before a date takes precedence over the ECB rate.
 - settings: settings (key/value, e.g. group_name, default_currency).
 YNAB tables (credentials) are not visible via MCP.
 

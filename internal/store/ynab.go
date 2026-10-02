@@ -106,9 +106,11 @@ func (s *Store) SetYNABToken(ctx context.Context, participantID int64, token str
 }
 
 // SetYNABTarget sets plan, account and start date. The connection must
-// exist (otherwise ErrNotFound). If plan or account change, the person's sync
-// state is discarded (transactions in the old account stay there, everything
-// is created anew in the new account) and ConnectedAt is reset.
+// exist (otherwise ErrNotFound). If plan or account change, ConnectedAt is
+// reset and the person's sync rows are marked with YNABHashRetarget and
+// without transaction ID: transactions in the old account stay there, and
+// the sync first looks for each expense in the new account (it may be there
+// already, e.g. after switching back) before creating it anew.
 func (s *Store) SetYNABTarget(ctx context.Context, participantID int64, planID, accountID string, start time.Time) error {
 	var startVal any
 	if !start.IsZero() {
@@ -125,7 +127,8 @@ func (s *Store) SetYNABTarget(ctx context.Context, participantID int64, planID, 
 			return err
 		}
 		if oldPlan != planID || oldAccount != accountID {
-			if _, err := tx.ExecContext(ctx, "DELETE FROM ynab_sync WHERE participant_id = ?", participantID); err != nil {
+			if _, err := tx.ExecContext(ctx, `UPDATE ynab_sync SET ynab_txn_id = '', synced_hash = ?, synced_at = NULL, last_error = ''
+				WHERE participant_id = ?`, YNABHashRetarget, participantID); err != nil {
 				return err
 			}
 			if _, err := tx.ExecContext(ctx, `INSERT INTO settings (key, value) VALUES (?, ?)
@@ -205,7 +208,7 @@ func (s *Store) SetYNABCategoryMap(ctx context.Context, participantID int64, m m
 // YNABSync is the sync state of an expense for a person.
 // TxnID "" means there is (as far as we know) no transaction in YNAB.
 // Hash is the fingerprint of the last transferred target state; its meaning
-// is defined by package ynab.
+// is defined by package ynab (except YNABHashRetarget).
 type YNABSync struct {
 	ExpenseID     int64
 	ParticipantID int64
@@ -214,6 +217,10 @@ type YNABSync struct {
 	SyncedAt      time.Time // zero value = never succeeded
 	LastError     string
 }
+
+// YNABHashRetarget is the Hash of sync rows after a change of plan or account
+// (see SetYNABTarget).
+const YNABHashRetarget = "retarget"
 
 // ListYNABSync returns all of a person's sync rows.
 func (s *Store) ListYNABSync(ctx context.Context, participantID int64) ([]YNABSync, error) {

@@ -43,7 +43,7 @@ func writeExpensesCSV(w io.Writer, people []store.Participant, es []store.Expens
 			kind = "Rückzahlung"
 		}
 		if e.IsForeign() {
-			rate = strings.Replace(strconv.FormatFloat(e.FXRate, 'f', -1, 64), ".", ",", 1)
+			rate = domain.FormatRate(e.FXRate)
 		}
 		rec := []string{
 			strconv.FormatInt(e.ID, 10),
@@ -51,8 +51,8 @@ func writeExpensesCSV(w io.Writer, people []store.Participant, es []store.Expens
 			cell(e.Title),
 			cell(e.CategoryName),
 			cell(e.PaidByName),
-			decimal(e.AmountCents, 2, ','),
-			decimal(e.OriginalAmountMinor, domain.CurrencyDecimals(e.OriginalCurrency), ','),
+			domain.FormatDecimal(e.AmountCents, 2, ','),
+			domain.FormatDecimal(e.OriginalAmountMinor, domain.CurrencyDecimals(e.OriginalCurrency), ','),
 			e.OriginalCurrency,
 			rate,
 			kind,
@@ -62,7 +62,7 @@ func writeExpensesCSV(w io.Writer, people []store.Participant, es []store.Expens
 		for _, p := range people {
 			v := ""
 			if slices.ContainsFunc(e.Shares, func(s domain.Share) bool { return s.ParticipantID == p.ID }) {
-				v = decimal(e.ShareOf(p.ID), 2, ',')
+				v = domain.FormatDecimal(e.ShareOf(p.ID), 2, ',')
 			}
 			rec = append(rec, v)
 		}
@@ -97,26 +97,6 @@ func involved(people []store.Participant, es []store.Expense) []store.Participan
 func cell(s string) string {
 	if s != "" && strings.ContainsRune("=+-@\t\r", rune(s[0])) {
 		return "'" + s
-	}
-	return s
-}
-
-// decimal formats minor with decimals decimal places, without thousands
-// separators: (123456, 2, ',') → "1234,56".
-func decimal(minor int64, decimals int, sep byte) string {
-	neg := minor < 0
-	if neg {
-		minor = -minor
-	}
-	s := strconv.FormatInt(minor, 10)
-	if decimals > 0 {
-		if len(s) <= decimals {
-			s = strings.Repeat("0", decimals-len(s)+1) + s
-		}
-		s = s[:len(s)-decimals] + string(sep) + s[len(s)-decimals:]
-	}
-	if neg {
-		s = "-" + s
 	}
 	return s
 }
@@ -273,7 +253,7 @@ func writeOFX(w io.Writer, ps []ynab.Posting, accountID string, from, to, now ti
 		line("<STMTTRN>")
 		line("<TRNTYPE>DEBIT")
 		line("<DTPOSTED>%s", p.Date.Format("20060102"))
-		line("<TRNAMT>%s", decimal(-p.AmountCents, 2, '.'))
+		line("<TRNAMT>%s", domain.FormatDecimal(-p.AmountCents, 2, '.'))
 		line("<FITID>zipfelkasse-%d", p.ExpenseID)
 		line("<NAME>%s", sgml(p.Payee, 32))
 		line("<MEMO>%s", sgml(p.Memo, 255))
@@ -281,7 +261,7 @@ func writeOFX(w io.Writer, ps []ynab.Posting, accountID string, from, to, now ti
 	}
 	line("</BANKTRANLIST>")
 	line("<LEDGERBAL>")
-	line("<BALAMT>%s", decimal(total, 2, '.'))
+	line("<BALAMT>%s", domain.FormatDecimal(total, 2, '.'))
 	line("<DTASOF>%s", to.Format("20060102"))
 	line("</LEDGERBAL>")
 	line("</STMTRS>")
@@ -313,7 +293,7 @@ func writeYNABCSV(w io.Writer, ps []ynab.Posting) error {
 		return err
 	}
 	for _, p := range ps {
-		if err := cw.Write([]string{p.Date.Format(domain.DateLayout), cell(p.Payee), cell(p.Memo), decimal(p.AmountCents, 2, '.'), ""}); err != nil {
+		if err := cw.Write([]string{p.Date.Format(domain.DateLayout), cell(p.Payee), cell(p.Memo), domain.FormatDecimal(p.AmountCents, 2, '.'), ""}); err != nil {
 			return err
 		}
 	}

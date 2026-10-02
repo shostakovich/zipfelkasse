@@ -133,9 +133,9 @@ func (r *Renderer) Funcs() template.FuncMap {
 			return template.HTML(`<svg class="icon" aria-hidden="true"><use href="` +
 				template.HTMLEscapeString(r.staticURL("icons.svg")+"#"+name) + `"></use></svg>`)
 		},
-		"categoryIcon": categoryIcon, // category name → icon name for {{icon …}}
-		"minorInput":   minorInput,   // (minor, "USD") → "12,34" (for <input>)
-		"rateInput":    rateInput,    // rate 1.0876 → "1,0876" (for <input>)
+		"categoryIcon": categoryIcon,            // category name → icon name for {{icon …}}
+		"minorInput":   domain.FormatMinorInput, // (minor, "USD") → "12,34" (for <input>)
+		"rateInput":    domain.FormatRate,       // rate 1.0876 → "1,0876" (for <input>)
 		"dict": func(kv ...any) (map[string]any, error) { // for partials with several values
 			if len(kv)%2 != 0 {
 				return nil, fmt.Errorf("dict: odd number of arguments")

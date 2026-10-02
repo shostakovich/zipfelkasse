@@ -1,12 +1,8 @@
 package web
 
 import (
-	"math/big"
-	"strconv"
 	"strings"
 	"time"
-
-	"github.com/shostakovich/zipfelkasse/internal/domain"
 )
 
 // categoryIcon maps a category name to an icon from static/icons.svg.
@@ -44,77 +40,6 @@ var categoryIcons = []struct {
 	{"phone", []string{"handy", "internet", "telefon", "abo", "streaming"}},
 	{"shield", []string{"versicherung"}},
 	{"receipt", []string{"sonstig", "allgemein"}},
-}
-
-// minorInput formats an amount in the currency's minor unit for an input
-// field: (123456, "USD") → "1234,56", (500, "JPY") → "500".
-func minorInput(minor int64, currency string) string {
-	dec := domain.CurrencyDecimals(currency)
-	if dec == 2 {
-		return domain.FormatCentsInput(minor)
-	}
-	neg := minor < 0
-	if neg {
-		minor = -minor
-	}
-	s := strconv.FormatInt(minor, 10)
-	if dec > 0 {
-		if len(s) <= dec {
-			s = strings.Repeat("0", dec-len(s)+1) + s
-		}
-		s = s[:len(s)-dec] + "," + s[len(s)-dec:]
-	}
-	if neg {
-		s = "-" + s
-	}
-	return s
-}
-
-// rateInput formats an exchange rate for an input field (comma as decimal
-// separator, without superfluous zeros). 0 → "".
-func rateInput(rate float64) string {
-	if rate <= 0 {
-		return ""
-	}
-	return strings.Replace(strconv.FormatFloat(rate, 'f', -1, 64), ".", ",", 1)
-}
-
-// allocate distributes total proportionally to weights (largest remainder,
-// ties go to the smaller index; sum of weights > 0). Needed for "by amounts"
-// in a foreign currency: the amounts per person are in the foreign currency,
-// while euro cents are stored, which must add up exactly. Computes with
-// big.Int so that large amounts do not overflow.
-func allocate(total int64, weights []int64) []int64 {
-	sum := new(big.Int)
-	for _, w := range weights {
-		sum.Add(sum, big.NewInt(w))
-	}
-	out := make([]int64, len(weights))
-	if sum.Sign() <= 0 {
-		return out
-	}
-	rems := make([]*big.Int, len(weights))
-	var allocated int64
-	for i, w := range weights {
-		q, r := new(big.Int).QuoRem(new(big.Int).Mul(big.NewInt(total), big.NewInt(w)), sum, new(big.Int))
-		out[i], rems[i] = q.Int64(), r
-		allocated += out[i]
-	}
-	for allocated < total {
-		best := -1
-		for i, r := range rems {
-			if r.Sign() > 0 && (best < 0 || r.Cmp(rems[best]) > 0) {
-				best = i
-			}
-		}
-		if best < 0 {
-			break
-		}
-		out[best]++
-		rems[best] = new(big.Int)
-		allocated++
-	}
-	return out
 }
 
 // Periods of the expense list as in Spliit (the week starts on Monday).

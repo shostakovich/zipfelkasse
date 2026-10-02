@@ -90,7 +90,7 @@ func (s *Service) render(w http.ResponseWriter, r *http.Request, status int, err
 	me, _ := web.Me(ctx)
 	cfg, err := s.d.Store.GetYNABConfig(ctx, me.ID)
 	if err != nil && !errors.Is(err, store.ErrNotFound) {
-		s.serverError(w, r, err)
+		s.d.ServerError(w, r, err)
 		return
 	}
 	data := pageData{TokenSet: cfg.Token != "", StartDate: cfg.StartDate, Ready: cfg.Ready(), HasTarget: cfg.AccountID != ""}
@@ -103,12 +103,12 @@ func (s *Service) render(w http.ResponseWriter, r *http.Request, status int, err
 		data.RetryAt = data.Status.RetryAt
 	}
 	if data.Synced, data.Problems, err = s.d.Store.YNABSyncSummary(ctx, me.ID); err != nil {
-		s.serverError(w, r, err)
+		s.d.ServerError(w, r, err)
 		return
 	}
 	balances, err := s.d.Store.Balances(ctx)
 	if err != nil {
-		s.serverError(w, r, err)
+		s.d.ServerError(w, r, err)
 		return
 	}
 	data.Balance = balances[me.ID]
@@ -129,7 +129,7 @@ func (s *Service) render(w http.ResponseWriter, r *http.Request, status int, err
 	}
 	if data.HasTarget {
 		if data.Categories, err = s.categoryRows(r, me.ID, data.Groups); err != nil {
-			s.serverError(w, r, err)
+			s.d.ServerError(w, r, err)
 			return
 		}
 	}
@@ -228,17 +228,14 @@ func (s *Service) apiMessage(err error, token string) string {
 	return "YNAB ist gerade nicht erreichbar: " + redact(err.Error(), token)
 }
 
-func (s *Service) serverError(w http.ResponseWriter, r *http.Request, err error) {
-	s.d.Log.Error("request", "method", r.Method, "path", r.URL.Path, "err", err)
-	s.d.Render.Error(w, r, http.StatusInternalServerError, "Da ist etwas schiefgegangen.")
-}
-
 func (s *Service) done(w http.ResponseWriter, r *http.Request, msg string) {
 	web.SetFlash(w, msg)
 	http.Redirect(w, r, pagePath, http.StatusSeeOther)
 }
 
-// saveToken checks the token with a request to YNAB and stores it.
+// saveToken checks the token with a request to YNAB and stores it. If the
+// chosen plan is not among the token's plans (token of another YNAB user),
+// plan and account are reset and have to be chosen anew.
 func (s *Service) saveToken(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	me, _ := web.Me(ctx)
@@ -251,7 +248,8 @@ func (s *Service) saveToken(w http.ResponseWriter, r *http.Request) {
 		s.render(w, r, http.StatusUnprocessableEntity, "Das sieht nicht wie ein YNAB-Token aus.", false)
 		return
 	}
-	if _, err := s.plans(ctx, token, true); err != nil {
+	plans, err := s.plans(ctx, token, true)
+	if err != nil {
 		msg := s.apiMessage(err, token)
 		if statusOf(err) == http.StatusUnauthorized {
 			msg = "YNAB kennt diesen Token nicht. Bitte prüfen und neu kopieren."
@@ -259,26 +257,41 @@ func (s *Service) saveToken(w http.ResponseWriter, r *http.Request) {
 		s.render(w, r, http.StatusUnprocessableEntity, msg, false)
 		return
 	}
-	old, err := s.d.Store.GetYNABConfig(ctx, me.ID)
-	if err != nil && !errors.Is(err, store.ErrNotFound) {
-		s.serverError(w, r, err)
+	var old store.YNABConfig
+	var resetTarget bool
+	err = s.changeConnection(func() error {
+		var err error
+		old, err = s.d.Store.GetYNABConfig(ctx, me.ID)
+		if err != nil && !errors.Is(err, store.ErrNotFound) {
+			return err
+		}
+		if err := s.d.Store.SetYNABToken(ctx, me.ID, token); err != nil {
+			return err
+		}
+		resetTarget = old.PlanID != "" && !slices.ContainsFunc(plans, func(p apiPlan) bool { return p.ID == old.PlanID })
+		if resetTarget {
+			if err := s.d.Store.SetYNABTarget(ctx, me.ID, "", "", old.StartDate); err != nil {
+				return err
+			}
+		}
+		// new token: reset locks and old errors
+		st := s.loadStatus(ctx, me.ID)
+		st.TokenInvalid, st.RetryAt, st.Backoff, st.Error = false, time.Time{}, 0, ""
+		return s.saveStatus(ctx, me.ID, st)
+	})
+	if err != nil {
+		s.d.ServerError(w, r, err)
 		return
 	}
-	if err := s.d.Store.SetYNABToken(ctx, me.ID, token); err != nil {
-		s.serverError(w, r, err)
+	switch {
+	case resetTarget:
+		s.d.LogSettings(r, "YNAB-Token ersetzt (Plan und Konto zurückgesetzt)")
+		s.done(w, r, "Token gespeichert. Der bisher gewählte Plan ist mit diesem Token nicht erreichbar – bitte Plan und Konto neu wählen.")
 		return
-	}
-	if old.Token != "" {
+	case old.Token != "":
 		s.d.LogSettings(r, "YNAB-Token ersetzt")
-	} else {
+	default:
 		s.d.LogSettings(r, "YNAB verbunden (Token gesetzt)")
-	}
-	// new token: reset locks and old errors
-	st := s.loadStatus(ctx, me.ID)
-	st.TokenInvalid, st.RetryAt, st.Backoff, st.Error = false, time.Time{}, 0, ""
-	if err := s.saveStatus(ctx, me.ID, st); err != nil {
-		s.serverError(w, r, err)
-		return
 	}
 	s.Trigger(0)
 	s.done(w, r, "Token gespeichert.")
@@ -286,8 +299,8 @@ func (s *Service) saveToken(w http.ResponseWriter, r *http.Request) {
 
 func (s *Service) disconnect(w http.ResponseWriter, r *http.Request) {
 	me, _ := web.Me(r.Context())
-	if err := s.d.Store.SetYNABToken(r.Context(), me.ID, ""); err != nil {
-		s.serverError(w, r, err)
+	if err := s.changeConnection(func() error { return s.d.Store.SetYNABToken(r.Context(), me.ID, "") }); err != nil {
+		s.d.ServerError(w, r, err)
 		return
 	}
 	s.d.LogSettings(r, "YNAB-Verbindung getrennt")
@@ -303,7 +316,7 @@ func (s *Service) saveTarget(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err != nil {
-		s.serverError(w, r, err)
+		s.d.ServerError(w, r, err)
 		return
 	}
 	planID, accountID, _ := strings.Cut(r.FormValue("ziel"), "|")
@@ -321,8 +334,10 @@ func (s *Service) saveTarget(w http.ResponseWriter, r *http.Request) {
 		s.render(w, r, http.StatusUnprocessableEntity, "Bitte Plan und Konto auswählen.", false)
 		return
 	}
-	if err := s.d.Store.SetYNABTarget(ctx, me.ID, planID, accountID, start); err != nil {
-		s.serverError(w, r, err)
+	if err := s.changeConnection(func() error {
+		return s.d.Store.SetYNABTarget(ctx, me.ID, planID, accountID, start)
+	}); err != nil {
+		s.d.ServerError(w, r, err)
 		return
 	}
 	switch {
@@ -370,7 +385,7 @@ func (s *Service) saveCategories(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err != nil {
-		s.serverError(w, r, err)
+		s.d.ServerError(w, r, err)
 		return
 	}
 	groups, err := s.categories(ctx, cfg.Token, cfg.PlanID, false)
@@ -381,7 +396,7 @@ func (s *Service) saveCategories(w http.ResponseWriter, r *http.Request) {
 	known := knownCategories(usableGroups(groups))
 	old, err := s.d.Store.YNABCategoryMap(ctx, me.ID)
 	if err != nil {
-		s.serverError(w, r, err)
+		s.d.ServerError(w, r, err)
 		return
 	}
 	if err := r.ParseForm(); err != nil {
@@ -414,7 +429,7 @@ func (s *Service) saveCategories(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err != nil {
-		s.serverError(w, r, err)
+		s.d.ServerError(w, r, err)
 		return
 	}
 	if text, err := s.mappingChanges(r, old, m, groups); err != nil {
@@ -468,7 +483,7 @@ func (s *Service) syncNow(w http.ResponseWriter, r *http.Request) {
 	me, _ := web.Me(r.Context())
 	cfg, err := s.d.Store.GetYNABConfig(r.Context(), me.ID)
 	if err != nil && !errors.Is(err, store.ErrNotFound) {
-		s.serverError(w, r, err)
+		s.d.ServerError(w, r, err)
 		return
 	}
 	if !cfg.Ready() {

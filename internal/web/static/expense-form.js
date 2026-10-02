@@ -40,7 +40,7 @@
   // splitNumber splits a number like domain.splitNumber into sign, integer
   // and fractional digits ({neg, int, frac}) or returns null.
   // dotThousands: a single dot before exactly three digits is a thousands
-  // separator ("17.000" = 17000).
+  // separator ("17.000" = 17000), unless only zeros precede it ("0.856").
   function splitNumber(s, dotThousands) {
     if (!s) return null;
     var neg = false;
@@ -56,7 +56,7 @@
       thousands = commas > 0 ? "," : ".";
     } else if (dots + commas === 1) {
       var p = Math.max(s.lastIndexOf("."), s.lastIndexOf(","));
-      if (s[p] === "." && s.length - p - 1 === 3 && dotThousands && p > 0) {
+      if (s[p] === "." && s.length - p - 1 === 3 && dotThousands && /[1-9]/.test(s.slice(0, p))) {
         thousands = ".";
       } else {
         intPart = s.slice(0, p); frac = s.slice(p + 1);
@@ -76,12 +76,15 @@
   // the result is a BigInt in the minor unit, or null.
   function parseMinor(s, dec) {
     var n = splitNumber(String(s || "").replace(/[\s €%]/g, ""), dec < 3);
-    if (!n || n.frac.length > dec) return null;
+    if (!n) return null;
+    // superfluous zeros are fine: "1200,00" is 1200 yen
+    while (n.frac.length > dec && n.frac.charAt(n.frac.length - 1) === "0") n.frac = n.frac.slice(0, -1);
+    if (n.frac.length > dec) return null;
     var v = BigInt(n.int + n.frac + "0".repeat(dec - n.frac.length));
     return n.neg ? -v : v;
   }
 
-  // parseRate reads a rate like domain.ParseRate ("1,0857", "17.000" = 17000).
+  // parseRate reads a rate like domain.ParseRate ("1,0857", "17.000" = 17000, "0.856").
   function parseRate(s) {
     var n = splitNumber(String(s || "").replace(/\s/g, ""), true);
     if (!n || n.neg) return null;
@@ -105,10 +108,10 @@
     return bp % 100n === 0n ? (bp / 100n).toString() : formatInput(bp, 2);
   }
 
-  // allocate distributes total proportionally to weights (largest remainder).
-  // weights belong to people in ascending ID order. On ties, precedence among
-  // the tied rotates by rot (like domain.Split with the expense ID); without
-  // rot, the smaller index gets it (like web.allocate).
+  // allocate distributes total proportionally to weights (largest remainder)
+  // like domain.Allocate. weights belong to people in ascending ID order. On
+  // ties, precedence among the tied rotates by rot (the expense ID); without
+  // rot, the smaller index gets it (default values in the form).
   function allocate(total, weights, rot) {
     var sum = weights.reduce(function (a, b) { return a + b; }, 0n);
     if (sum <= 0n) return null;
@@ -234,7 +237,9 @@
         return;
       }
       sumEl.textContent = "Passt: " + formatInput(sum, dec) + unit + ".";
-      shares = cur === "EUR" ? weights : allocate(total, weights);
+      // Amounts in the entered currency: the euro total is distributed in
+      // proportion to them (for euros the shares are exactly the amounts).
+      shares = allocate(total, weights, rotation);
     } else {
       shares = allocate(total, weights, rotation);
     }
@@ -297,8 +302,8 @@
         } else {
           rateEl.value = String(r.data.rate).replace(".", ",");
           rateSourceEl.value = r.data.source || "ezb";
-          rateHint.textContent = (r.data.source === "manuell" ? "Hinterlegter manueller Kurs" : "EZB-Referenzkurs") +
-            " vom " + isoToDE(r.data.date) + ". Für den echten Kartenkurs einfach überschreiben.";
+          rateHint.textContent = (r.data.source === "manuell" ? "Manueller Kurs" : "EZB-Kurs") +
+            " vom " + isoToDE(r.data.date) + ".";
         }
         rateReload.hidden = true;
         updatePreview();

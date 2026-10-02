@@ -148,6 +148,68 @@ func TestSplitErrors(t *testing.T) {
 	}
 }
 
+func TestAllocate(t *testing.T) {
+	tests := []struct {
+		total    int64
+		weights  []int64
+		rotation int64
+		want     []int64
+	}{
+		{667, []int64{600, 400}, 0, []int64{400, 267}},
+		{100, []int64{1, 1, 1}, 0, []int64{34, 33, 33}},
+		{100, []int64{1, 1, 1}, 4, []int64{33, 34, 33}},
+		{909, []int64{333, 333, 334}, 0, []int64{303, 303, 303}},
+		{1000, []int64{250, 750}, 3, []int64{250, 750}},
+		{5, []int64{0, 0}, 0, []int64{0, 0}},
+		// No overflow: total · weight > MaxInt64.
+		{MaxAmountCents, []int64{999_999_999_999_999, 1}, 0, []int64{MaxAmountCents, 0}},
+		{MaxAmountCents, []int64{MaxAmountCents * 100, MaxAmountCents * 100}, 1, []int64{MaxAmountCents / 2, MaxAmountCents / 2}},
+	}
+	for _, tt := range tests {
+		if got := Allocate(tt.total, tt.weights, tt.rotation); !reflect.DeepEqual(got, tt.want) {
+			t.Errorf("Allocate(%d, %v, %d) = %v, want %v", tt.total, tt.weights, tt.rotation, got, tt.want)
+		}
+	}
+}
+
+// By amounts in a foreign currency: the weights are the amounts in that
+// currency (sum = original amount), the euro amount is distributed in
+// proportion to them; ties rotate like the other modes.
+func TestSplitConverted(t *testing.T) {
+	parts := []Part{{3, 334}, {1, 333}, {2, 333}}
+	got, err := SplitConverted(SplitAmount, 909, 1000, "USD", parts, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []Share{{1, 333, 303}, {2, 333, 303}, {3, 334, 303}}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("got %v, want %v", got, want)
+	}
+	got, _ = SplitConverted(SplitAmount, 1001, 1000, "USD", []Part{{1, 500}, {2, 500}}, 1)
+	if m := amounts(got); m[1] != 500 || m[2] != 501 {
+		t.Errorf("tie, rotation 1: %v", m)
+	}
+	// Other modes as Split.
+	got, _ = SplitConverted(SplitEqual, 1000, 1100, "USD", parts, 1)
+	if m := amounts(got); m[1] != 333 || m[2] != 334 || m[3] != 333 {
+		t.Errorf("equal: %v", m)
+	}
+	for _, tt := range []struct {
+		parts []Part
+		msg   string
+	}{
+		{[]Part{{1, 600}, {2, 300}}, "Die Beträge müssen zusammen 10,00 USD ergeben (aktuell 9,00 USD)."},
+		{[]Part{{1, 909}}, "Die Beträge müssen zusammen 10,00 USD ergeben (aktuell 9,09 USD)."},
+		{[]Part{{1, -1}, {2, 1001}}, "negativ"},
+		{[]Part{{1, 1 << 62}, {2, 1 << 62}, {3, 1 << 62}}, "zu groß"},
+	} {
+		_, err := SplitConverted(SplitAmount, 909, 1000, "USD", tt.parts, 0)
+		if err == nil || !strings.Contains(err.Error(), tt.msg) {
+			t.Errorf("%v: %v, want %q", tt.parts, err, tt.msg)
+		}
+	}
+}
+
 func TestSplitModeValid(t *testing.T) {
 	for _, m := range SplitModes {
 		if !m.Valid() || m.Label() == "" {

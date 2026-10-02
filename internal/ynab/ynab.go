@@ -12,6 +12,7 @@ import (
 	"crypto/sha256"
 	"embed"
 	"encoding/hex"
+	"errors"
 	"net/http"
 	"sync"
 	"time"
@@ -44,7 +45,9 @@ type Service struct {
 	debounce   time.Duration
 	startDelay time.Duration
 
-	syncMu sync.Mutex // at most one sync at a time (worker or button)
+	// syncMu: at most one sync at a time (worker or button). Changes of
+	// token or target wait for it (see changeConnection).
+	syncMu sync.Mutex
 
 	// Background syncs via "Jetzt synchronisieren" (see syncInBackground).
 	// Run cancels them on shutdown and waits for them.
@@ -136,34 +139,28 @@ func (s *Service) Run(ctx context.Context) {
 }
 
 // SyncAll syncs all configured people and returns the delay until the next
-// necessary run.
+// necessary run. syncMu is taken per person, so a change of the settings
+// waits for one person's run at most.
 func (s *Service) SyncAll(ctx context.Context, full bool) time.Duration {
-	s.syncMu.Lock()
-	defer s.syncMu.Unlock()
 	next := fullInterval
 	cfgs, err := s.d.Store.ListYNABConfigs(ctx)
 	if err != nil {
 		s.d.Log.Error("ynab: read configs", "err", err)
 		return retryDelay
 	}
-	for _, cfg := range cfgs {
+	for _, c := range cfgs {
 		if ctx.Err() != nil {
 			return next
 		}
-		if !cfg.Ready() {
+		if !c.Ready() {
 			continue
 		}
-		res, st, err := s.syncOne(ctx, cfg, full)
-		switch err.(type) {
-		case nil:
-			if res.Created+res.Updated+res.Deleted+res.Failed > 0 {
-				s.d.Log.Info("ynab: synced", "person", cfg.ParticipantID, "result", res.logValue())
-			}
-		case backoffError:
-		default:
-			if err != errTokenInvalid {
-				s.d.Log.Warn("ynab: sync failed", "person", cfg.ParticipantID, "err", redact(err.Error(), cfg.Token))
-			}
+		cfg, res, st, err := s.syncPerson(ctx, c.ParticipantID, full)
+		if err == errNotReady {
+			continue // changed in the meantime
+		}
+		if err != nil || res.Created+res.Updated+res.Deleted+res.Failed > 0 {
+			s.logSync("", cfg, res, err)
 		}
 		if res.Again {
 			next = min(next, s.debounce)
@@ -175,25 +172,51 @@ func (s *Service) SyncAll(ctx context.Context, full bool) time.Duration {
 	return next
 }
 
-// SyncNow fully syncs one person right away ("Jetzt synchronisieren").
-func (s *Service) SyncNow(ctx context.Context, participantID int64) (syncResult, error) {
+// logSync logs the outcome of a person's run (how: "" or " (now)"), never
+// with the token. A pause after a rate limit and an invalid token are not
+// logged: the settings page shows them, and they recur on every run.
+func (s *Service) logSync(how string, cfg store.YNABConfig, res syncResult, err error) {
+	var be backoffError
+	switch {
+	case err == nil:
+		s.d.Log.Info("ynab: synced"+how, "person", cfg.ParticipantID, "result", res.logValue())
+	case errors.As(err, &be), err == errTokenInvalid:
+	default:
+		s.d.Log.Warn("ynab: sync"+how+" failed", "person", cfg.ParticipantID, "err", redact(err.Error(), cfg.Token))
+	}
+}
+
+// syncPerson syncs one person under syncMu with the connection as it is now.
+// A sync uses the connection read at its start throughout, so token or
+// target must not change while it runs (see changeConnection).
+func (s *Service) syncPerson(ctx context.Context, participantID int64, full bool) (store.YNABConfig, syncResult, Status, error) {
 	s.syncMu.Lock()
 	defer s.syncMu.Unlock()
 	cfg, err := s.d.Store.GetYNABConfig(ctx, participantID)
 	if err != nil && err != store.ErrNotFound {
-		return syncResult{}, err
+		return cfg, syncResult{}, Status{}, err
 	}
 	if !cfg.Ready() {
-		return syncResult{}, errNotReady
+		return cfg, syncResult{}, Status{}, errNotReady
 	}
-	res, _, err := s.syncOne(ctx, cfg, true)
-	return res, err
+	res, st, err := s.syncOne(ctx, cfg, full)
+	return cfg, res, st, err
 }
 
-// syncInBackground starts SyncNow for participantID in its own goroutine so
-// that the request does not wait for YNAB. If one is already running for the
-// person or Run has ended, nothing happens. The result ends up in the
-// person's status.
+// changeConnection runs fn – a change of token or target – under syncMu, so
+// that it never interleaves with a sync: otherwise the sync would write
+// transaction IDs of the old account into the state for the new one, or
+// overwrite the status just reset for a new token with its own result.
+func (s *Service) changeConnection(fn func() error) error {
+	s.syncMu.Lock()
+	defer s.syncMu.Unlock()
+	return fn()
+}
+
+// syncInBackground fully syncs participantID right away ("Jetzt
+// synchronisieren") in its own goroutine so that the request does not wait
+// for YNAB. If one is already running for the person or Run has ended,
+// nothing happens. The result ends up in the person's status.
 func (s *Service) syncInBackground(participantID int64) {
 	s.bgMu.Lock()
 	defer s.bgMu.Unlock()
@@ -207,11 +230,9 @@ func (s *Service) syncInBackground(participantID int64) {
 			delete(s.bgBusy, participantID)
 			s.bgMu.Unlock()
 		}()
-		if res, err := s.SyncNow(s.bgCtx, participantID); err != nil {
-			s.d.Log.Warn("ynab: sync (now) failed", "person", participantID, "err", err.Error())
-		} else {
-			s.d.Log.Info("ynab: synced (now)", "person", participantID, "result", res.logValue())
-		}
+		cfg, res, _, err := s.syncPerson(s.bgCtx, participantID, true)
+		cfg.ParticipantID = participantID // also if it could not be read
+		s.logSync(" (now)", cfg, res, err)
 	})
 }
 

@@ -82,16 +82,14 @@
             <input type="hidden" id="kurs_quelle" name="kurs_quelle" value="{{$f.RateSource}}">
             <p class="help" id="kurs-hinweis" aria-live="polite">
               {{- if eq $f.RateSource "manuell"}}Von Hand eingetragener Kurs.
-              {{- else if eq $f.RateSource "ezb"}}Referenzkurs der EZB.
-              {{- else}}Leer lassen: Der EZB-Kurs vom Ausgabedatum wird beim Speichern eingesetzt. Für den echten Kartenkurs einfach überschreiben.{{end -}}
+              {{- else if eq $f.RateSource "ezb"}}EZB-Kurs.
+              {{- else}}Leer lassen für den EZB-Kurs.{{end -}}
             </p>
-            <p class="help">Nachkommastellen mit Komma (1,0857). Ein Punkt vor genau drei Ziffern ist ein Tausenderpunkt: 17.000 = 17000.</p>
             <button class="btn btn-link btn-sm" type="button" id="kurs-laden" hidden>{{icon "refresh"}} EZB-Kurs laden</button>
           </div>
           <div class="field fx-preview">
             <span class="label">Umgerechnet in Euro</span>
             <p><strong id="eur-vorschau">{{if $f.EURCents}}{{eur $f.EURCents}}{{else}}–{{end}}</strong></p>
-            <p class="help">Gespeichert und aufgeteilt wird der Euro-Betrag.</p>
           </div>
         </div>
 

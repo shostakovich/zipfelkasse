@@ -3,9 +3,12 @@ package store
 import (
 	"context"
 	"errors"
+	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -50,8 +53,8 @@ func TestOpenMigratesAndSeeds(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
 	v, err := s.SchemaVersion(ctx)
-	if err != nil || v != 2 {
-		t.Fatalf("SchemaVersion = %d, %v; want 2", v, err)
+	if want := latestVersion(t); err != nil || v != want || v < 4 {
+		t.Fatalf("SchemaVersion = %d, %v; want %d", v, err, want)
 	}
 	if acts, _ := s.ListActivity(ctx, ActivityFilter{}); len(acts) != 0 {
 		t.Errorf("empty database: activity %+v", acts)
@@ -259,6 +262,7 @@ func TestCreateExpenseValidation(t *testing.T) {
 		{"without title", func(in *ExpenseInput) { in.Title = " " }},
 		{"without date", func(in *ExpenseInput) { in.Date = time.Time{} }},
 		{"without payer", func(in *ExpenseInput) { in.PaidBy = 0 }},
+		{"note too long", func(in *ExpenseInput) { in.Notes = strings.Repeat("ä", 2001) }},
 		{"amount 0", func(in *ExpenseInput) { in.AmountCents = 0 }},
 		{"no participants", func(in *ExpenseInput) { in.Parts = nil }},
 		{"unknown payer", func(in *ExpenseInput) { in.PaidBy = 999 }},
@@ -291,6 +295,48 @@ func TestCreateExpenseValidation(t *testing.T) {
 	}
 }
 
+// Archiving checks the balance in the same transaction: a person with an
+// open balance cannot be archived (deleted expenses do not count).
+func TestArchiveParticipantWithBalance(t *testing.T) {
+	f := newFixture(t)
+	ctx := context.Background()
+	id := f.mustCreate(t, f.equal("Einkauf", 1000, "2026-08-01", f.anna, f.anna, f.ben))
+	err := f.s.SetParticipantArchived(ctx, f.ben, true)
+	if !isValidation(err) || !strings.Contains(err.Error(), "Ben hat noch einen Saldo von -5,00 €") {
+		t.Errorf("Ben with balance: %v", err)
+	}
+	if p, _ := f.s.GetParticipant(ctx, f.ben); p.Archived() {
+		t.Error("archived despite balance")
+	}
+	if err := f.s.SetParticipantArchived(ctx, f.cleo, true); err != nil {
+		t.Errorf("Cleo without balance: %v", err)
+	}
+	if err := f.s.SetParticipantArchived(ctx, 999, true); !errors.Is(err, ErrNotFound) {
+		t.Errorf("unknown: %v", err)
+	}
+	if err := f.s.DeleteExpense(ctx, f.anna, id); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.s.SetParticipantArchived(ctx, f.ben, true); err != nil {
+		t.Errorf("Ben after delete: %v", err)
+	}
+}
+
+// Notes up to 2000 characters as in the form; line breaks arrive as CR LF but
+// count as one character there.
+func TestNotesLength(t *testing.T) {
+	f := newFixture(t)
+	in := f.equal("Einkauf", 1000, "2026-08-01", f.anna, f.anna)
+	in.Notes = strings.Repeat("a\r\n", 999) + "aa"
+	if _, err := f.s.CreateExpense(context.Background(), f.anna, in); err != nil {
+		t.Errorf("2000 characters: %v", err)
+	}
+	in.Notes += "a"
+	if _, err := f.s.CreateExpense(context.Background(), f.anna, in); !isValidation(err) || !strings.Contains(err.Error(), "2000 Zeichen") {
+		t.Errorf("2001 characters: %v", err)
+	}
+}
+
 func TestForeignCurrency(t *testing.T) {
 	f := newFixture(t)
 	ctx := context.Background()
@@ -303,6 +349,70 @@ func TestForeignCurrency(t *testing.T) {
 	e, _ := f.s.GetExpense(ctx, id)
 	if !e.IsForeign() || e.OriginalCurrency != "USD" || e.AmountCents != 9240 || e.FXRate != 1.0823 || e.FXSource != "ezb" {
 		t.Errorf("Expense = %+v", e)
+	}
+}
+
+// By amounts in a foreign currency: the weights are the amounts in that
+// currency and are stored as entered; the store converts the total and
+// distributes the euro cents in proportion to the weights.
+func TestForeignCurrencyByAmounts(t *testing.T) {
+	f := newFixture(t)
+	ctx := context.Background()
+	in := f.equal("Hotel", 0, "2026-08-01", f.anna, f.anna, f.ben, f.cleo)
+	in.OriginalCurrency, in.OriginalAmountMinor, in.FXRate = "USD", 1000, 1.1
+	in.SplitMode = domain.SplitAmount
+	in.Parts = []domain.Part{{ParticipantID: f.cleo, Weight: 334}, {ParticipantID: f.anna, Weight: 333}, {ParticipantID: f.ben, Weight: 333}}
+	id, err := f.s.CreateExpense(ctx, f.anna, in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	e, _ := f.s.GetExpense(ctx, id)
+	if e.AmountCents != 909 || e.ShareOf(f.anna)+e.ShareOf(f.ben)+e.ShareOf(f.cleo) != 909 || e.ShareOf(f.cleo) != 303 {
+		t.Errorf("shares: %d %v", e.AmountCents, e.Shares)
+	}
+	if e.Parts[0].Weight != 333 || e.Parts[1].Weight != 333 || e.Parts[2].Weight != 334 {
+		t.Errorf("weights: %v", e.Parts)
+	}
+	// Saved unchanged: nothing changes (the stored input round-trips).
+	acts, _ := f.s.ListActivity(ctx, ActivityFilter{})
+	if err := f.s.UpdateExpense(ctx, f.anna, id, e.ExpenseInput); err != nil {
+		t.Fatal(err)
+	}
+	if after, _ := f.s.ListActivity(ctx, ActivityFilter{}); len(after) != len(acts) {
+		t.Errorf("unchanged save logged: %+v", after[0])
+	}
+	// A new rate: same weights, new euro shares.
+	in = e.ExpenseInput
+	in.FXRate = 1.25
+	if err := f.s.UpdateExpense(ctx, f.anna, id, in); err != nil {
+		t.Fatal(err)
+	}
+	e, _ = f.s.GetExpense(ctx, id)
+	if e.AmountCents != 800 || e.ShareOf(f.cleo) != 267 || e.Parts[2].Weight != 334 {
+		t.Errorf("after the new rate: %d %v", e.AmountCents, e.Shares)
+	}
+	in.Parts[0].Weight, in.Parts[2].Weight = 433, 234
+	if err := f.s.UpdateExpense(ctx, f.anna, id, in); err != nil {
+		t.Fatal(err)
+	}
+	acts, _ = f.s.ListActivity(ctx, ActivityFilter{ExpenseID: id, Limit: 1})
+	if s := fmt.Sprint(acts[0].Details.Changes); !strings.Contains(s, "Anna 3,46 €") {
+		t.Errorf("history: %s", s)
+	}
+	// If only the amounts in USD change, not the euro shares, the history
+	// lists the amounts in USD.
+	if s := weightSummary(domain.SplitAmount, "USD", []domain.Share{{ParticipantID: f.anna, Weight: 433}}, map[int64]string{f.anna: "Anna"}); s != "Anna 4,33 USD" {
+		t.Errorf("weightSummary = %q", s)
+	}
+	// The amounts must add up to the amount in USD.
+	in.Parts[0].Weight = 300
+	if err := f.s.UpdateExpense(ctx, f.anna, id, in); !isValidation(err) || !strings.Contains(err.Error(), "10,00 USD") {
+		t.Errorf("wrong sum: %v", err)
+	}
+	// Converted to 0 €.
+	in.Parts[0].Weight, in.FXRate = 433, 1e9
+	if err := f.s.UpdateExpense(ctx, f.anna, id, in); !isValidation(err) || !strings.Contains(err.Error(), "0 €") {
+		t.Errorf("0 €: %v", err)
 	}
 }
 
@@ -596,7 +706,7 @@ func TestMigrationResplitsShares(t *testing.T) {
 		if s, err = Open(path); err != nil {
 			t.Fatal(err)
 		}
-		if v, _ := s.SchemaVersion(ctx); v != 2 {
+		if v, _ := s.SchemaVersion(ctx); v != latestVersion(t) {
 			t.Errorf("round %d: SchemaVersion = %d", round, v)
 		}
 		for _, id := range ids {
@@ -618,6 +728,115 @@ func TestMigrationResplitsShares(t *testing.T) {
 		}
 		s.Close()
 	}
+}
+
+// Migration 4 converts the weights of "by amounts" in a foreign currency from
+// euro cents to amounts in that currency (also in recurring templates),
+// leaving the euro shares as they are, exactly once.
+func TestMigrationConvertsForeignAmountWeights(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "zipfelkasse.db")
+	s, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f := fixture{s: s, anna: mustParticipant(t, s, "Anna"), ben: mustParticipant(t, s, "Ben"), cleo: mustParticipant(t, s, "Cleo")}
+	ctx := context.Background()
+	usd := func(title string, mode domain.SplitMode, weights ...int64) ExpenseInput {
+		in := f.equal(title, 0, "2026-09-01", f.anna, f.anna, f.ben, f.cleo)
+		in.OriginalCurrency, in.OriginalAmountMinor, in.FXRate, in.FXSource = "USD", 1000, 1.1, domain.FXSourceECB
+		in.SplitMode = mode
+		for i := range weights {
+			in.Parts[i].Weight = weights[i]
+		}
+		return in
+	}
+	hotel := f.mustCreate(t, usd("Hotel", domain.SplitAmount, 333, 333, 334))
+	gone := f.mustCreate(t, usd("Gelöscht", domain.SplitAmount, 500, 250, 250))
+	if err := s.DeleteExpense(ctx, f.anna, gone); err != nil {
+		t.Fatal(err)
+	}
+	equal := f.mustCreate(t, usd("Taxi", domain.SplitEqual))
+	eur := f.equal("Fest", 301, "2026-09-01", f.anna, f.anna, f.ben)
+	eur.SplitMode, eur.Parts = domain.SplitAmount, []domain.Part{{ParticipantID: f.anna, Weight: 151}, {ParticipantID: f.ben, Weight: 150}}
+	eurID := f.mustCreate(t, eur)
+	// Old state: the weights are the euro shares (cents); schema version 3.
+	if _, err := s.db.ExecContext(ctx, `UPDATE expense_shares SET weight = amount_cents
+		WHERE expense_id IN (SELECT id FROM expenses WHERE split_mode = 'amount')`); err != nil {
+		t.Fatal(err)
+	}
+	rule, err := s.CreateRecurringFromExpense(ctx, f.anna, hotel, domain.FreqMonthly)
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldShares := map[int64][]domain.Share{}
+	for _, id := range []int64{hotel, gone, equal, eurID} {
+		e, _ := s.GetExpense(ctx, id)
+		oldShares[id] = e.Shares
+	}
+	if _, err := s.db.ExecContext(ctx, "PRAGMA user_version = 3"); err != nil {
+		t.Fatal(err)
+	}
+	before, _ := s.ListActivity(ctx, ActivityFilter{})
+	s.Close()
+
+	weights := func(e Expense) []int64 {
+		var w []int64
+		for _, p := range e.Parts {
+			w = append(w, p.Weight)
+		}
+		return w
+	}
+	for round := range 2 {
+		if s, err = Open(path); err != nil {
+			t.Fatal(err)
+		}
+		if v, _ := s.SchemaVersion(ctx); v != latestVersion(t) {
+			t.Errorf("round %d: SchemaVersion = %d", round, v)
+		}
+		want := map[int64][]int64{hotel: {334, 333, 333}, gone: {500, 250, 250}, equal: {1, 1, 1}, eurID: {151, 150}}
+		for id, w := range want {
+			e, _ := s.GetExpense(ctx, id)
+			if !slices.Equal(weights(e), w) || !slices.Equal(e.Shares, func() []domain.Share {
+				out := slices.Clone(oldShares[id])
+				for i := range out {
+					out[i].Weight = w[i]
+				}
+				return out
+			}()) {
+				t.Errorf("round %d, expense %d: %v, want weights %v and cents %v", round, id, e.Shares, w, oldShares[id])
+			}
+		}
+		r, _ := s.GetRecurring(ctx, rule)
+		if tw := []int64{r.Template.Parts[0].Weight, r.Template.Parts[1].Weight, r.Template.Parts[2].Weight}; !slices.Equal(tw, []int64{334, 333, 333}) ||
+			r.Template.AmountCents != 909 {
+			t.Errorf("round %d: template %+v", round, r.Template)
+		}
+		acts, _ := s.ListActivity(ctx, ActivityFilter{})
+		if len(acts) != len(before)+1 || acts[0].Action != ActionWeightsConverted || acts[0].ActorID != 0 ||
+			!strings.Contains(acts[0].Details.Text, "2 Ausgaben und 1 wiederkehrende Ausgabe") {
+			t.Errorf("round %d: activity %+v", round, acts[0])
+		}
+		s.Close()
+	}
+}
+
+// latestVersion is the number of the last migration (SQL or Go).
+func latestVersion(t *testing.T) int {
+	t.Helper()
+	names, err := fs.Glob(migrationsFS, "migrations/*.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	v := 0
+	for _, name := range names {
+		num, _, _ := strings.Cut(filepath.Base(name), "_")
+		n, _ := strconv.Atoi(num)
+		v = max(v, n)
+	}
+	for n := range goMigrations {
+		v = max(v, n)
+	}
+	return v
 }
 
 func TestNextExpenseID(t *testing.T) {
