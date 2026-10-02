@@ -5,7 +5,7 @@ import (
 	"database/sql"
 	"fmt"
 
-	"teilen/internal/domain"
+	"github.com/shostakovich/zipfelkasse/internal/domain"
 )
 
 // resplitShares (Migration 2) berechnet expense_shares.amount_cents aller

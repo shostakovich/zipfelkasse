@@ -14,8 +14,8 @@ import (
 	"strings"
 	"time"
 
-	"teilen/internal/domain"
-	"teilen/internal/store"
+	"github.com/shostakovich/zipfelkasse/internal/domain"
+	"github.com/shostakovich/zipfelkasse/internal/store"
 )
 
 // Abgleich: Für jede Person mit YNAB-Verbindung wird der Soll-Zustand (eine
@@ -31,7 +31,7 @@ import (
 //     bei Änderung, im stündlichen Vollabgleich oder per „Jetzt
 //     synchronisieren“ erneut versucht
 //   - "pending": Anlegen läuft bzw. das Ergebnis ist unbekannt (Timeout, 5xx).
-//     Der nächste Lauf sucht die Buchung über die Memo-Markierung „teilen #ID“
+//     Der nächste Lauf sucht die Buchung über die Memo-Markierung „zipfelkasse #ID“
 //     im Konto, statt blind neu anzulegen (sonst drohen Dubletten).
 //   - "": unbekannt bzw. neu anlegen/ändern
 //

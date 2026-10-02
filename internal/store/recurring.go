@@ -8,7 +8,7 @@ import (
 	"fmt"
 	"time"
 
-	"teilen/internal/domain"
+	"github.com/shostakovich/zipfelkasse/internal/domain"
 )
 
 // Aktionen im Aktivitätsprotokoll für wiederkehrende Ausgaben.

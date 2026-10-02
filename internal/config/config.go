@@ -11,9 +11,9 @@ import (
 
 // Config ist die gesamte Laufzeitkonfiguration.
 type Config struct {
-	Addr            string         // TEILEN_ADDR, Standard ":8080"
-	DBPath          string         // TEILEN_DB, Standard "./data/teilen.db" (Container: /data/teilen.db)
-	BackupDir       string         // TEILEN_BACKUP_DIR, Standard <Verzeichnis der DB>/backups
+	Addr            string         // ZIPFELKASSE_ADDR, Standard ":8080"
+	DBPath          string         // ZIPFELKASSE_DB, Standard "./data/zipfelkasse.db" (Container: /data/zipfelkasse.db)
+	BackupDir       string         // ZIPFELKASSE_BACKUP_DIR, Standard <Verzeichnis der DB>/backups
 	MCPSecret       string         // MCP_SECRET; leer = MCP abgeschaltet
 	MCPAllowedCIDRs []netip.Prefix // MCP_ALLOWED_CIDRS, Standard 160.79.104.0/21
 	TrustedProxies  []netip.Prefix // TRUSTED_PROXIES (IPs oder CIDRs), Standard leer
@@ -26,12 +26,12 @@ const DefaultMCPAllowedCIDRs = "160.79.104.0/21"
 // FromEnv baut die Konfiguration aus getenv (z. B. os.Getenv).
 func FromEnv(getenv func(string) string) (Config, error) {
 	c := Config{
-		Addr:      or(getenv("TEILEN_ADDR"), ":8080"),
-		DBPath:    or(getenv("TEILEN_DB"), "./data/teilen.db"),
+		Addr:      or(getenv("ZIPFELKASSE_ADDR"), ":8080"),
+		DBPath:    or(getenv("ZIPFELKASSE_DB"), "./data/zipfelkasse.db"),
 		MCPSecret: strings.TrimSpace(getenv("MCP_SECRET")),
 		Location:  time.Local,
 	}
-	c.BackupDir = or(getenv("TEILEN_BACKUP_DIR"), filepath.Join(filepath.Dir(c.DBPath), "backups"))
+	c.BackupDir = or(getenv("ZIPFELKASSE_BACKUP_DIR"), filepath.Join(filepath.Dir(c.DBPath), "backups"))
 	var err error
 	if c.MCPAllowedCIDRs, err = ParsePrefixes(or(getenv("MCP_ALLOWED_CIDRS"), DefaultMCPAllowedCIDRs)); err != nil {
 		return c, fmt.Errorf("MCP_ALLOWED_CIDRS: %w", err)

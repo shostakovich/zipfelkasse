@@ -13,7 +13,7 @@ import (
 	"strings"
 	"time"
 
-	"teilen/internal/domain"
+	"github.com/shostakovich/zipfelkasse/internal/domain"
 )
 
 // DefaultBaseURL ist die YNAB-API (v1). Budgets heißen dort seit v1.79

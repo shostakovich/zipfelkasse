@@ -5,7 +5,7 @@ import (
 	"errors"
 	"testing"
 
-	"teilen/internal/domain"
+	"github.com/shostakovich/zipfelkasse/internal/domain"
 )
 
 func TestCreateRecurringFromExpense(t *testing.T) {

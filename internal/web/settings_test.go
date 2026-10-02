@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	"teilen/internal/domain"
-	"teilen/internal/store"
+	"github.com/shostakovich/zipfelkasse/internal/domain"
+	"github.com/shostakovich/zipfelkasse/internal/store"
 )
 
 func TestSettingsGroupName(t *testing.T) {
@@ -40,7 +40,7 @@ func TestSettingsGroupName(t *testing.T) {
 		t.Errorf("leerer Name: %d %q", status, errorOf(body))
 	}
 	_, body = g.get("/aktivitaet")
-	if !strings.Contains(body, "Gruppe umbenannt: „teilen“ → „WG Süd“") {
+	if !strings.Contains(body, "Gruppe umbenannt: „Zipfelkasse“ → „WG Süd“") {
 		t.Error("Umbenennung nicht protokolliert")
 	}
 }

@@ -10,9 +10,9 @@ import (
 	"strings"
 	"time"
 
-	"teilen/internal/domain"
-	"teilen/internal/store"
-	"teilen/internal/ynab"
+	"github.com/shostakovich/zipfelkasse/internal/domain"
+	"github.com/shostakovich/zipfelkasse/internal/store"
+	"github.com/shostakovich/zipfelkasse/internal/ynab"
 )
 
 // --- Ausgaben als CSV (für Excel/Numbers) -------------------------------------
@@ -212,7 +212,7 @@ func writeExpensesJSON(w io.Writer, group string, now time.Time, p period, peopl
 // --- Meine Anteile für YNAB: OFX -------------------------------------------------
 
 // writeOFX schreibt die Buchungen als OFX 1.02 (SGML) – ein Kontoauszug des
-// Verrechnungskontos. FITID ist stabil je Ausgabe („teilen-<ID>“). Kodierung
+// Verrechnungskontos. FITID ist stabil je Ausgabe („zipfelkasse-<ID>“). Kodierung
 // UTF-8 (so deklariert), Zeilenende CRLF.
 func writeOFX(w io.Writer, ps []ynab.Posting, accountID string, from, to, now time.Time) error {
 	if from.IsZero() || to.IsZero() {
@@ -261,7 +261,7 @@ func writeOFX(w io.Writer, ps []ynab.Posting, accountID string, from, to, now ti
 	line("<STMTRS>")
 	line("<CURDEF>EUR")
 	line("<BANKACCTFROM>")
-	line("<BANKID>TEILEN")
+	line("<BANKID>ZIPFEL") // OFX allows at most 9 characters
 	line("<ACCTID>%s", sgml(accountID, 22))
 	line("<ACCTTYPE>CHECKING")
 	line("</BANKACCTFROM>")
@@ -273,7 +273,7 @@ func writeOFX(w io.Writer, ps []ynab.Posting, accountID string, from, to, now ti
 		line("<TRNTYPE>DEBIT")
 		line("<DTPOSTED>%s", p.Date.Format("20060102"))
 		line("<TRNAMT>%s", decimal(-p.AmountCents, 2, '.'))
-		line("<FITID>teilen-%d", p.ExpenseID)
+		line("<FITID>zipfelkasse-%d", p.ExpenseID)
 		line("<NAME>%s", sgml(p.Payee, 32))
 		line("<MEMO>%s", sgml(p.Memo, 255))
 		line("</STMTTRN>")

@@ -10,7 +10,7 @@ import (
 // foldFunc ist der Name der SQL-Funktion für die Textsuche. Sie ist beim
 // Treiber registriert und steht damit jeder Verbindung zur Verfügung (auch der
 // Sandbox von sql_abfrage).
-const foldFunc = "teilen_fold"
+const foldFunc = "zipfelkasse_fold"
 
 func init() {
 	sqlite.MustRegisterDeterministicScalarFunction(foldFunc, 1, func(_ *sqlite.FunctionContext, args []driver.Value) (driver.Value, error) {

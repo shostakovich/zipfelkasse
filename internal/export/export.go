@@ -14,10 +14,10 @@ import (
 	"strconv"
 	"time"
 
-	"teilen/internal/domain"
-	"teilen/internal/store"
-	"teilen/internal/web"
-	"teilen/internal/ynab"
+	"github.com/shostakovich/zipfelkasse/internal/domain"
+	"github.com/shostakovich/zipfelkasse/internal/store"
+	"github.com/shostakovich/zipfelkasse/internal/web"
+	"github.com/shostakovich/zipfelkasse/internal/ynab"
 )
 
 //go:embed templates/*.html
@@ -162,7 +162,7 @@ func (h handlers) expensesCSV(w http.ResponseWriter, r *http.Request) {
 		h.serverError(w, r, err)
 		return
 	}
-	send(w, "text/csv; charset=utf-8", "teilen-ausgaben-"+p.suffix(h.d.Today())+".csv", buf.Bytes())
+	send(w, "text/csv; charset=utf-8", "zipfelkasse-ausgaben-"+p.suffix(h.d.Today())+".csv", buf.Bytes())
 }
 
 func (h handlers) expensesJSON(w http.ResponseWriter, r *http.Request) {
@@ -180,7 +180,7 @@ func (h handlers) expensesJSON(w http.ResponseWriter, r *http.Request) {
 		h.serverError(w, r, err)
 		return
 	}
-	send(w, "application/json; charset=utf-8", "teilen-ausgaben-"+p.suffix(h.d.Today())+".json", buf.Bytes())
+	send(w, "application/json; charset=utf-8", "zipfelkasse-ausgaben-"+p.suffix(h.d.Today())+".json", buf.Bytes())
 }
 
 // postings liefert meine Buchungen (aktuelle Person) im Zeitraum – mit
@@ -206,12 +206,12 @@ func (h handlers) ynabOFX(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var buf bytes.Buffer
-	acct := "TEILEN-" + strconv.FormatInt(me.ID, 10)
+	acct := "ZIPFELKASSE-" + strconv.FormatInt(me.ID, 10)
 	if err := writeOFX(&buf, ps, acct, p.From, p.To, h.now()); err != nil {
 		h.serverError(w, r, err)
 		return
 	}
-	send(w, "application/x-ofx", "teilen-ynab-"+p.suffix(h.d.Today())+".ofx", buf.Bytes())
+	send(w, "application/x-ofx", "zipfelkasse-ynab-"+p.suffix(h.d.Today())+".ofx", buf.Bytes())
 }
 
 func (h handlers) ynabCSV(w http.ResponseWriter, r *http.Request) {
@@ -224,5 +224,5 @@ func (h handlers) ynabCSV(w http.ResponseWriter, r *http.Request) {
 		h.serverError(w, r, err)
 		return
 	}
-	send(w, "text/csv; charset=utf-8", "teilen-ynab-"+p.suffix(h.d.Today())+".csv", buf.Bytes())
+	send(w, "text/csv; charset=utf-8", "zipfelkasse-ynab-"+p.suffix(h.d.Today())+".csv", buf.Bytes())
 }

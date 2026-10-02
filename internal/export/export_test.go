@@ -13,10 +13,10 @@ import (
 	"testing"
 	"time"
 
-	"teilen/internal/domain"
-	"teilen/internal/store"
-	"teilen/internal/web"
-	"teilen/internal/ynab"
+	"github.com/shostakovich/zipfelkasse/internal/domain"
+	"github.com/shostakovich/zipfelkasse/internal/store"
+	"github.com/shostakovich/zipfelkasse/internal/web"
+	"github.com/shostakovich/zipfelkasse/internal/ynab"
 )
 
 func day(s string) time.Time {
@@ -157,7 +157,7 @@ func TestOFXGolden(t *testing.T) {
 	ps := ynab.Selection{Today: day("2026-10-02")}.Postings(sample(), anna.ID)
 	var buf bytes.Buffer
 	now := time.Date(2026, 10, 2, 12, 30, 0, 0, time.UTC)
-	if err := writeOFX(&buf, ps, "TEILEN-1", time.Time{}, time.Time{}, now); err != nil {
+	if err := writeOFX(&buf, ps, "ZIPFELKASSE-1", time.Time{}, time.Time{}, now); err != nil {
 		t.Fatal(err)
 	}
 	want := strings.ReplaceAll(`OFXHEADER:100
@@ -191,8 +191,8 @@ NEWFILEUID:NONE
 <STMTRS>
 <CURDEF>EUR
 <BANKACCTFROM>
-<BANKID>TEILEN
-<ACCTID>TEILEN-1
+<BANKID>ZIPFEL
+<ACCTID>ZIPFELKASSE-1
 <ACCTTYPE>CHECKING
 </BANKACCTFROM>
 <BANKTRANLIST>
@@ -202,17 +202,17 @@ NEWFILEUID:NONE
 <TRNTYPE>DEBIT
 <DTPOSTED>20260901
 <TRNAMT>-6.01
-<FITID>teilen-1
+<FITID>zipfelkasse-1
 <NAME>Café &amp; Kuchen
-<MEMO>Gesamt 12,01 € · bezahlt von Anna · teilen #1
+<MEMO>Gesamt 12,01 € · bezahlt von Anna · zipfelkasse #1
 </STMTTRN>
 <STMTTRN>
 <TRNTYPE>DEBIT
 <DTPOSTED>20260903
 <TRNAMT>-40.00
-<FITID>teilen-2
+<FITID>zipfelkasse-2
 <NAME>Diner "NYC"
-<MEMO>Gesamt 80,00 € (90,00 USD) · bezahlt von Ben · teilen #2
+<MEMO>Gesamt 80,00 € (90,00 USD) · bezahlt von Ben · zipfelkasse #2
 </STMTTRN>
 </BANKTRANLIST>
 <LEDGERBAL>
@@ -251,8 +251,8 @@ func TestYNABCSVGolden(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := "Date,Payee,Memo,Outflow,Inflow\n" +
-		"2026-09-01,Café & Kuchen,\"Gesamt 12,01 € · bezahlt von Anna · teilen #1\",6.01,\n" +
-		"2026-09-03,\"Diner \"\"NYC\"\"\",\"Gesamt 80,00 € (90,00 USD) · bezahlt von Ben · teilen #2\",40.00,\n"
+		"2026-09-01,Café & Kuchen,\"Gesamt 12,01 € · bezahlt von Anna · zipfelkasse #1\",6.01,\n" +
+		"2026-09-03,\"Diner \"\"NYC\"\"\",\"Gesamt 80,00 € (90,00 USD) · bezahlt von Ben · zipfelkasse #2\",40.00,\n"
 	if got := buf.String(); got != want {
 		t.Errorf("YNAB-CSV:\n%s\nwant:\n%s", got, want)
 	}
@@ -346,7 +346,7 @@ func TestExportPage(t *testing.T) {
 func TestExpensesDownload(t *testing.T) {
 	f := newFixture(t)
 	rec := f.get("/export/ausgaben.csv?von=01.09.2026&bis=2026-09-30")
-	if rec.Code != 200 || rec.Header().Get("Content-Disposition") != `attachment; filename="teilen-ausgaben-2026-09-01_2026-09-30.csv"` ||
+	if rec.Code != 200 || rec.Header().Get("Content-Disposition") != `attachment; filename="zipfelkasse-ausgaben-2026-09-01_2026-09-30.csv"` ||
 		rec.Header().Get("Content-Type") != "text/csv; charset=utf-8" {
 		t.Fatalf("CSV: %d %v", rec.Code, rec.Header())
 	}
@@ -357,7 +357,7 @@ func TestExpensesDownload(t *testing.T) {
 	}
 
 	rec = f.get("/export/ausgaben.json")
-	if rec.Code != 200 || !strings.HasPrefix(rec.Header().Get("Content-Disposition"), `attachment; filename="teilen-ausgaben-`) {
+	if rec.Code != 200 || !strings.HasPrefix(rec.Header().Get("Content-Disposition"), `attachment; filename="zipfelkasse-ausgaben-`) {
 		t.Fatalf("JSON: %d", rec.Code)
 	}
 	var out jsonExport
@@ -373,19 +373,19 @@ func TestYNABDownloads(t *testing.T) {
 	f := newFixture(t)
 	rec := f.get("/export/ynab.ofx?von=2026-09-01")
 	if rec.Code != 200 || rec.Header().Get("Content-Type") != "application/x-ofx" ||
-		rec.Header().Get("Content-Disposition") != `attachment; filename="teilen-ynab-ab-2026-09-01.ofx"` {
+		rec.Header().Get("Content-Disposition") != `attachment; filename="zipfelkasse-ynab-ab-2026-09-01.ofx"` {
 		t.Fatalf("OFX: %d %v", rec.Code, rec.Header())
 	}
 	body := rec.Body.String()
 	// Nur Annas Anteil an „Käse“ (Brötchen vor dem Zeitraum, gelöscht und „Nur Jürgen“ ohne Anteil).
 	if strings.Count(body, "<STMTTRN>") != 1 || !strings.Contains(body, "<NAME>Käse\r\n") || !strings.Contains(body, "<TRNAMT>-5.00\r\n") ||
-		!strings.Contains(body, "<ACCTID>TEILEN-"+strconv.FormatInt(f.anna, 10)+"\r\n") {
+		!strings.Contains(body, "<ACCTID>ZIPFELKASSE-"+strconv.FormatInt(f.anna, 10)+"\r\n") {
 		t.Errorf("OFX:\n%s", body)
 	}
 	rec = f.get("/export/ynab.csv")
 	want := "Date,Payee,Memo,Outflow,Inflow\n" +
-		"2026-08-30,Brötchen,\"Gesamt 4,00 € · bezahlt von Jürgen · teilen #1\",2.00,\n" +
-		"2026-09-02,Käse,\"Gesamt 10,00 € · bezahlt von Jürgen · teilen #2\",5.00,\n"
+		"2026-08-30,Brötchen,\"Gesamt 4,00 € · bezahlt von Jürgen · zipfelkasse #1\",2.00,\n" +
+		"2026-09-02,Käse,\"Gesamt 10,00 € · bezahlt von Jürgen · zipfelkasse #2\",5.00,\n"
 	if rec.Code != 200 || rec.Body.String() != want {
 		t.Errorf("YNAB-CSV: %d\n%s", rec.Code, rec.Body)
 	}
@@ -436,11 +436,11 @@ func TestYNABDownloadsFollowSync(t *testing.T) {
 
 func TestYNABCSVInjection(t *testing.T) {
 	var buf bytes.Buffer
-	ps := []ynab.Posting{{ExpenseID: 1, Date: day("2026-09-01"), AmountCents: 100, Payee: "=HYPERLINK(\"x\")", Memo: "+1 · teilen #1"}}
+	ps := []ynab.Posting{{ExpenseID: 1, Date: day("2026-09-01"), AmountCents: 100, Payee: "=HYPERLINK(\"x\")", Memo: "+1 · zipfelkasse #1"}}
 	if err := writeYNABCSV(&buf, ps); err != nil {
 		t.Fatal(err)
 	}
-	if got := buf.String(); !strings.Contains(got, `"'=HYPERLINK(""x"")"`) || !strings.Contains(got, "'+1 · teilen #1") {
+	if got := buf.String(); !strings.Contains(got, `"'=HYPERLINK(""x"")"`) || !strings.Contains(got, "'+1 · zipfelkasse #1") {
 		t.Errorf("YNAB-CSV:\n%s", got)
 	}
 }

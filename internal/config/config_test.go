@@ -14,7 +14,7 @@ func TestFromEnvDefaults(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if c.Addr != ":8080" || c.DBPath != "./data/teilen.db" || c.BackupDir != "data/backups" || c.MCPSecret != "" {
+	if c.Addr != ":8080" || c.DBPath != "./data/zipfelkasse.db" || c.BackupDir != "data/backups" || c.MCPSecret != "" {
 		t.Errorf("Defaults = %+v", c)
 	}
 	if len(c.MCPAllowedCIDRs) != 1 || c.MCPAllowedCIDRs[0].String() != "160.79.104.0/21" || len(c.TrustedProxies) != 0 {
@@ -24,8 +24,8 @@ func TestFromEnvDefaults(t *testing.T) {
 
 func TestFromEnv(t *testing.T) {
 	c, err := FromEnv(env(map[string]string{
-		"TEILEN_ADDR":       "127.0.0.1:9000",
-		"TEILEN_DB":         "/data/teilen.db",
+		"ZIPFELKASSE_ADDR":  "127.0.0.1:9000",
+		"ZIPFELKASSE_DB":    "/data/zipfelkasse.db",
 		"MCP_SECRET":        " geheim ",
 		"MCP_ALLOWED_CIDRS": "10.0.0.0/8, 192.168.1.5",
 		"TRUSTED_PROXIES":   "172.18.0.2 fd00::/8",

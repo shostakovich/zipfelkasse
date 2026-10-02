@@ -1,4 +1,4 @@
-// teilen – kleine Verbesserungen für alle Seiten. Alles funktioniert auch
+// Zipfelkasse – kleine Verbesserungen für alle Seiten. Alles funktioniert auch
 // ohne JavaScript; dieses Skript macht es nur bequemer.
 (function () {
   "use strict";

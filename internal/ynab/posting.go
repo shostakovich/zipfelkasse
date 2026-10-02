@@ -9,8 +9,8 @@ import (
 	"strconv"
 	"time"
 
-	"teilen/internal/domain"
-	"teilen/internal/store"
+	"github.com/shostakovich/zipfelkasse/internal/domain"
+	"github.com/shostakovich/zipfelkasse/internal/store"
 )
 
 // Posting ist eine Buchung „aus meiner Sicht“: mein Anteil an einer Ausgabe
@@ -21,7 +21,7 @@ type Posting struct {
 	Date        time.Time
 	AmountCents int64  // mein Anteil in Cent, positiv (= Ausgang)
 	Payee       string // Titel der Ausgabe
-	Memo        string // „Gesamt 84,00 € · bezahlt von Anna · teilen #123“
+	Memo        string // „Gesamt 84,00 € · bezahlt von Anna · zipfelkasse #123“
 	CategoryID  int64  // App-Kategorie, 0 = keine
 }
 
@@ -132,7 +132,7 @@ func (sel Selection) Postings(es []store.Expense, participantID int64) []Posting
 	return out
 }
 
-// Memo beschreibt die Ausgabe für das Memo-Feld. Die Markierung „teilen #ID“
+// Memo beschreibt die Ausgabe für das Memo-Feld. Die Markierung „zipfelkasse #ID“
 // steht immer am Ende; der Sync erkennt eigene Buchungen daran wieder.
 func Memo(e store.Expense) string {
 	total := "Gesamt " + domain.FormatCents(e.AmountCents)
@@ -144,10 +144,13 @@ func Memo(e store.Expense) string {
 	return truncate(head, maxMemoLen-len([]rune(suffix))) + suffix
 }
 
-// Marker ist die Kennung einer Ausgabe im Memo.
-func Marker(expenseID int64) string { return "teilen #" + strconv.FormatInt(expenseID, 10) }
+// markerPrefix starts the marker of an expense in the memo (see Marker).
+const markerPrefix = "zipfelkasse #"
 
-var markerRe = regexp.MustCompile(`teilen #(\d+)\s*$`)
+// Marker ist die Kennung einer Ausgabe im Memo.
+func Marker(expenseID int64) string { return markerPrefix + strconv.FormatInt(expenseID, 10) }
+
+var markerRe = regexp.MustCompile(regexp.QuoteMeta(markerPrefix) + `(\d+)\s*$`)
 
 // markerID liest die Ausgaben-ID aus einem Memo (siehe Marker).
 func markerID(memo string) (int64, bool) {

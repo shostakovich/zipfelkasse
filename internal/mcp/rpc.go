@@ -14,7 +14,7 @@ import (
 	"strings"
 	"time"
 
-	"teilen/internal/domain"
+	"github.com/shostakovich/zipfelkasse/internal/domain"
 )
 
 // Protokollversionen. Modern = zustandslos mit _meta pro Anfrage, Legacy =

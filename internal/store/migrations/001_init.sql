@@ -1,4 +1,4 @@
--- Migration 001: komplettes Grundschema von teilen.
+-- Migration 001: komplettes Grundschema von Zipfelkasse.
 -- Konventionen:
 --   * Beträge in Cent (INTEGER), Fremdwährung in der kleinsten Einheit.
 --   * Kalenderdaten als TEXT 'YYYY-MM-DD', Zeitstempel als TEXT RFC 3339 UTC.
@@ -145,5 +145,5 @@ INSERT INTO categories (name, position) VALUES
     ('Sonstiges', 1000);
 
 INSERT INTO settings (key, value) VALUES
-    ('group_name', 'teilen'),
+    ('group_name', 'Zipfelkasse'),
     ('default_currency', 'EUR');

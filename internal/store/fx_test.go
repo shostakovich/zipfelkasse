@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"teilen/internal/domain"
+	"github.com/shostakovich/zipfelkasse/internal/domain"
 )
 
 func TestFXRatesECBAndManual(t *testing.T) {

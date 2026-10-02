@@ -1,9 +1,9 @@
-// teilen – Ausgaben in einer Gruppe teilen (Spliit-Nachbau für den Heimserver).
+// Zipfelkasse – Ausgaben in einer Gruppe teilen (Spliit-Nachbau für den Heimserver).
 //
 // Unterbefehle:
 //
-//	teilen [serve]      startet den Server (Standard)
-//	teilen healthcheck  prüft GET /healthz des laufenden Servers (Exit-Code 0/1)
+//	zipfelkasse [serve]      startet den Server (Standard)
+//	zipfelkasse healthcheck  prüft GET /healthz des laufenden Servers (Exit-Code 0/1)
 package main
 
 import (
@@ -20,14 +20,14 @@ import (
 	"time"
 	_ "time/tzdata" // Zeitzonen im scratch-Image
 
-	"teilen/internal/config"
-	"teilen/internal/export"
-	"teilen/internal/fx"
-	"teilen/internal/mcp"
-	"teilen/internal/recurring"
-	"teilen/internal/store"
-	"teilen/internal/web"
-	"teilen/internal/ynab"
+	"github.com/shostakovich/zipfelkasse/internal/config"
+	"github.com/shostakovich/zipfelkasse/internal/export"
+	"github.com/shostakovich/zipfelkasse/internal/fx"
+	"github.com/shostakovich/zipfelkasse/internal/mcp"
+	"github.com/shostakovich/zipfelkasse/internal/recurring"
+	"github.com/shostakovich/zipfelkasse/internal/store"
+	"github.com/shostakovich/zipfelkasse/internal/web"
+	"github.com/shostakovich/zipfelkasse/internal/ynab"
 )
 
 // backupKeep ist die Anzahl der aufbewahrten nächtlichen Backups.
@@ -43,13 +43,13 @@ func main() {
 	case "serve":
 		err = serve()
 	case "healthcheck":
-		err = healthcheck(os.Getenv("TEILEN_ADDR"))
+		err = healthcheck(os.Getenv("ZIPFELKASSE_ADDR"))
 	default:
-		fmt.Fprintf(os.Stderr, "unbekannter Befehl %q\nBenutzung: teilen [serve|healthcheck]\n", cmd)
+		fmt.Fprintf(os.Stderr, "unbekannter Befehl %q\nBenutzung: zipfelkasse [serve|healthcheck]\n", cmd)
 		os.Exit(2)
 	}
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "teilen:", err)
+		fmt.Fprintln(os.Stderr, "zipfelkasse:", err)
 		os.Exit(1)
 	}
 }
@@ -137,7 +137,7 @@ func serve() error {
 	}
 	errc := make(chan error, 1)
 	go func() { errc <- srv.Serve(ln) }()
-	log.Info("teilen läuft", "addr", cfg.Addr, "db", cfg.DBPath, "tz", cfg.Location.String())
+	log.Info("Zipfelkasse läuft", "addr", cfg.Addr, "db", cfg.DBPath, "tz", cfg.Location.String())
 
 	select {
 	case err = <-errc:
@@ -209,7 +209,7 @@ func healthURL(addr string) (string, error) {
 	}
 	host, port, err := net.SplitHostPort(addr)
 	if err != nil {
-		return "", fmt.Errorf("TEILEN_ADDR %q: %w", addr, err)
+		return "", fmt.Errorf("ZIPFELKASSE_ADDR %q: %w", addr, err)
 	}
 	if host == "" || host == "0.0.0.0" || host == "::" {
 		host = "127.0.0.1"

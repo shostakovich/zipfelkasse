@@ -5,7 +5,7 @@ import (
 	"net/netip"
 	"testing"
 
-	"teilen/internal/config"
+	"github.com/shostakovich/zipfelkasse/internal/config"
 )
 
 func TestClientIP(t *testing.T) {

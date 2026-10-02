@@ -9,14 +9,14 @@ import (
 	"testing"
 	"time"
 
-	"teilen/internal/domain"
+	"github.com/shostakovich/zipfelkasse/internal/domain"
 )
 
 // newFileFixture ist newFixture mit einer echten Datei (die Sandbox hängt die
 // Datei schreibgeschützt an, :memory: geht dafür nicht) und einem YNAB-Token.
 func newFileFixture(t *testing.T) fixture {
 	t.Helper()
-	path := filepath.Join(t.TempDir(), "teilen.db")
+	path := filepath.Join(t.TempDir(), "zipfelkasse.db")
 	s, err := Open(path)
 	if err != nil {
 		t.Fatal(err)

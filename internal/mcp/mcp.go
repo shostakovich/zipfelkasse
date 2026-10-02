@@ -17,8 +17,8 @@ import (
 	"net/http"
 	"time"
 
-	"teilen/internal/config"
-	"teilen/internal/web"
+	"github.com/shostakovich/zipfelkasse/internal/config"
+	"github.com/shostakovich/zipfelkasse/internal/web"
 )
 
 // Register hängt /mcp/{secret} an. Ohne MCP_SECRET bleibt MCP abgeschaltet.

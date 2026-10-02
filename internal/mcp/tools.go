@@ -11,20 +11,20 @@ import (
 	"strings"
 	"time"
 
-	"teilen/internal/domain"
-	"teilen/internal/store"
-	"teilen/internal/web"
+	"github.com/shostakovich/zipfelkasse/internal/domain"
+	"github.com/shostakovich/zipfelkasse/internal/store"
+	"github.com/shostakovich/zipfelkasse/internal/web"
 )
 
 const serverVersion = "1.0.0"
 
 func serverInfo() map[string]any {
-	return map[string]any{"name": "teilen", "title": "teilen – geteilte Ausgaben", "version": serverVersion}
+	return map[string]any{"name": "zipfelkasse", "title": "Zipfelkasse – geteilte Ausgaben", "version": serverVersion}
 }
 
 // instructionsText explains the server to the model (initialize,
 // server/discover); instructions() appends today's date.
-const instructionsText = `teilen ist die Ausgabenverwaltung einer einzigen Gruppe (wie Splitwise/Spliit). Alle Tools sind nur lesend.
+const instructionsText = `Zipfelkasse ist die Ausgabenverwaltung einer einzigen Gruppe (wie Splitwise/Spliit). Alle Tools sind nur lesend.
 Beträge sind Euro. In Ergebnissen steht jeder Betrag zweimal: als Text „1234,56“ und als Ganzzahl in Cent (Feld mit Endung _cent).
 Saldo: positiv = bekommt Geld von den anderen, negativ = schuldet Geld.
 Rückzahlungen sind Ausgleichszahlungen zwischen zwei Personen, keine Ausgaben; sie zählen für Salden, nicht für Ausgaben-Statistiken.
@@ -564,7 +564,7 @@ func (s *server) statistik(ctx context.Context, raw json.RawMessage) (toolResult
 
 // --- schema -----------------------------------------------------------------------
 
-const schemaText = `Datenbank von teilen (SQLite). Eine einzige Gruppe.
+const schemaText = `Datenbank von Zipfelkasse (SQLite). Eine einzige Gruppe.
 Konventionen: Beträge sind INTEGER in Euro-Cent (für Euro durch 100.0 teilen). Kalenderdaten TEXT 'JJJJ-MM-TT', Zeitstempel TEXT RFC 3339 in UTC. Wahrheitswerte 0/1.
 
 Tabellen:

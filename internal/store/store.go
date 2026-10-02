@@ -23,7 +23,7 @@ import (
 	"modernc.org/sqlite"
 	sqlite3 "modernc.org/sqlite/lib"
 
-	"teilen/internal/domain"
+	"github.com/shostakovich/zipfelkasse/internal/domain"
 )
 
 //go:embed migrations/*.sql
@@ -33,7 +33,7 @@ var migrationsFS embed.FS
 // Ausgaben: bereits gelöscht ist, wo das relevant ist).
 var ErrNotFound = errors.New("nicht gefunden")
 
-// Store ist die Datenbank von teilen. Alle Methoden sind nebenläufig nutzbar.
+// Store ist die Datenbank von Zipfelkasse. Alle Methoden sind nebenläufig nutzbar.
 type Store struct {
 	db   *sql.DB
 	path string

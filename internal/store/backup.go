@@ -9,10 +9,10 @@ import (
 	"strings"
 )
 
-const backupPrefix, backupSuffix = "teilen-", ".db"
+const backupPrefix, backupSuffix = "zipfelkasse-", ".db"
 
 // Backup schreibt per VACUUM INTO eine konsistente Kopie der Datenbank nach
-// dir/teilen-YYYYMMDD-HHMMSS.db und löscht danach alle bis auf die neuesten
+// dir/zipfelkasse-YYYYMMDD-HHMMSS.db und löscht danach alle bis auf die neuesten
 // keep Backups in dir. Liefert den Pfad der neuen Datei.
 func (s *Store) Backup(ctx context.Context, dir string, keep int) (string, error) {
 	if err := os.MkdirAll(dir, 0o755); err != nil {

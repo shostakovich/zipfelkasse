@@ -5,8 +5,8 @@ import (
 	"strconv"
 	"time"
 
-	"teilen/internal/domain"
-	"teilen/internal/store"
+	"github.com/shostakovich/zipfelkasse/internal/domain"
+	"github.com/shostakovich/zipfelkasse/internal/store"
 )
 
 // actionSettingsUpdated protokolliert Änderungen an Gruppenname, Personen und

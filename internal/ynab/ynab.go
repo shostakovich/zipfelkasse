@@ -16,8 +16,8 @@ import (
 	"sync"
 	"time"
 
-	"teilen/internal/store"
-	"teilen/internal/web"
+	"github.com/shostakovich/zipfelkasse/internal/store"
+	"github.com/shostakovich/zipfelkasse/internal/web"
 )
 
 //go:embed templates/*.html

@@ -6,7 +6,7 @@ import (
 	"net/netip"
 	"strings"
 
-	"teilen/internal/config"
+	"github.com/shostakovich/zipfelkasse/internal/config"
 )
 
 // clientIP ermittelt die Adresse des Clients.

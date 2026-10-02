@@ -15,8 +15,8 @@ import (
 	"strings"
 	"time"
 
-	"teilen/internal/domain"
-	"teilen/internal/store"
+	"github.com/shostakovich/zipfelkasse/internal/domain"
+	"github.com/shostakovich/zipfelkasse/internal/store"
 )
 
 //go:embed templates/layout.html

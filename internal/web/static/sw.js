@@ -1,4 +1,4 @@
-// teilen – minimaler Service Worker. Er ist nur da, damit die App
+// Zipfelkasse – minimaler Service Worker. Er ist nur da, damit die App
 // installierbar ist. Es wird bewusst nichts zwischengespeichert: Seiten
 // kommen immer frisch vom Server, damit nie veraltete Salden zu sehen sind.
 // Nur wenn der Server nicht erreichbar ist, erscheint ein Offline-Hinweis.

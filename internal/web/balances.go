@@ -5,8 +5,8 @@ import (
 	"net/url"
 	"strconv"
 
-	"teilen/internal/domain"
-	"teilen/internal/store"
+	"github.com/shostakovich/zipfelkasse/internal/domain"
+	"github.com/shostakovich/zipfelkasse/internal/store"
 )
 
 type balancesData struct {

@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"teilen/internal/domain"
+	"github.com/shostakovich/zipfelkasse/internal/domain"
 )
 
 // Wechselkurse liegen in fx_rates im EZB-Format (Fremdwährung pro 1 EUR).

@@ -9,12 +9,12 @@
     <div class="card-content stack-sm">
       <p><strong>So funktioniert’s:</strong></p>
       <ol class="stack-sm">
-        <li>Lege in YNAB ein Konto <strong>„Geteilt“</strong> an (im Budget, z. B. Typ „Cash“). Als Startsaldo trägst du deinen Saldo in teilen am Tag vor dem Startdatum ein.</li>
-        <li>teilen schreibt dort für jede geteilte Ausgabe <strong>nur deinen Anteil</strong> als Ausgabe – mit der YNAB-Kategorie aus der Zuordnung unten.</li>
+        <li>Lege in YNAB ein Konto <strong>„Geteilt“</strong> an (im Budget, z. B. Typ „Cash“). Als Startsaldo trägst du deinen Saldo in Zipfelkasse am Tag vor dem Startdatum ein.</li>
+        <li>Zipfelkasse schreibt dort für jede geteilte Ausgabe <strong>nur deinen Anteil</strong> als Ausgabe – mit der YNAB-Kategorie aus der Zuordnung unten.</li>
         <li>Bezahlst du eine geteilte Ausgabe mit deiner Karte, markierst du die Buchung im Bankkonto als <strong>Transfer → „Geteilt“</strong> statt sie zu kategorisieren.</li>
-        <li>Rückzahlungen (du überweist jemandem Geld oder bekommst welches) markierst du ebenso als Transfer zwischen Bankkonto und „Geteilt“. teilen schreibt Rückzahlungen nicht selbst.</li>
+        <li>Rückzahlungen (du überweist jemandem Geld oder bekommst welches) markierst du ebenso als Transfer zwischen Bankkonto und „Geteilt“. Zipfelkasse schreibt Rückzahlungen nicht selbst.</li>
       </ol>
-      <p class="muted">Dann entspricht der Saldo von „Geteilt“ in YNAB deinem Saldo in teilen (positiv: du bekommst Geld).</p>
+      <p class="muted">Dann entspricht der Saldo von „Geteilt“ in YNAB deinem Saldo in Zipfelkasse (positiv: du bekommst Geld).</p>
     </div>
   </section>
 
@@ -59,7 +59,7 @@
       <p class="alert alert-destructive" role="alert">{{.}}</p>
       {{- end}}
       {{- with $d.Currency}}
-      <p class="alert alert-destructive" role="alert">Achtung: Dieser Plan rechnet in {{.}}. teilen überträgt Euro-Beträge.</p>
+      <p class="alert alert-destructive" role="alert">Achtung: Dieser Plan rechnet in {{.}}. Zipfelkasse überträgt Euro-Beträge.</p>
       {{- end}}
       {{- if $d.Plans}}
       <form method="post" action="/einstellungen/ynab/konto" class="form">
@@ -106,7 +106,7 @@
         <div class="table-wrap">
           <table>
             <thead>
-              <tr><th scope="col">In teilen</th><th scope="col">In YNAB</th></tr>
+              <tr><th scope="col">In Zipfelkasse</th><th scope="col">In YNAB</th></tr>
             </thead>
             <tbody>
               {{- range $d.Categories}}
@@ -150,7 +150,7 @@
       <h2 class="card-title">Status</h2>
     </div>
     <div class="card-content stack-sm">
-      <p>Dein Saldo in teilen: <strong class="amount {{signClass $d.Balance}}">{{eur $d.Balance}}</strong> <span class="muted">– so viel sollte auch „Geteilt“ in YNAB zeigen.</span></p>
+      <p>Dein Saldo in Zipfelkasse: <strong class="amount {{signClass $d.Balance}}">{{eur $d.Balance}}</strong> <span class="muted">– so viel sollte auch „Geteilt“ in YNAB zeigen.</span></p>
       {{- if $d.Ready}}
       <p>Synchronisierte Buchungen: <strong>{{$d.Synced}}</strong></p>
       {{- if not $d.Status.LastSync.IsZero}}
@@ -165,7 +165,7 @@
       <p class="muted">Nächster Versuch ab {{dateTime $d.RetryAt}}.</p>
       {{- end}}
       {{- else}}
-      <p class="muted">Sobald Plan, Konto und Startdatum gewählt sind, synchronisiert teilen automatisch: kurz nach jeder Änderung und stündlich.</p>
+      <p class="muted">Sobald Plan, Konto und Startdatum gewählt sind, synchronisiert Zipfelkasse automatisch: kurz nach jeder Änderung und stündlich.</p>
       {{- end}}
     </div>
     {{- if $d.Problems}}

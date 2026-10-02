@@ -1,7 +1,7 @@
 services:
-  teilen:
+  zipfelkasse:
     build: .
-    image: teilen:latest
+    image: zipfelkasse:latest
     restart: unless-stopped
     ports:
       - "8080:8080"
@@ -15,7 +15,7 @@ services:
       # docker inspect (siehe docs/MCP.md).
       # TRUSTED_PROXIES: 172.18.0.5/32
     volumes:
-      - teilen-data:/data
+      - zipfelkasse-data:/data
 
 volumes:
-  teilen-data:
+  zipfelkasse-data:

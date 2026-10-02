@@ -18,7 +18,7 @@ import (
 	"modernc.org/sqlite"
 	sqlite3 "modernc.org/sqlite/lib"
 
-	"teilen/internal/domain"
+	"github.com/shostakovich/zipfelkasse/internal/domain"
 )
 
 // MCPTables sind die Tabellen, die über MCP (schema, sql_abfrage) sichtbar

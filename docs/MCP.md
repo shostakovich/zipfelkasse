@@ -1,6 +1,6 @@
 # MCP – Auswertung mit Claude
 
-teilen hat einen eigenen MCP-Server, über den Claude die Ausgaben auswerten kann. Er hat **nur lesende Tools**.
+Zipfelkasse hat einen eigenen MCP-Server, über den Claude die Ausgaben auswerten kann. Er hat **nur lesende Tools**.
 Er läuft unter `/mcp/<MCP_SECRET>`. Ohne `MCP_SECRET` ist er abgeschaltet.
 
 ## Tools
@@ -55,7 +55,7 @@ Jeder Zugriff wird geloggt: IP, Methode, Tool, Status und Dauer. Der Pfad mit de
 
 ## Pangolin einrichten
 
-1. Öffne die Ressource von teilen, gehe zu **Rules** und aktiviere die Regeln.
+1. Öffne die Ressource von Zipfelkasse, gehe zu **Rules** und aktiviere die Regeln.
 2. Lege eine Regel an: Aktion **Bypass Auth**, Match **Path**, Wert `/mcp/*`. Damit kommt Claude ohne Pangolin-Login
    durch. Die App schützt sich mit Secret, IP-Filter und Origin-Prüfung selbst.
 3. Stelle `TRUSTED_PROXIES` ein: Starte die App zunächst ohne die Variable und rufe den Endpunkt einmal über die Domain
@@ -71,9 +71,9 @@ Jeder Zugriff wird geloggt: IP, Methode, Tool, Status und Dauer. Der Pfad mit de
 4. Prüfe die Header: Traefik in Pangolin setzt `X-Forwarded-For` und `X-Real-Ip`. Steht in `x_forwarded_for` nichts,
    reicht `X-Real-IP`.
 
-### Mit Caddy zwischen Newt und teilen
+### Mit Caddy zwischen Newt und Zipfelkasse
 
-Läuft der Weg `Pangolin → Newt → Caddy → teilen`, gibt es zwei Proxy-Hops. Dann gilt:
+Läuft der Weg `Pangolin → Newt → Caddy → Zipfelkasse`, gibt es zwei Proxy-Hops. Dann gilt:
 
 - **Caddy muss Newt vertrauen**, sonst verwirft es das eingehende `X-Forwarded-For` (mit der Anthropic-IP) und
   schreibt nur die Newt-Adresse hinein. Im Caddyfile global:
@@ -87,7 +87,7 @@ Läuft der Weg `Pangolin → Newt → Caddy → teilen`, gibt es zwei Proxy-Hops
   ```
 
   Caddy hängt dann die Newt-Adresse an: `X-Forwarded-For: <Anthropic-IP>, <Newt-IP>`.
-- **teilen muss beiden vertrauen:** `TRUSTED_PROXIES=<Caddy-IP>/32,<Newt-IP>/32`. teilen liest von rechts, überspringt
+- **Zipfelkasse muss beiden vertrauen:** `TRUSTED_PROXIES=<Caddy-IP>/32,<Newt-IP>/32`. Zipfelkasse liest von rechts, überspringt
   Newt und landet bei der Anthropic-IP.
 - Kontrolle wie oben über die Logzeile: `remote=` ist Caddy, `x_forwarded_for=[<Anthropic-IP> <Newt-IP>]`, `ip=` die
   Anthropic-IP.
@@ -99,7 +99,7 @@ LAN zugreifen dürfen, nimm dein Netz zusätzlich in `MCP_ALLOWED_CIDRS` auf.
 
 **Claude (Web/Desktop):** Gehe zu Einstellungen → Connectors → **Custom Connector hinzufügen** und trage ein:
 
-- Name: `teilen`
+- Name: `zipfelkasse`
 - URL: `https://<domain>/mcp/<MCP_SECRET>`
 - keine Authentifizierung (kein OAuth)
 
@@ -108,7 +108,7 @@ Die Anfragen kommen dann von Anthropic, also aus `160.79.104.0/21`.
 **Claude Code im LAN**, direkt ohne Pangolin:
 
 ```sh
-claude mcp add --transport http teilen http://heimserver:8080/mcp/<MCP_SECRET>
+claude mcp add --transport http zipfelkasse http://heimserver:8080/mcp/<MCP_SECRET>
 ```
 
 Dafür muss das LAN in `MCP_ALLOWED_CIDRS` stehen. Je nach Docker-Setup kommt statt der LAN-Adresse das Docker-Gateway

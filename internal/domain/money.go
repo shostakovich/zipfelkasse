@@ -1,4 +1,4 @@
-// Package domain enthält die reine Fachlogik von teilen: Geld, Aufteilung,
+// Package domain enthält die reine Fachlogik von Zipfelkasse: Geld, Aufteilung,
 // Salden, Ausgleich und Wiederholungsregeln. Kein IO, keine Abhängigkeiten.
 package domain
 

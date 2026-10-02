@@ -14,8 +14,8 @@ import (
 	"testing"
 	"time"
 
-	"teilen/internal/domain"
-	"teilen/internal/store"
+	"github.com/shostakovich/zipfelkasse/internal/domain"
+	"github.com/shostakovich/zipfelkasse/internal/store"
 )
 
 // fakeFX liefert feste Kurse; unbekannte Währungen ergeben einen Fehler.

@@ -1,4 +1,4 @@
-# Plan: „teilen“ – Spliit-Nachbau in Go
+# Plan: „Zipfelkasse“ – Spliit-Nachbau in Go
 
 ## Context
 
@@ -19,7 +19,7 @@ Der Ordner `/Users/shostakovich/Code/teilen` ist leer, es gibt keinen Bestandsco
 |---|---|
 | Sprache | Go 1.26, nur die Standardbibliothek. **Einzige Abhängigkeit:** `modernc.org/sqlite` (reines Go, ohne CGO) |
 | Frontend | Der Server rendert das HTML mit `html/template`. Dazu kommen eine CSS-Datei und wenig Vanilla-JS. Es gibt keinen Build-Step, alles wird per `embed` ins Binary gepackt, und die App ist als PWA installierbar |
-| DB | SQLite im WAL-Modus in `/data/teilen.db`. Migrationen sind eingebettete `.sql`-Dateien und werden über `PRAGMA user_version` gesteuert, ohne Migrations-Bibliothek |
+| DB | SQLite im WAL-Modus in `/data/zipfelkasse.db`. Migrationen sind eingebettete `.sql`-Dateien und werden über `PRAGMA user_version` gesteuert, ohne Migrations-Bibliothek |
 | Geld | Beträge sind Integer-Cent. Rundungsreste werden nach der Methode des größten Rests verteilt, deterministisch |
 | Identität | Cookie `wer` mit der Teilnehmer-ID. Auswahlseite beim ersten Besuch, oben steht „Du bist X · wechseln“ |
 | Features | Ausgaben (Titel, Betrag, Datum, Kategorie, Zahler, Notiz) und Aufteilen gleichmäßig, nach Anteilen, Prozent oder festen Beträgen. Dazu Rückzahlungen, Salden, ein Ausgleichsvorschlag (greedy), Suche, Export als CSV/JSON, **wiederkehrende Ausgaben**, **Aktivitätsprotokoll** und **Fremdwährungen**. Die Oberfläche ist nur auf Deutsch |
@@ -30,7 +30,7 @@ Der Ordner `/Users/shostakovich/Code/teilen` ist leer, es gibt keinen Bestandsco
 | KI | Ein eigener MCP-Server ohne SDK (JSON-RPC 2.0 über Streamable HTTP, Antworten nur als JSON). Er hat ausschließlich Lese-Tools |
 | MCP-Zugang | Pfad `/mcp/{MCP_SECRET}`, keine Auth. Nur `MCP_ALLOWED_CIDRS` darf zugreifen, Standard ist `160.79.104.0/21` (Anthropic). Ausnahme: Kommt die Anfrage von einer Adresse in `TRUSTED_PROXIES` (Pangolin), zählt die Client-IP aus `X-Forwarded-For`. In Pangolin braucht es eine Regel „Bypass Auth“ für `/mcp/*` |
 | Backup | Ein `VACUUM INTO` pro Nacht nach `/data/backups/`, die letzten 7 Stände bleiben erhalten |
-| Docker | Multi-Stage-Build: `golang:1.26-alpine` (CGO_ENABLED=0) baut, das Ergebnis läuft auf `scratch`. Mitkopiert werden die CA-Zertifikate, die Zeitzonen kommen per `import _ "time/tzdata"`. Der Healthcheck läuft über den Unterbefehl `teilen healthcheck` |
+| Docker | Multi-Stage-Build: `golang:1.26-alpine` (CGO_ENABLED=0) baut, das Ergebnis läuft auf `scratch`. Mitkopiert werden die CA-Zertifikate, die Zeitzonen kommen per `import _ "time/tzdata"`. Der Healthcheck läuft über den Unterbefehl `zipfelkasse healthcheck` |
 
 ## Architektur / Paketstruktur
 
@@ -127,14 +127,14 @@ Danach Review mit `/code-review` und Ende-zu-Ende-Test (siehe unten).
 ## Verifikation
 
 1. `go vet ./... && go test ./...`: Domain-Tabellentests (Rundung, alle Split-Modi, Ausgleich), Store-Tests mit `:memory:`, Handler-Tests mit `httptest`
-2. `docker build -t teilen . && docker run -p 8080:8080 -v teilen-data:/data -e MCP_SECRET=… teilen` prüfen: Das Image ist ca. 20 MB groß und der Healthcheck ist grün
+2. `docker build -t zipfelkasse . && docker run -p 8080:8080 -v zipfelkasse-data:/data -e MCP_SECRET=… zipfelkasse` prüfen: Das Image ist ca. 20 MB groß und der Healthcheck ist grün
 3. Im Browser-Pane `localhost:8080`, dann:
    - Person wählen
    - Ausgaben in allen Split-Modi anlegen, auch eine in USD
    - Salden und Vorschlag prüfen, eine Rückzahlung eintragen
    - Aktivitätslog ansehen
    - Handy-Viewport (375 px) prüfen
-4. MCP: `curl` mit `initialize` / `tools/list` / `tools/call salden` gegen `/mcp/<secret>`. Erwartet wird ein 403 bei falscher IP oder falschem Secret. Danach `claude mcp add --transport http teilen http://localhost:8080/mcp/<secret>` (lokal mit erweiterter CIDR) und echte Fragen stellen
+4. MCP: `curl` mit `initialize` / `tools/list` / `tools/call salden` gegen `/mcp/<secret>`. Erwartet wird ein 403 bei falscher IP oder falschem Secret. Danach `claude mcp add --transport http zipfelkasse http://localhost:8080/mcp/<secret>` (lokal mit erweiterter CIDR) und echte Fragen stellen
 5. YNAB: gegen ein Test-Budget mit Konto „Geteilt“ prüfen:
    - Ausgabe anlegen, ändern, löschen → Buchung erscheint, ändert sich bzw. verschwindet
    - Saldo „Geteilt“ = Saldo in der App

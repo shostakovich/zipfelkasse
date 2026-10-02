@@ -1,4 +1,4 @@
-// teilen – Ausgabenformular: Live-Vorschau der Aufteilung (Cent-genau wie
+// Zipfelkasse – Ausgabenformular: Live-Vorschau der Aufteilung (Cent-genau wie
 // domain.Split: Methode des größten Rests, bei Gleichstand rotiert der
 // Vorrang mit der Ausgaben-ID aus data-rotation),
 // Fremdwährung mit Kursabruf über /api/kurs und Umrechnung in Euro.

@@ -15,10 +15,10 @@ import (
 	"testing"
 	"time"
 
-	"teilen/internal/config"
-	"teilen/internal/domain"
-	"teilen/internal/store"
-	"teilen/internal/web"
+	"github.com/shostakovich/zipfelkasse/internal/config"
+	"github.com/shostakovich/zipfelkasse/internal/domain"
+	"github.com/shostakovich/zipfelkasse/internal/store"
+	"github.com/shostakovich/zipfelkasse/internal/web"
 )
 
 type env struct {
@@ -178,7 +178,7 @@ func TestSyncCreateUpdateDelete(t *testing.T) {
 		t.Fatalf("live = %+v", live)
 	}
 	tx := live[0]
-	wantMemo := "Gesamt 84,00 € · bezahlt von Ben · teilen #" + strconv.FormatInt(id, 10)
+	wantMemo := "Gesamt 84,00 € · bezahlt von Ben · zipfelkasse #" + strconv.FormatInt(id, 10)
 	if tx.Amount != -42000 || tx.Date != "2026-09-15" || str(tx.PayeeName) != "Einkauf Rewe" || str(tx.Memo) != wantMemo ||
 		str(tx.CategoryID) != "c-food" || tx.AccountID != testAccount || tx.Cleared != "cleared" || !tx.Approved {
 		t.Errorf("Buchung = %+v (payee %q, memo %q, kat %q)", tx, str(tx.PayeeName), str(tx.Memo), str(tx.CategoryID))
@@ -356,7 +356,7 @@ func TestSyncForeignCurrencyMemo(t *testing.T) {
 	id := e.create(in)
 	e.mustSync(false)
 	tx := e.fake.live()[0]
-	want := "Gesamt 80,00 € (90,00 USD) · bezahlt von Cleo · teilen #" + strconv.FormatInt(id, 10)
+	want := "Gesamt 80,00 € (90,00 USD) · bezahlt von Cleo · zipfelkasse #" + strconv.FormatInt(id, 10)
 	if str(tx.Memo) != want || tx.Amount != -40000 {
 		t.Errorf("memo %q / amount %d, want %q / -40000", str(tx.Memo), tx.Amount, want)
 	}
@@ -570,7 +570,7 @@ func TestPostingFor(t *testing.T) {
 		AmountCents: 1000, OriginalCurrency: "EUR"}, PaidByName: "Anna",
 		Shares: []domain.Share{{ParticipantID: 1, AmountCents: 500}, {ParticipantID: 2, AmountCents: 500}}}
 	p, ok := PostingFor(e, 1)
-	if !ok || p.AmountCents != 500 || len([]rune(p.Payee)) != maxPayeeLen || p.Memo != "Gesamt 10,00 € · bezahlt von Anna · teilen #7" {
+	if !ok || p.AmountCents != 500 || len([]rune(p.Payee)) != maxPayeeLen || p.Memo != "Gesamt 10,00 € · bezahlt von Anna · zipfelkasse #7" {
 		t.Errorf("p = %+v", p)
 	}
 	if _, ok := PostingFor(e, 3); ok {
@@ -580,10 +580,10 @@ func TestPostingFor(t *testing.T) {
 	if _, ok := PostingFor(e, 1); ok {
 		t.Error("Rückzahlung")
 	}
-	if id, ok := markerID("bla · teilen #123"); !ok || id != 123 {
+	if id, ok := markerID("bla · zipfelkasse #123"); !ok || id != 123 {
 		t.Errorf("markerID = %d, %v", id, ok)
 	}
-	if _, ok := markerID("teilen #12 und mehr"); ok {
+	if _, ok := markerID("zipfelkasse #12 und mehr"); ok {
 		t.Error("Markierung mitten im Text")
 	}
 }

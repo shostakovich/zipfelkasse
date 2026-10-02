@@ -13,10 +13,10 @@ import (
 	"testing"
 	"time"
 
-	"teilen/internal/config"
-	"teilen/internal/domain"
-	"teilen/internal/store"
-	"teilen/internal/web"
+	"github.com/shostakovich/zipfelkasse/internal/config"
+	"github.com/shostakovich/zipfelkasse/internal/domain"
+	"github.com/shostakovich/zipfelkasse/internal/store"
+	"github.com/shostakovich/zipfelkasse/internal/web"
 )
 
 func day(s string) time.Time {

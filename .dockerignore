@@ -1,7 +1,7 @@
 .git
 .claude
 data
-teilen
+zipfelkasse
 *.db
 *.db-shm
 *.db-wal

@@ -8,7 +8,7 @@ import (
 	"strings"
 	"unicode"
 
-	"teilen/internal/store"
+	"github.com/shostakovich/zipfelkasse/internal/store"
 )
 
 // IdentityCookie enthält die ID der Person, die man ist. Keine Anmeldung:

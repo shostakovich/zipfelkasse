@@ -1,4 +1,4 @@
-module teilen
+module github.com/shostakovich/zipfelkasse
 
 go 1.26.5
 

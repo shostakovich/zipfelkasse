@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"teilen/internal/domain"
+	"github.com/shostakovich/zipfelkasse/internal/domain"
 )
 
 func newTestStore(t *testing.T) *Store {
@@ -63,7 +63,7 @@ func TestOpenMigratesAndSeeds(t *testing.T) {
 	if len(cats) != 10 || cats[0].Name != "Lebensmittel" || cats[len(cats)-1].Name != "Sonstiges" {
 		t.Errorf("Seed-Kategorien falsch: %+v", cats)
 	}
-	if got := s.GroupName(ctx); got != "teilen" {
+	if got := s.GroupName(ctx); got != "Zipfelkasse" {
 		t.Errorf("GroupName = %q", got)
 	}
 	if cur, _ := s.GetSetting(ctx, SettingDefaultCurrency); cur != "EUR" {
@@ -72,7 +72,7 @@ func TestOpenMigratesAndSeeds(t *testing.T) {
 }
 
 func TestOpenFileTwiceIsIdempotent(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "sub", "teilen.db")
+	path := filepath.Join(t.TempDir(), "sub", "zipfelkasse.db")
 	s, err := Open(path)
 	if err != nil {
 		t.Fatal(err)
@@ -559,7 +559,7 @@ func TestExpenseSharesRotateRemainder(t *testing.T) {
 // Migration 2 verteilt die Rest-Cents bestehender Ausgaben nach der neuen
 // Regel (domain.Split mit Ausgaben-ID), genau einmal.
 func TestMigrationResplitsShares(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "teilen.db")
+	path := filepath.Join(t.TempDir(), "zipfelkasse.db")
 	s, err := Open(path)
 	if err != nil {
 		t.Fatal(err)

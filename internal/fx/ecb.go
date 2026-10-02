@@ -15,8 +15,8 @@ import (
 	"strings"
 	"time"
 
-	"teilen/internal/domain"
-	"teilen/internal/store"
+	"github.com/shostakovich/zipfelkasse/internal/domain"
+	"github.com/shostakovich/zipfelkasse/internal/store"
 )
 
 // Dateien der EZB (https://www.ecb.europa.eu/stats/eurofxref/).
@@ -26,7 +26,7 @@ const (
 	file90d        = "eurofxref-hist-90d.xml" // ca. 90 Kalendertage
 	fileHist       = "eurofxref-hist.zip"     // alles seit 1999 (CSV im ZIP)
 
-	userAgent   = "teilen/1.0 (selbst gehostete Ausgabenverwaltung; EZB-Referenzkurse)"
+	userAgent   = "zipfelkasse/1.0 (selbst gehostete Ausgabenverwaltung; EZB-Referenzkurse)"
 	maxBodySize = 32 << 20
 
 	// Nach einem Abruf wird dieselbe Datei frühestens nach dieser Zeit erneut

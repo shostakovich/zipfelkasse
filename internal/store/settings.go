@@ -31,11 +31,11 @@ func (s *Store) SetSetting(ctx context.Context, key, value string) error {
 	return err
 }
 
-// GroupName liefert den Gruppennamen (Fallback „teilen“).
+// GroupName liefert den Gruppennamen (Fallback „Zipfelkasse“).
 func (s *Store) GroupName(ctx context.Context) string {
 	v, err := s.GetSetting(ctx, SettingGroupName)
 	if err != nil || v == "" {
-		return "teilen"
+		return "Zipfelkasse"
 	}
 	return v
 }

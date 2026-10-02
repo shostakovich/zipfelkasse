@@ -13,7 +13,7 @@ import (
 	"testing/fstest"
 	"time"
 
-	"teilen/internal/store"
+	"github.com/shostakovich/zipfelkasse/internal/store"
 )
 
 // testServer ruft den Handler direkt auf (kein Port nötig, läuft auch in der Sandbox).
@@ -206,7 +206,7 @@ func TestLoadForeignTemplates(t *testing.T) {
 	req = req.WithContext(WithMe(req.Context(), store.Participant{ID: 1, Name: "Anna"}))
 	pages.Render(rec, req, http.StatusOK, "ynab.html", Page{Title: "YNAB", Nav: NavSettings, Data: map[string]any{"Name": "Welt", "Cents": int64(1234)}})
 	body := rec.Body.String()
-	for _, want := range []string{"<p>Hallo Welt 12,34 €</p>", "<title>YNAB · teilen</title>", `href="/einstellungen" aria-current="page"`, "Du bist <strong>Anna</strong>"} {
+	for _, want := range []string{"<p>Hallo Welt 12,34 €</p>", "<title>YNAB · Zipfelkasse</title>", `href="/einstellungen" aria-current="page"`, "Du bist <strong>Anna</strong>"} {
 		if !strings.Contains(body, want) {
 			t.Errorf("Body enthält nicht %q:\n%s", want, body)
 		}

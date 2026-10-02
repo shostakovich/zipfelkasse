@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"teilen/internal/domain"
+	"github.com/shostakovich/zipfelkasse/internal/domain"
 )
 
 // ErrRecurringExists: Für diese Wiederholung gibt es an diesem Datum schon

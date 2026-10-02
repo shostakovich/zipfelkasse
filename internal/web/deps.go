@@ -1,4 +1,4 @@
-// Package web enthält das HTTP-Gerüst von teilen: gemeinsame Abhängigkeiten
+// Package web enthält das HTTP-Gerüst von Zipfelkasse: gemeinsame Abhängigkeiten
 // (Deps), den Renderer mit gemeinsamem Layout, die Identitäts-Middleware,
 // statische Dateien und die Seiten der Kern-App.
 //
@@ -13,9 +13,9 @@ import (
 	"net/http"
 	"time"
 
-	"teilen/internal/config"
-	"teilen/internal/domain"
-	"teilen/internal/store"
+	"github.com/shostakovich/zipfelkasse/internal/config"
+	"github.com/shostakovich/zipfelkasse/internal/domain"
+	"github.com/shostakovich/zipfelkasse/internal/store"
 )
 
 // Deps sind die gemeinsamen Abhängigkeiten aller HTTP-Pakete. main baut sie

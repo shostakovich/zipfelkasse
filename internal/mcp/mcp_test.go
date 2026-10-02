@@ -13,10 +13,10 @@ import (
 	"testing"
 	"time"
 
-	"teilen/internal/config"
-	"teilen/internal/domain"
-	"teilen/internal/store"
-	"teilen/internal/web"
+	"github.com/shostakovich/zipfelkasse/internal/config"
+	"github.com/shostakovich/zipfelkasse/internal/domain"
+	"github.com/shostakovich/zipfelkasse/internal/store"
+	"github.com/shostakovich/zipfelkasse/internal/web"
 )
 
 const (
@@ -43,7 +43,7 @@ func newEnv(t *testing.T) *env {
 	if err != nil {
 		t.Fatal(err)
 	}
-	st, err := store.Open(filepath.Join(t.TempDir(), "teilen.db"))
+	st, err := store.Open(filepath.Join(t.TempDir(), "zipfelkasse.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -250,7 +250,7 @@ func TestLegacyProtocol(t *testing.T) {
 	if tools := res["capabilities"].(map[string]any)["tools"]; tools == nil {
 		t.Errorf("capabilities ohne tools: %v", res)
 	}
-	if res["serverInfo"].(map[string]any)["name"] != "teilen" || !strings.Contains(res["instructions"].(string), "Saldo") {
+	if res["serverInfo"].(map[string]any)["name"] != "zipfelkasse" || !strings.Contains(res["instructions"].(string), "Saldo") {
 		t.Errorf("serverInfo/instructions: %v", res)
 	}
 	if _, ok := res["resultType"]; ok {
@@ -345,7 +345,7 @@ func TestModernProtocol(t *testing.T) {
 	if v := res["supportedVersions"].([]any); v[0] != modern || len(v) != len(allVersions) {
 		t.Errorf("supportedVersions = %v", v)
 	}
-	if res["_meta"].(map[string]any)["io.modelcontextprotocol/serverInfo"].(map[string]any)["name"] != "teilen" {
+	if res["_meta"].(map[string]any)["io.modelcontextprotocol/serverInfo"].(map[string]any)["name"] != "zipfelkasse" {
 		t.Errorf("serverInfo fehlt: %v", res)
 	}
 	res = e.modern("tools/list", nil, nil).result(t)

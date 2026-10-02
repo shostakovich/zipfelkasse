@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"teilen/internal/domain"
+	"github.com/shostakovich/zipfelkasse/internal/domain"
 )
 
 // categoryIcon ordnet einem Kategorienamen ein Icon aus static/icons.svg zu.

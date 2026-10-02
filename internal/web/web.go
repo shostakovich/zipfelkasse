@@ -8,8 +8,8 @@ import (
 	"strconv"
 	"strings"
 
-	"teilen/internal/domain"
-	"teilen/internal/store"
+	"github.com/shostakovich/zipfelkasse/internal/domain"
+	"github.com/shostakovich/zipfelkasse/internal/store"
 )
 
 // Register hängt die Routen des Pakets web an den Mux.

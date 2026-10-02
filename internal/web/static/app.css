@@ -1,4 +1,4 @@
-/* teilen – Optik nach Spliit (shadcn/ui-Komponenten, Tailwind-Klassen in
+/* Zipfelkasse – Optik nach Spliit (shadcn/ui-Komponenten, Tailwind-Klassen in
    schlankes CSS übersetzt). Design-Tokens als HSL-Komponenten: hsl(var(--token)).
    Mobil zuerst; ab 40rem (Tailwind „sm“) mehr Luft und Desktop-Varianten.
    Feature-Pakete nutzen nur die im Plan genannten Klassen. */

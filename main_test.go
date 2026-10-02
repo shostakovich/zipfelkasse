@@ -11,9 +11,9 @@ import (
 	"testing"
 	"time"
 
-	"teilen/internal/config"
-	"teilen/internal/store"
-	"teilen/internal/web"
+	"github.com/shostakovich/zipfelkasse/internal/config"
+	"github.com/shostakovich/zipfelkasse/internal/store"
+	"github.com/shostakovich/zipfelkasse/internal/web"
 )
 
 // TestAppWiring baut die komplette App wie serve() und prüft, dass alle

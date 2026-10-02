@@ -17,10 +17,10 @@ import (
 	"testing"
 	"time"
 
-	"teilen/internal/config"
-	"teilen/internal/domain"
-	"teilen/internal/store"
-	"teilen/internal/web"
+	"github.com/shostakovich/zipfelkasse/internal/config"
+	"github.com/shostakovich/zipfelkasse/internal/domain"
+	"github.com/shostakovich/zipfelkasse/internal/store"
+	"github.com/shostakovich/zipfelkasse/internal/web"
 )
 
 // fakeECB beantwortet Anfragen an die EZB aus testdata (http.RoundTripper,
@@ -194,7 +194,7 @@ func TestRateDailyAndCache(t *testing.T) {
 	if f.count(fileDaily) != 1 || f.total() != 1 {
 		t.Errorf("Abrufe = %v", f.hits)
 	}
-	if !strings.HasPrefix(f.agents[0], "teilen/") {
+	if !strings.HasPrefix(f.agents[0], "zipfelkasse/") {
 		t.Errorf("User-Agent = %q", f.agents[0])
 	}
 	// Heute vor 16:30: Der Kurs von gestern ist der aktuellste → aus dem Cache.
