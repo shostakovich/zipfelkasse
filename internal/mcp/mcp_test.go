@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -297,16 +298,19 @@ func TestLegacyProtocol(t *testing.T) {
 	for _, tl := range tools {
 		m := tl.(map[string]any)
 		names = append(names, m["name"].(string))
-		if m["description"] == "" || m["inputSchema"].(map[string]any)["type"] != "object" || m["annotations"].(map[string]any)["readOnlyHint"] != true {
-			t.Errorf("tool incomplete: %v", m)
+		writes := strings.HasPrefix(m["name"].(string), "create_")
+		ann := m["annotations"].(map[string]any)
+		if m["description"] == "" || m["inputSchema"].(map[string]any)["type"] != "object" || ann["readOnlyHint"] != !writes ||
+			ann["idempotentHint"] != !writes || ann["destructiveHint"] != false {
+			t.Errorf("tool incomplete: %.300v", m)
 		}
 	}
-	if strings.Join(names, ",") != "balances,balance_history,search_expenses,statistics,activity,schema,sql_query" {
+	if strings.Join(names, ",") != "balances,balance_history,search_expenses,statistics,activity,schema,sql_query,create_expense,create_reimbursement" {
 		t.Errorf("Tools = %v", names)
 	}
 	r = e.send("POST", "/mcp/"+testSecret, "", nil, `{"jsonrpc":"2.0","id":2,"method":"tools/list"}`)
-	if r.status != 200 || len(r.result(t)["tools"].([]any)) != 7 {
-		t.Errorf("tools/list without header: %d %s", r.status, r.raw)
+	if r.status != 200 || len(r.result(t)["tools"].([]any)) != 9 {
+		t.Errorf("tools/list without header: %d %.300s", r.status, r.raw)
 	}
 	// Unsupported version in the header → 400 with list.
 	r = e.send("POST", "/mcp/"+testSecret, "", map[string]string{"MCP-Protocol-Version": "1999-01-01"}, `{"jsonrpc":"2.0","id":3,"method":"tools/list"}`)
@@ -372,8 +376,8 @@ func TestModernProtocol(t *testing.T) {
 		t.Errorf("serverInfo missing: %v", res)
 	}
 	res = e.modern("tools/list", nil, nil).result(t)
-	if res["resultType"] != "complete" || res["ttlMs"] == nil || len(res["tools"].([]any)) != 7 {
-		t.Errorf("tools/list: %v", res)
+	if res["resultType"] != "complete" || res["ttlMs"] == nil || len(res["tools"].([]any)) != 9 {
+		t.Errorf("tools/list: %.300v", res)
 	}
 	res = e.modern("tools/call", map[string]any{"name": "balances", "arguments": map[string]any{}}, nil).result(t)
 	if text := res["content"].([]any)[0].(map[string]any)["text"].(string); res["resultType"] != "complete" || res["isError"] != false ||
@@ -1021,5 +1025,155 @@ func TestStatisticsCompareEdgeCases(t *testing.T) {
 	// A future from without to cannot be compared up to today.
 	if _, text, isErr := e.call("statistics", map[string]any{"group_by": "category", "from": "2026-12-01", "compare": "previous_year"}); !isErr || !strings.Contains(text, "future") {
 		t.Errorf("future from: %v %s", isErr, text)
+	}
+}
+
+// fakeFX returns a fixed ECB rate for USD and nothing for other currencies.
+type fakeFX struct{}
+
+func (fakeFX) Rate(_ context.Context, cur string, date time.Time) (domain.FXRate, error) {
+	if cur != "USD" {
+		return domain.FXRate{}, errors.New("no rate")
+	}
+	return domain.FXRate{Currency: cur, Date: date, Rate: 1.25, Source: domain.FXSourceECB}, nil
+}
+
+func TestCreateExpense(t *testing.T) {
+	e := newEnv(t)
+	e.deps.FX = fakeFX{}
+	e.at("2026-10-02")
+	ctx := context.Background()
+	if err := e.st.SetParticipantArchived(ctx, e.ids["Cleo"], true); err != nil {
+		t.Fatal(err)
+	}
+	created := func(tool string, args map[string]any) map[string]any {
+		t.Helper()
+		sc, text, isErr := e.call(tool, args)
+		if isErr {
+			t.Fatalf("%s %v: %s", tool, args, text)
+		}
+		return sc["created"].(map[string]any)
+	}
+	shares := func(x map[string]any) string {
+		var out []string
+		for _, sh := range x["shares"].([]any) {
+			sh := sh.(map[string]any)
+			out = append(out, fmt.Sprintf("%s=%s", sh["person"], sh["amount"]))
+		}
+		return strings.Join(out, ",")
+	}
+
+	// Defaults: today, EUR, equal among all active people (not the archived Cleo).
+	x := created("create_expense", map[string]any{"title": "Rewe", "amount": "23.40", "paid_by": "ben", "category": "lebensmittel"})
+	if x["date"] != "2026-10-02" || x["amount_cents"].(float64) != 2340 || x["paid_by"] != "Ben" || x["category"] != "Lebensmittel" ||
+		x["split"] != "equal" || shares(x) != "Anna=11.70,Ben=11.70" {
+		t.Errorf("defaults: %v", x)
+	}
+	// The payer is the author in the activity log.
+	if acts, _ := e.st.ListActivity(ctx, store.ActivityFilter{ExpenseID: int64(x["id"].(float64))}); len(acts) != 1 || acts[0].ActorName != "Ben" {
+		t.Errorf("activity: %+v", acts)
+	}
+	// A JSON number as amount, participants, notes, date.
+	x = created("create_expense", map[string]any{"title": "Kino", "amount": 12.5, "paid_by": "Anna", "participants": []string{"Anna"},
+		"date": "2026-09-30", "notes": "Sneak"})
+	if x["amount"] != "12.50" || shares(x) != "Anna=12.50" || x["notes"] != "Sneak" || x["date"] != "2026-09-30" {
+		t.Errorf("participants: %v", x)
+	}
+	// Weights: shares, percent, amount.
+	if x = created("create_expense", map[string]any{"title": "Hotel", "amount": "90", "paid_by": "Anna", "split": "shares", "weights": map[string]any{"Anna": 2, "Ben": "1"}}); shares(x) != "Anna=60.00,Ben=30.00" {
+		t.Errorf("shares: %v", x)
+	}
+	if x = created("create_expense", map[string]any{"title": "Auto", "amount": "100", "paid_by": "Anna", "split": "percent", "weights": map[string]any{"Anna": 70, "Ben": 30}}); shares(x) != "Anna=70.00,Ben=30.00" {
+		t.Errorf("percent: %v", x)
+	}
+	if x = created("create_expense", map[string]any{"title": "Essen", "amount": "23.40", "paid_by": "Ben", "split": "amount", "weights": map[string]any{"Anna": "15.00", "Ben": 8.4}}); shares(x) != "Anna=15.00,Ben=8.40" {
+		t.Errorf("amount: %v", x)
+	}
+	// Foreign currency: ECB rate by default, fx_rate as a manual rate.
+	if x = created("create_expense", map[string]any{"title": "Diner", "amount": "25.00", "currency": "usd", "paid_by": "Anna"}); x["original"] != "25.00 USD" || x["amount_cents"].(float64) != 2000 || x["fx_source"] != "ezb" {
+		t.Errorf("USD: %v", x)
+	}
+	if x = created("create_expense", map[string]any{"title": "Sushi", "amount": 2000, "currency": "JPY", "fx_rate": 160, "paid_by": "Anna"}); x["original"] != "2000 JPY" || x["amount_cents"].(float64) != 1250 || x["fx_source"] != "manuell" {
+		t.Errorf("JPY: %v", x)
+	}
+
+	// The same expense again is refused, unless allow_duplicate is set.
+	_, text, isErr := e.call("create_expense", map[string]any{"title": "REWE", "amount": "23.40", "paid_by": "Ben"})
+	if !isErr || !strings.Contains(text, "duplicate") || !strings.Contains(text, "allow_duplicate") {
+		t.Errorf("duplicate: %v %s", isErr, text)
+	}
+	created("create_expense", map[string]any{"title": "Rewe", "amount": "23.40", "paid_by": "Ben", "allow_duplicate": true})
+	created("create_expense", map[string]any{"title": "Rewe", "amount": "23.40", "paid_by": "Ben", "date": "2026-10-01"})
+
+	for _, args := range []map[string]any{
+		{"amount": "1", "paid_by": "Anna"}, {"title": "X", "paid_by": "Anna"}, {"title": "X", "amount": "1"},
+		{"title": "X", "amount": "0", "paid_by": "Anna"}, {"title": "X", "amount": "-5", "paid_by": "Anna"}, {"title": "X", "amount": "abc", "paid_by": "Anna"},
+		{"title": "X", "amount": "1.234", "paid_by": "Anna"}, {"title": "X", "amount": "1,50", "paid_by": "Anna"}, {"title": "X", "amount": "1.000,00", "paid_by": "Anna"},
+		{"title": "X", "amount": "1e3", "paid_by": "Anna", "currency": "JPY", "fx_rate": 160}, {"title": "X", "amount": "12 €", "paid_by": "Anna"}, {"title": "X", "amount": "1", "paid_by": "Dora"}, {"title": "X", "amount": "1", "paid_by": "Cleo"},
+		{"title": "X", "amount": "1", "paid_by": "Anna", "participants": []string{"Cleo"}}, {"title": "X", "amount": "1", "paid_by": "Anna", "participants": []string{"Anna", "anna"}},
+		{"title": "X", "amount": "1", "paid_by": "Anna", "category": "Yacht"}, {"title": "X", "amount": "1", "paid_by": "Anna", "split": "thirds"},
+		{"title": "X", "amount": "1", "paid_by": "Anna", "split": "shares"}, {"title": "X", "amount": "1", "paid_by": "Anna", "weights": map[string]any{"Anna": 1}},
+		{"title": "X", "amount": "1", "paid_by": "Anna", "split": "shares", "participants": []string{"Anna"}, "weights": map[string]any{"Anna": 1}},
+		{"title": "X", "amount": "1", "paid_by": "Anna", "split": "percent", "weights": map[string]any{"Anna": 60, "Ben": 30}},
+		{"title": "X", "amount": "1", "paid_by": "Anna", "split": "shares", "weights": map[string]any{"Anna": "zwei"}},
+		{"title": "X", "amount": "1", "paid_by": "Anna", "currency": "EURO"}, {"title": "X", "amount": "1", "paid_by": "Anna", "currency": "CHF"},
+		{"title": "X", "amount": "1", "paid_by": "Anna", "fx_rate": 1.1}, {"title": "X", "amount": "1", "paid_by": "Anna", "date": "morgen"},
+		{"title": "X", "amount": true, "paid_by": "Anna"},
+	} {
+		if _, text, isErr := e.call("create_expense", args); !isErr || text == "" || strings.Contains(text, "Internal error") {
+			t.Errorf("%v: isError=%v %s", args, isErr, text)
+		}
+	}
+	if _, text, _ := e.call("create_expense", map[string]any{"title": "X", "amount": "1", "paid_by": "Anna", "currency": "CHF"}); !strings.Contains(text, "fx_rate") {
+		t.Errorf("no rate: %s", text)
+	}
+	if es, _ := e.st.ListExpenses(ctx, store.ExpenseFilter{}); len(es) != 9 {
+		t.Errorf("%d expenses after the invalid calls", len(es))
+	}
+}
+
+func TestCreateReimbursement(t *testing.T) {
+	e := newEnv(t)
+	e.at("2026-10-02")
+	e.expense("Rewe", 3000, "2026-09-01", "Anna", "Lebensmittel", "Anna", "Ben")
+	sc, text, isErr := e.call("create_reimbursement", map[string]any{"from": "Ben", "to": "anna", "amount": "15"})
+	if isErr {
+		t.Fatal(text)
+	}
+	x := sc["created"].(map[string]any)
+	if x["reimbursement"] != true || x["recipient"] != "Anna" || x["paid_by"] != "Ben" || x["title"] != "Rückzahlung" || x["date"] != "2026-10-02" {
+		t.Errorf("created: %v", x)
+	}
+	if sc, _, _ = e.call("balances", nil); len(sc["settlements"].([]any)) != 0 {
+		t.Errorf("not settled: %v", sc)
+	}
+	if _, text, isErr = e.call("create_reimbursement", map[string]any{"from": "Ben", "to": "Anna", "amount": "15.00"}); !isErr || !strings.Contains(text, "duplicate") {
+		t.Errorf("duplicate: %v %s", isErr, text)
+	}
+	if _, text, isErr = e.call("create_reimbursement", map[string]any{"from": "Ben", "to": "Cleo", "amount": "15.00"}); isErr {
+		t.Errorf("other recipient: %s", text)
+	}
+	for _, args := range []map[string]any{{"from": "Ben", "to": "Ben", "amount": "1"}, {"from": "Ben", "amount": "1"}, {"from": "Ben", "to": "Dora", "amount": "1"},
+		{"from": "Ben", "to": "Anna", "amount": "1", "title": "Geld"}} {
+		if _, text, isErr := e.call("create_reimbursement", args); !isErr || strings.Contains(text, "Internal error") {
+			t.Errorf("%v: isError=%v %s", args, isErr, text)
+		}
+	}
+}
+
+func TestParseDecimal(t *testing.T) {
+	for _, c := range []struct {
+		in       string
+		decimals int
+		want     int64
+	}{{"23.4", 2, 2340}, {"23.40", 2, 2340}, {"23", 2, 2300}, {"1.000", 2, 100}, {"1200.00", 0, 1200}, {"0.5", 2, 50}, {" 7 ", 2, 700}} {
+		if got, err := parseDecimal(c.in, c.decimals); err != nil || got != c.want {
+			t.Errorf("parseDecimal(%q, %d) = %d, %v", c.in, c.decimals, got, err)
+		}
+	}
+	for _, in := range []string{"1.234", "1,5", "1.000,00", "-1", "+1", ".5", "1e3", "", "1.2.3", "1 000"} {
+		if got, err := parseDecimal(in, 2); err == nil {
+			t.Errorf("parseDecimal(%q) = %d, want an error", in, got)
+		}
 	}
 }
