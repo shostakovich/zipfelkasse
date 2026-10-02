@@ -2,6 +2,7 @@ package mcp
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -509,7 +510,26 @@ func (s *server) balanceHistory(ctx context.Context, raw json.RawMessage) (toolR
 			return toolResult{}, err
 		}
 	}
-	es, err := s.d.Store.ListExpenses(ctx, store.ExpenseFilter{Sort: store.SortDateAsc})
+	today := domain.DateOf(s.now().In(s.location()))
+	tooMany := func(periods []string) error {
+		if len(periods) > store.SQLMaxRows {
+			return invalid("That is %d periods, at most %d are possible. Please narrow down from/to or choose a longer interval.", len(periods), store.SQLMaxRows)
+		}
+		return nil
+	}
+	// Check the obvious case before loading anything.
+	if !from.IsZero() {
+		if err := tooMany(store.Periods(interval, from, cmpTime(to, today))); err != nil {
+			return toolResult{}, err
+		}
+	}
+	// Up to the end of the last period: each row is the balance after all
+	// expenses dated in or before its period.
+	until := time.Time{}
+	if !to.IsZero() {
+		until = store.PeriodEnd(interval, to)
+	}
+	es, err := s.d.Store.DatedBalanceEntries(ctx, until)
 	if err != nil {
 		return toolResult{}, err
 	}
@@ -517,9 +537,13 @@ func (s *server) balanceHistory(ctx context.Context, raw json.RawMessage) (toolR
 	if err != nil {
 		return toolResult{}, err
 	}
-	today := domain.DateOf(s.now().In(s.location()))
 	if to.IsZero() {
+		// Until today, or the last expense if one is dated later: the last
+		// row then equals the current balances.
 		to = today
+		if len(es) > 0 && es[len(es)-1].Date.After(to) {
+			to = es[len(es)-1].Date
+		}
 	}
 	if from.IsZero() && len(es) > 0 {
 		from = es[0].Date
@@ -528,8 +552,8 @@ func (s *server) balanceHistory(ctx context.Context, raw json.RawMessage) (toolR
 		from = to
 	}
 	periods := store.Periods(interval, from, to)
-	if len(periods) > store.SQLMaxRows {
-		return toolResult{}, invalid("That is %d periods, at most %d are possible. Please narrow down from/to or choose a longer interval.", len(periods), store.SQLMaxRows)
+	if err := tooMany(periods); err != nil {
+		return toolResult{}, err
 	}
 
 	// Walk the expenses (oldest first) and record the balances at the end of
@@ -539,12 +563,12 @@ func (s *server) balanceHistory(ctx context.Context, raw json.RawMessage) (toolR
 	snapshots := make([]map[int64]int64, len(periods))
 	i := 0
 	for pi, p := range periods {
+		var entries []domain.Entry
 		for ; i < len(es) && store.PeriodOf(interval, es[i].Date) <= p; i++ {
-			e := es[i]
-			bal[e.PaidBy] += e.AmountCents
-			for _, sh := range e.Shares {
-				bal[sh.ParticipantID] -= sh.AmountCents
-			}
+			entries = append(entries, es[i].Entry)
+		}
+		for id, v := range domain.Balances(entries) {
+			bal[id] += v
 		}
 		snapshots[pi] = maps.Clone(bal)
 		for id, v := range bal {
@@ -575,7 +599,8 @@ func (s *server) balanceHistory(ctx context.Context, raw json.RawMessage) (toolR
 		"interval": interval,
 		"period":   describeRange(from, to),
 		"rows":     rows,
-		"note": "Balance at the end of each period (today for the current one), positive = is owed money, negative = owes money. " +
+		"note": "Balance after all expenses dated up to the end of each period (in the current period also those dated later this period), " +
+			"positive = is owed money, negative = owes money. Without to, the last row equals the current balances. " +
 			"Computed from the current data by expense date: later edits and deletions apply retroactively.",
 	}}, nil
 }
@@ -859,13 +884,17 @@ func (s *server) statistics(ctx context.Context, raw json.RawMessage) (toolResul
 	case !timeKeyed && f.From.IsZero():
 		return toolResult{}, invalid("compare=previous_year with group_by=%s needs from (and optionally to): the period to compare.", f.GroupBy)
 	case !timeKeyed && f.To.IsZero():
+		if today.Before(f.From) {
+			return toolResult{}, invalid("from (%s) is in the future; compare=previous_year needs a period up to today or an explicit to.", f.From.Format(domain.DateLayout))
+		}
 		f.To = today
 	}
 
-	rows, err := s.d.Store.Stats(ctx, f)
+	statRows, err := s.d.Store.Stats(ctx, f)
 	if err != nil {
 		return toolResult{}, err
 	}
+	rows := statRows
 	if store.IsTimeGrouping(f.GroupBy) {
 		rows = fillGaps(rows, f, today)
 	}
@@ -883,16 +912,23 @@ func (s *server) statistics(ctx context.Context, raw json.RawMessage) (toolResul
 	if compare != "" {
 		prev := f
 		if !prev.From.IsZero() {
-			prev.From = prev.From.AddDate(-1, 0, 0)
+			prev.From = store.ShiftDateYear(prev.From, -1)
 		}
 		if !prev.To.IsZero() {
-			prev.To = prev.To.AddDate(-1, 0, 0)
+			prev.To = store.ShiftDateYear(prev.To, -1)
 		}
-		prevRows, err := s.d.Store.Stats(ctx, prev)
-		if err != nil {
-			return toolResult{}, err
+		// Without from and to, the previous year's rows are the same rows.
+		prevRows := statRows
+		if !prev.From.IsZero() || !prev.To.IsZero() {
+			if prevRows, err = s.d.Store.Stats(ctx, prev); err != nil {
+				return toolResult{}, err
+			}
 		}
-		out = comparePrevious(out, prevRows, f.GroupBy, timeKeyed)
+		var window func(period string) bool // time-keyed: periods within the requested range
+		if timeKeyed {
+			window = periodWindow(f, statRows, today)
+		}
+		out = comparePrevious(out, prevRows, f.GroupBy, window)
 		var prevTotal int64
 		for _, o := range out {
 			prevTotal += *o.PreviousCents
@@ -919,24 +955,41 @@ func (s *server) statistics(ctx context.Context, raw json.RawMessage) (toolResul
 }
 
 // fillGaps lists the periods without expenses of a time grouping with 0:
-// from from (or the first row) to to (or the last row), never beyond today.
+// from from (or the first row) to to (or today), never beyond today.
 func fillGaps(rows []store.StatRow, f store.StatsFilter, today time.Time) []store.StatRow {
-	first, last := f.From, f.To
-	if len(rows) > 0 {
-		if first.IsZero() {
-			first = store.PeriodStart(f.GroupBy, rows[0].Period)
-		}
-		if last.IsZero() {
-			last = store.PeriodStart(f.GroupBy, rows[len(rows)-1].Period)
-		}
+	first, last := f.From, cmpTime(f.To, today)
+	if first.IsZero() && len(rows) > 0 {
+		first = store.PeriodStart(f.GroupBy, rows[0].Period)
 	}
-	if first.IsZero() || last.IsZero() {
+	if first.IsZero() {
 		return rows
 	}
-	if last.After(today) {
-		last = today
-	}
 	return store.FillPeriods(rows, f.GroupBy, first, last)
+}
+
+// periodWindow reports whether a period lies within the requested range of a
+// time-keyed grouping: from from (or the first row) to to (or today), never
+// beyond today.
+func periodWindow(f store.StatsFilter, rows []store.StatRow, today time.Time) func(string) bool {
+	lo := ""
+	switch {
+	case !f.From.IsZero():
+		lo = store.PeriodOf(f.GroupBy, f.From)
+	case len(rows) > 0:
+		lo = slices.MinFunc(rows, func(a, b store.StatRow) int { return strings.Compare(a.Period, b.Period) }).Period
+	default:
+		return func(string) bool { return false }
+	}
+	hi := store.PeriodOf(f.GroupBy, cmpTime(f.To, today))
+	return func(p string) bool { return p >= lo && p <= hi }
+}
+
+// cmpTime returns t, or fallback if t is zero or after fallback.
+func cmpTime(t, fallback time.Time) time.Time {
+	if t.IsZero() || t.After(fallback) {
+		return fallback
+	}
+	return t
 }
 
 func statToOut(r store.StatRow, groupBy string) statOut {
@@ -958,19 +1011,25 @@ func statToOut(r store.StatRow, groupBy string) statOut {
 
 // comparePrevious adds previous and change to each row. prev are the rows of
 // the period one year earlier; their periods are shifted by one year to match.
-// Groups that only exist in prev are appended with 0 (not for time-keyed
-// groupings, whose periods would lie outside the requested range).
-func comparePrevious(out []statOut, prev []store.StatRow, groupBy string, timeKeyed bool) []statOut {
+// Groups that only exist in prev are appended with 0 – for time-keyed
+// groupings (window != nil) only if their period lies within window.
+func comparePrevious(out []statOut, prev []store.StatRow, groupBy string, window func(period string) bool) []statOut {
 	key := func(o statOut) string {
-		return strings.Join([]string{o.Category, strings.ToLower(o.Title), o.Person, o.Year, o.Month, o.Week}, "\x00")
+		return strings.Join([]string{o.Category, store.Fold(o.Title), o.Person, o.Year, o.Month, o.Week}, "\x00")
 	}
 	prevBy := map[string]statOut{}
 	var order []string
 	for _, r := range prev {
 		r.Period = store.ShiftPeriodYear(r.Period, 1)
 		o := statToOut(r, groupBy)
-		prevBy[key(o)] = o
-		order = append(order, key(o))
+		k := key(o)
+		if have, ok := prevBy[k]; ok {
+			// Week 53 merged into week 52 of a year without week 53.
+			o.AmountCents += have.AmountCents
+		} else {
+			order = append(order, k)
+		}
+		prevBy[k] = o
 	}
 	set := func(o *statOut, p int64) {
 		change := o.AmountCents - p
@@ -986,21 +1045,27 @@ func comparePrevious(out []statOut, prev []store.StatRow, groupBy string, timeKe
 		set(&out[i], prevBy[k].AmountCents)
 		delete(prevBy, k)
 	}
-	if timeKeyed {
-		return out
-	}
+	appended := false
 	for _, k := range order {
 		p, ok := prevBy[k]
-		if !ok {
+		if !ok || (window != nil && !window(p.Year+p.Month+p.Week)) {
 			continue
 		}
-		o := statOut{Category: p.Category, Title: p.Title, Person: p.Person, Amount: eur(0)}
+		o := statOut{Category: p.Category, Title: p.Title, Year: p.Year, Month: p.Month, Week: p.Week, Person: p.Person, Amount: eur(0)}
 		if groupBy == store.StatsByPerson {
 			var zero int64
 			o.Paid, o.PaidCents = eur(0), &zero
 		}
 		set(&o, p.AmountCents)
 		out = append(out, o)
+		appended = true
+	}
+	if appended && window != nil {
+		// Back into the order of Stats: by period, then amount, then category.
+		slices.SortStableFunc(out, func(a, b statOut) int {
+			return cmp.Or(strings.Compare(a.Year+a.Month+a.Week, b.Year+b.Month+b.Week),
+				cmp.Compare(b.AmountCents, a.AmountCents), strings.Compare(a.Category, b.Category))
+		})
 	}
 	return out
 }

@@ -27,6 +27,10 @@ func init() {
 	})
 }
 
+// Fold is fold for other packages: text compared the way the text search
+// and the title statistics compare it.
+func Fold(s string) string { return fold(s) }
+
 // fold prepares text for case-insensitive search: Unicode lower-casing
 // (including umlauts), ß and ẞ become "ss". Umlauts stay umlauts: "bäcker"
 // finds "BÄCKER", not "baecker".

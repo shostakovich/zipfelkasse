@@ -587,7 +587,10 @@ func FillPeriods(rows []StatRow, groupBy string, first, last time.Time) []StatRo
 func Periods(groupBy string, first, last time.Time) []string {
 	var out []string
 	end := PeriodOf(groupBy, last)
-	for d := periodStart(groupBy, first); !last.Before(first); d = nextPeriod(groupBy, d) {
+	if last.Before(first) {
+		return nil
+	}
+	for d := periodStart(groupBy, first); ; d = nextPeriod(groupBy, d) {
 		p := PeriodOf(groupBy, d)
 		out = append(out, p)
 		if p >= end {
@@ -595,6 +598,12 @@ func Periods(groupBy string, first, last time.Time) []string {
 		}
 	}
 	return out
+}
+
+// PeriodEnd returns the last day of the period of a time grouping that
+// contains day.
+func PeriodEnd(groupBy string, day time.Time) time.Time {
+	return nextPeriod(groupBy, periodStart(groupBy, day)).AddDate(0, 0, -1)
 }
 
 // PeriodStart returns the first day of a period of a time grouping
@@ -621,13 +630,30 @@ func PeriodStart(groupBy, period string) time.Time {
 }
 
 // ShiftPeriodYear moves a period ("2025-09", "2025-W40", "2025") by years;
-// "" stays "".
+// "" stays "". Week 53 becomes week 52 in a year that has no week 53.
 func ShiftPeriodYear(period string, years int) string {
 	y, err := strconv.Atoi(period[:min(4, len(period))])
 	if err != nil {
 		return period
 	}
+	if strings.HasSuffix(period, "-W53") {
+		if _, w := time.Date(y+years, 12, 28, 0, 0, 0, 0, time.UTC).ISOWeek(); w < 53 {
+			return fmt.Sprintf("%04d-W52", y+years)
+		}
+	}
 	return fmt.Sprintf("%04d", y+years) + period[4:]
+}
+
+// ShiftDateYear moves a date by years; 29 February becomes 28 February in a
+// year that is not a leap year (time.AddDate would make it 1 March).
+func ShiftDateYear(d time.Time, years int) time.Time {
+	y, m, day := d.Date()
+	if m == time.February && day == 29 {
+		if last := time.Date(y+years, time.March, 0, 0, 0, 0, 0, d.Location()).Day(); last < 29 {
+			day = last
+		}
+	}
+	return time.Date(y+years, m, day, d.Hour(), d.Minute(), d.Second(), d.Nanosecond(), d.Location())
 }
 
 func periodStart(groupBy string, d time.Time) time.Time {

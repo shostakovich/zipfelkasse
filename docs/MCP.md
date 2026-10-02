@@ -30,14 +30,17 @@ Parameters in detail:
   `total` always covers all rows).
   - `title` groups by expense title, case-insensitively (i.e. by merchant). `week` is the ISO week (`2026-W40`).
   - `year`, `month` and `week` list periods without expenses with 0: from `from` (or the first expense) to `to` (or
-    the last expense), never beyond today. `category_month` is not filled.
+    today), never beyond today. `category_month` is not filled.
   - `compare: "previous_year"` adds `previous`, `change` and `change_percent` to each row. Time groupings compare
     each period with the same period a year earlier. `category`, `title` and `person` compare `from`…`to` (`to`
-    defaults to today) with the same range a year earlier and need `from`; groups that only existed a year earlier
-    appear with 0.
+    defaults to today) with the same range a year earlier and need `from`. Groups that only existed a year earlier
+    appear with 0 (for `category_month` if their month is in the range). 29 February becomes 28 February, week 53 of
+    a year is compared in week 52 of the next one if that has no week 53.
 - `balance_history`: `interval` (`month` = default, `week`, `year`), `from` (default: the first expense), `to`
-  (default: today), `person`. Computed from the current data by expense date, so later edits and deletions apply
-  retroactively; expenses before `from` are the opening balance. At most 500 periods.
+  (default: today, or the last expense if one is dated later), `person`. Each row is the balance after all expenses
+  dated up to the end of its period, so without `to` the last row equals `balances`. Computed from the current data
+  by expense date, so later edits and deletions apply retroactively; expenses before `from` are the opening balance.
+  At most 500 periods.
 - `activity`: `from`, `to` (days in the server time zone), `person` (who made the change), `action`, `expense_id`,
   `before_id` (paging), `limit` (1–500, default 50).
 

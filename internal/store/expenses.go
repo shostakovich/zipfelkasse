@@ -473,22 +473,53 @@ func (s *Store) NextExpenseID(ctx context.Context) (int64, error) {
 // BalanceEntries returns all non-deleted expenses in the form that
 // domain.Balances needs.
 func (s *Store) BalanceEntries(ctx context.Context) ([]domain.Entry, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT e.id, e.paid_by, e.amount_cents, x.participant_id, x.amount_cents
+	dated, err := s.DatedBalanceEntries(ctx, time.Time{})
+	if err != nil {
+		return nil, err
+	}
+	out := make([]domain.Entry, len(dated))
+	for i, d := range dated {
+		out[i] = d.Entry
+	}
+	return out, nil
+}
+
+// DatedEntry is a balance entry with the date of its expense.
+type DatedEntry struct {
+	Date time.Time
+	domain.Entry
+}
+
+// DatedBalanceEntries returns the non-deleted expenses dated up to to
+// (zero = all) as balance entries, oldest first.
+func (s *Store) DatedBalanceEntries(ctx context.Context, to time.Time) ([]DatedEntry, error) {
+	q := `SELECT e.id, e.date, e.paid_by, e.amount_cents, x.participant_id, x.amount_cents
 		FROM expenses e JOIN expense_shares x ON x.expense_id = e.id
-		WHERE e.deleted_at IS NULL ORDER BY e.id, x.participant_id`)
+		WHERE e.deleted_at IS NULL`
+	var args []any
+	if !to.IsZero() {
+		q += " AND e.date <= ?"
+		args = append(args, formatDate(to))
+	}
+	rows, err := s.db.QueryContext(ctx, q+" ORDER BY e.date, e.id, x.participant_id", args...)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var out []domain.Entry
+	var out []DatedEntry
 	var lastID int64
 	for rows.Next() {
 		var id, paidBy, amount, pid, share int64
-		if err := rows.Scan(&id, &paidBy, &amount, &pid, &share); err != nil {
+		var date string
+		if err := rows.Scan(&id, &date, &paidBy, &amount, &pid, &share); err != nil {
 			return nil, err
 		}
 		if id != lastID {
-			out = append(out, domain.Entry{PaidBy: paidBy, AmountCents: amount})
+			d, err := parseDate(date)
+			if err != nil {
+				return nil, err
+			}
+			out = append(out, DatedEntry{Date: d, Entry: domain.Entry{PaidBy: paidBy, AmountCents: amount}})
 			lastID = id
 		}
 		e := &out[len(out)-1]

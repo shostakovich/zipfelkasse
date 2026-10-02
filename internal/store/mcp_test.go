@@ -382,7 +382,16 @@ func TestPeriods(t *testing.T) {
 	if !PeriodStart(StatsByMonth, "nonsense").IsZero() {
 		t.Error("nonsense parsed")
 	}
-	for in, want := range map[string]string{"2025-09": "2026-09", "2025-W40": "2026-W40", "2025": "2026", "": ""} {
+	for _, c := range []struct{ in, want string }{{"2024-02-29", "2023-02-28"}, {"2024-03-31", "2023-03-31"}, {"2023-02-28", "2022-02-28"}} {
+		if got := ShiftDateYear(date(c.in), -1).Format("2006-01-02"); got != c.want {
+			t.Errorf("ShiftDateYear(%s) = %s", c.in, got)
+		}
+	}
+	if got := ShiftDateYear(date("2023-02-28"), 1).Format("2006-01-02"); got != "2024-02-28" {
+		t.Errorf("ShiftDateYear forward = %s", got)
+	}
+	for in, want := range map[string]string{"2025-09": "2026-09", "2025-W40": "2026-W40", "2025": "2026", "": "",
+		"2020-W53": "2021-W52", "2025-W53": "2026-W53"} {
 		if got := ShiftPeriodYear(in, 1); got != want {
 			t.Errorf("shift %q = %q", in, got)
 		}
