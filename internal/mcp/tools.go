@@ -64,7 +64,38 @@ func (s *server) todayLine() string {
 		today.Format(domain.DateLayout), today.Weekday(), loc)
 }
 
-func (s *server) instructions() string { return instructionsText + "\n" + s.todayLine() }
+// instructions are the instructions with today's date and the data
+// overview (left out if it cannot be read).
+func (s *server) instructions(ctx context.Context) string {
+	text := instructionsText + "\n" + s.todayLine()
+	o, err := s.d.Store.MCPOverview(ctx)
+	if err != nil {
+		s.log.Error("mcp: data overview", "err", err)
+		return text
+	}
+	return text + "\n" + overviewText(o)
+}
+
+// overviewText describes the data in one paragraph.
+func overviewText(o store.DataOverview) string {
+	var b strings.Builder
+	b.WriteString("Data overview: ")
+	if o.FirstDate.IsZero() {
+		b.WriteString("there are no expenses yet.")
+	} else {
+		fmt.Fprintf(&b, "%d expenses and %d reimbursements dated %s to %s. ", o.Expenses, o.Reimbursements,
+			o.FirstDate.Format(domain.DateLayout), o.LastDate.Format(domain.DateLayout))
+		pct := 0.0
+		if o.Expenses > 0 {
+			pct = float64(o.WithoutCategory) * 100 / float64(o.Expenses)
+		}
+		fmt.Fprintf(&b, "%d of the expenses (%.1f%%) have no category.", o.WithoutCategory, pct)
+	}
+	if len(o.ActivityActions) > 0 {
+		fmt.Fprintf(&b, " Values of activity.action: %s.", strings.Join(o.ActivityActions, ", "))
+	}
+	return b.String()
+}
 
 // discoverTTL caches server/discover (which contains the date) at most until
 // the next midnight in the server time zone.

@@ -85,6 +85,51 @@ func schemaObjects(ctx context.Context, q queryer, schema string) ([]SchemaObjec
 	return out, rows.Err()
 }
 
+// DataOverview summarizes the data for the MCP instructions. Deleted
+// expenses do not count.
+type DataOverview struct {
+	Expenses        int64     // without reimbursements
+	Reimbursements  int64     //
+	WithoutCategory int64     // expenses (without reimbursements) without a category
+	FirstDate       time.Time // of all expenses and reimbursements; zero if there are none
+	LastDate        time.Time //
+	ActivityActions []string  // all values of activity.action, sorted
+}
+
+// MCPOverview returns the DataOverview.
+func (s *Store) MCPOverview(ctx context.Context) (DataOverview, error) {
+	var o DataOverview
+	var first, last sql.NullString
+	err := s.db.QueryRowContext(ctx, `SELECT
+		coalesce(sum(is_reimbursement = 0), 0), coalesce(sum(is_reimbursement = 1), 0),
+		coalesce(sum(is_reimbursement = 0 AND category_id IS NULL), 0), min(date), max(date)
+		FROM expenses WHERE deleted_at IS NULL`).Scan(&o.Expenses, &o.Reimbursements, &o.WithoutCategory, &first, &last)
+	if err != nil {
+		return o, err
+	}
+	if first.Valid {
+		if o.FirstDate, err = parseDate(first.String); err != nil {
+			return o, err
+		}
+		if o.LastDate, err = parseDate(last.String); err != nil {
+			return o, err
+		}
+	}
+	rows, err := s.db.QueryContext(ctx, "SELECT DISTINCT action FROM activity ORDER BY action")
+	if err != nil {
+		return o, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var a string
+		if err := rows.Scan(&a); err != nil {
+			return o, err
+		}
+		o.ActivityActions = append(o.ActivityActions, a)
+	}
+	return o, rows.Err()
+}
+
 // ReadOnlyQuery runs a single SELECT/WITH query in a sandbox and returns at
 // most SQLMaxRows rows.
 //

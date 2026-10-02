@@ -892,3 +892,38 @@ func TestActivity(t *testing.T) {
 		}
 	}
 }
+
+func TestDataOverviewInInstructions(t *testing.T) {
+	e := newEnv(t)
+	instructions := func() string {
+		t.Helper()
+		return e.modern("server/discover", nil, nil).result(t)["instructions"].(string)
+	}
+	if got := instructions(); !strings.Contains(got, "Data overview: there are no expenses yet.") {
+		t.Errorf("empty: %s", got)
+	}
+	e.expense("Rewe", 3000, "2025-03-10", "Anna", "Lebensmittel", "Anna", "Ben")
+	e.expense("Kino", 2000, "2026-09-05", "Ben", "", "Anna", "Ben")
+	e.expense("Bahn", 2000, "2026-09-06", "Ben", "", "Ben")
+	e.expense("Pizza", 2000, "2026-09-07", "Ben", "Restaurant", "Ben")
+	d, _ := domain.ParseDate("2026-09-30")
+	if _, err := e.st.CreateExpense(context.Background(), e.ids["Ben"], store.ExpenseInput{Title: "Rückzahlung", Date: d, PaidBy: e.ids["Ben"],
+		AmountCents: 1000, IsReimbursement: true, Parts: []domain.Part{{ParticipantID: e.ids["Anna"]}}}); err != nil {
+		t.Fatal(err)
+	}
+	got := instructions()
+	for _, want := range []string{
+		"4 expenses and 1 reimbursements dated 2025-03-10 to 2026-09-30.",
+		"2 of the expenses (50.0%) have no category.",
+		"Values of activity.action: expense_created.",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("missing %q in %s", want, got)
+		}
+	}
+	init := e.send("POST", "/mcp/"+testSecret, "", nil,
+		`{"jsonrpc":"2.0","id":0,"method":"initialize","params":{"protocolVersion":"2025-06-18"}}`).result(t)
+	if !strings.Contains(init["instructions"].(string), "4 expenses") {
+		t.Errorf("initialize: %s", init["instructions"])
+	}
+}

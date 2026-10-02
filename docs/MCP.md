@@ -46,6 +46,10 @@ them "No category"; that label is accepted as input too). A real category with t
 instructions and the `schema` text state today's date in the server time zone (`TZ`), computed per request;
 `server/discover` is therefore cached at most until midnight.
 
+The instructions also contain a data overview, read from the database per request: the number of expenses and
+reimbursements, their date range, how many expenses have no category, and all values of `activity.action`. As
+`server/discover` may be cached for up to an hour, the overview can be that old for modern clients.
+
 Every amount appears twice: as locale-neutral text `"1234.56"` (dot as decimal separator, no thousands separator, no
 currency sign) and as an integer number of cents (field ending in `_cents`), e.g. `amount`/`amount_cents`,
 `balance`/`balance_cents`, `total`/`total_cents`. Foreign-currency originals look like `"23.40 USD"`.
