@@ -153,7 +153,7 @@ func limitBody(d Deps, next http.Handler) http.Handler {
 			return
 		}
 		if d.Log != nil {
-			d.Log.Warn("request body too large", "method", r.Method, "path", r.URL.Path, "content_length", r.ContentLength)
+			d.Log.Warn("request body too large", "method", r.Method, "path", logPath(r.URL.Path), "content_length", r.ContentLength)
 		}
 		w.Header().Set("Connection", "close")
 		if strings.HasPrefix(r.URL.Path, "/api/") {
@@ -164,6 +164,15 @@ func limitBody(d Deps, next http.Handler) http.Handler {
 	})
 }
 
+// logPath returns the request path for the log: the path of the MCP
+// endpoint contains its secret (/mcp/<secret>) and is never logged.
+func logPath(p string) string {
+	if strings.HasPrefix(p, "/mcp/") {
+		return "/mcp/***"
+	}
+	return p
+}
+
 // crossOrigin rejects POSTs and the like that a browser sends from a foreign
 // site (Sec-Fetch-Site or Origin ≠ Host). Requests without these headers
 // (curl, MCP clients) pass, since they carry no victim's cookie.
@@ -171,7 +180,7 @@ func crossOrigin(d Deps, next http.Handler) http.Handler {
 	cop := http.NewCrossOriginProtection()
 	cop.SetDenyHandler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if d.Log != nil {
-			d.Log.Warn("cross-origin request rejected", "method", r.Method, "path", r.URL.Path, "origin", r.Header.Get("Origin"))
+			d.Log.Warn("cross-origin request rejected", "method", r.Method, "path", logPath(r.URL.Path), "origin", r.Header.Get("Origin"))
 		}
 		if strings.HasPrefix(r.URL.Path, "/api/") || strings.HasPrefix(r.URL.Path, "/mcp/") {
 			WriteJSON(w, http.StatusForbidden, map[string]string{"error": "Anfrage von einer fremden Seite abgelehnt."})
