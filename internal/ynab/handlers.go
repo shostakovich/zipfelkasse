@@ -15,9 +15,10 @@ import (
 	"github.com/shostakovich/zipfelkasse/internal/web"
 )
 
+// errNotReady is shown on the YNAB settings page, hence German.
 var errNotReady = errors.New("YNAB ist noch nicht fertig eingerichtet (Token, Plan, Konto und Startdatum).")
 
-// Register hängt die Routen unter /einstellungen/ynab an.
+// Register mounts the routes under /einstellungen/ynab.
 func (s *Service) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /einstellungen/ynab", s.page)
 	mux.HandleFunc("POST /einstellungen/ynab/token", s.saveToken)
@@ -29,25 +30,25 @@ func (s *Service) Register(mux *http.ServeMux) {
 
 const pagePath = "/einstellungen/ynab"
 
-// pageData ist .Data der Seite. Enthält bewusst nie den Token.
+// pageData is .Data of the page. It deliberately never contains the token.
 type pageData struct {
 	TokenSet     bool
 	TokenInvalid bool
-	APIError     string // YNAB nicht erreichbar o. Ä. (Seite bleibt bedienbar)
+	APIError     string // YNAB unreachable or similar (the page stays usable)
 	Plans        []planOption
 	PlanName     string
 	AccountName  string
-	Currency     string // Währung des gewählten Plans, falls nicht EUR
+	Currency     string // currency of the selected plan, if not EUR
 	HasTarget    bool
 	StartDate    time.Time
 	Categories   []categoryRow
 	Groups       []groupOption
 	Ready        bool
 	Status       Status
-	RetryAt      time.Time // nur gesetzt, wenn in der Zukunft
+	RetryAt      time.Time // only set if in the future
 	Synced       int
 	Problems     []store.YNABSyncProblem
-	Balance      int64 // eigener Saldo in der App
+	Balance      int64 // own balance in the app
 }
 
 type planOption struct {
@@ -74,16 +75,16 @@ type categoryRow struct {
 	ID       int64
 	Name     string
 	Archived bool
-	Selected string // YNAB-Kategorie-ID oder ""
-	Missing  bool   // zugeordnete YNAB-Kategorie gibt es nicht mehr
+	Selected string // YNAB category ID or ""
+	Missing  bool   // the mapped YNAB category no longer exists
 }
 
 func (s *Service) page(w http.ResponseWriter, r *http.Request) {
 	s.render(w, r, http.StatusOK, "", r.URL.Query().Get("neu") == "1")
 }
 
-// render baut die Seite für die aktuelle Person. refresh lädt Pläne und
-// Kategorien neu von YNAB statt aus dem Cache.
+// render builds the page for the current person. refresh reloads plans and
+// categories from YNAB instead of the cache.
 func (s *Service) render(w http.ResponseWriter, r *http.Request, status int, errMsg string, refresh bool) {
 	ctx := r.Context()
 	me, _ := web.Me(ctx)
@@ -154,8 +155,8 @@ func (s *Service) fillPlans(data *pageData, plans []apiPlan, cfg store.YNABConfi
 	}
 }
 
-// usableAccounts: offene, nicht gelöschte Konten im Budget (nur dort
-// lassen sich Ausgaben kategorisieren).
+// usableAccounts: open, non-deleted on-budget accounts (only there can
+// expenses be categorized).
 func usableAccounts(p apiPlan) []apiAccount {
 	var out []apiAccount
 	for _, a := range p.Accounts {
@@ -166,8 +167,9 @@ func usableAccounts(p apiPlan) []apiAccount {
 	return out
 }
 
-// usableGroups: sichtbare Kategorien ohne interne Gruppen („Inflow: Ready to
-// Assign“) und ohne Kreditkarten-Zahlungskategorien (die lehnt die API ab).
+// usableGroups: visible categories without internal groups ("Inflow: Ready
+// to Assign") and without credit card payment categories (the API rejects
+// those).
 func usableGroups(groups []apiCategoryGroup) []groupOption {
 	var out []groupOption
 	for _, g := range groups {
@@ -236,7 +238,7 @@ func (s *Service) done(w http.ResponseWriter, r *http.Request, msg string) {
 	http.Redirect(w, r, pagePath, http.StatusSeeOther)
 }
 
-// saveToken prüft den Token mit einer Anfrage an YNAB und speichert ihn.
+// saveToken checks the token with a request to YNAB and stores it.
 func (s *Service) saveToken(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	me, _ := web.Me(ctx)
@@ -271,7 +273,7 @@ func (s *Service) saveToken(w http.ResponseWriter, r *http.Request) {
 	} else {
 		s.d.LogSettings(r, "YNAB verbunden (Token gesetzt)")
 	}
-	// neuer Token: Sperren und alte Fehler zurücksetzen
+	// new token: reset locks and old errors
 	st := s.loadStatus(ctx, me.ID)
 	st.TokenInvalid, st.RetryAt, st.Backoff, st.Error = false, time.Time{}, 0, ""
 	if err := s.saveStatus(ctx, me.ID, st); err != nil {
@@ -334,7 +336,7 @@ func (s *Service) saveTarget(w http.ResponseWriter, r *http.Request) {
 	s.done(w, r, "Gespeichert.")
 }
 
-// targetNames liefert die Namen von Plan und Konto (für das Protokoll).
+// targetNames returns the names of plan and account (for the activity log).
 func targetNames(plans []apiPlan, planID, accountID string) (plan, account string) {
 	for _, p := range plans {
 		if p.ID != planID {
@@ -397,8 +399,8 @@ func (s *Service) saveCategories(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		v := vals[0]
-		// Unbekannte IDs nur zulassen, wenn sie schon zugeordnet waren
-		// (Kategorie in YNAB gelöscht/versteckt – Zuordnung nicht stillschweigend verlieren).
+		// Allow unknown IDs only if they were mapped already (category
+		// deleted/hidden in YNAB – do not silently lose the mapping).
 		if v != "" && !known[v] && old[id] != v {
 			s.render(w, r, http.StatusUnprocessableEntity, "Unbekannte YNAB-Kategorie. Bitte die Seite neu laden.", false)
 			return
@@ -416,7 +418,7 @@ func (s *Service) saveCategories(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if text, err := s.mappingChanges(r, old, m, groups); err != nil {
-		s.d.Log.Error("aktivität", "err", err)
+		s.d.Log.Error("activity", "err", err)
 	} else if text != "" {
 		s.d.LogSettings(r, "YNAB: Kategorie-Zuordnung geändert ("+text+")")
 	}
@@ -424,9 +426,10 @@ func (s *Service) saveCategories(w http.ResponseWriter, r *http.Request) {
 	s.done(w, r, "Kategorie-Zuordnung gespeichert.")
 }
 
-// mappingChanges beschreibt die Unterschiede zwischen alter und neuer
-// Kategorie-Zuordnung: „Lebensmittel → Lebensmittel & Drogerie, Kino →
-// unkategorisiert“ (in der Reihenfolge der App-Kategorien).
+// mappingChanges describes the differences between the old and the new
+// category mapping for the activity log (German): "Lebensmittel →
+// Lebensmittel & Drogerie, Kino → unkategorisiert" (in the order of the app
+// categories).
 func (s *Service) mappingChanges(r *http.Request, old, now map[int64]string, groups []apiCategoryGroup) (string, error) {
 	cats, err := s.d.Store.ListCategories(r.Context(), true)
 	if err != nil {
@@ -459,8 +462,8 @@ func (s *Service) mappingChanges(r *http.Request, old, now map[int64]string, gro
 	return strings.Join(parts, ", "), nil
 }
 
-// syncNow stößt einen vollständigen Abgleich im Hintergrund an und leitet
-// sofort zurück; das Ergebnis zeigt der Status nach dem Neuladen.
+// syncNow starts a full sync in the background and redirects right away; the
+// status shows the result after reloading.
 func (s *Service) syncNow(w http.ResponseWriter, r *http.Request) {
 	me, _ := web.Me(r.Context())
 	cfg, err := s.d.Store.GetYNABConfig(r.Context(), me.ID)

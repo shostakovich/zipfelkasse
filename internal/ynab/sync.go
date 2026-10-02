@@ -18,59 +18,64 @@ import (
 	"github.com/shostakovich/zipfelkasse/internal/store"
 )
 
-// Abgleich: Für jede Person mit YNAB-Verbindung wird der Soll-Zustand (eine
-// Buchung je eigener Ausgabe, siehe PostingFor) mit ynab_sync verglichen.
-// Nur die Unterschiede gehen an YNAB – gebündelt, um das Limit von 200
-// Anfragen pro Stunde zu schonen: neu → ein POST für alle, geändert → ein
-// PATCH für alle, entfallen → DELETE einzeln (die API kennt kein Sammel-DELETE).
-// Ohne Unterschiede kostet ein Lauf keine einzige Anfrage.
+// Sync: for each person with a YNAB connection, the desired state (one
+// transaction per own expense, see PostingFor) is compared with ynab_sync.
+// Only the differences go to YNAB – batched to spare the limit of 200
+// requests per hour: new → one POST for all, changed → one PATCH for all,
+// gone → DELETE one by one (the API has no bulk DELETE).
+// Without differences a run costs not a single request.
 //
-// Bedeutung von ynab_sync.synced_hash:
-//   - Fingerabdruck des zuletzt übertragenen Soll-Zustands (hashOf)
-//   - "error:" + Fingerabdruck: Übertragen dieses Stands schlug fehl; wird erst
-//     bei Änderung, im stündlichen Vollabgleich oder per „Jetzt
-//     synchronisieren“ erneut versucht
-//   - "pending": Anlegen läuft bzw. das Ergebnis ist unbekannt (Timeout, 5xx).
-//     Der nächste Lauf sucht die Buchung über die Memo-Markierung „zipfelkasse #ID“
-//     im Konto, statt blind neu anzulegen (sonst drohen Dubletten).
-//   - "": unbekannt bzw. neu anlegen/ändern
+// Meaning of ynab_sync.synced_hash:
+//   - fingerprint of the last transferred desired state (hashOf)
+//   - "error:" + fingerprint: transferring this state failed; it is retried
+//     only on change, in the hourly full sync or via "Jetzt
+//     synchronisieren"
+//   - "pending": creation is in progress or its outcome is unknown (timeout,
+//     5xx). The next run looks for the transaction in the account via the memo
+//     marker "zipfelkasse #ID" instead of blindly creating it again (which
+//     could create duplicates).
+//   - "": unknown, or create/update
 //
-// Buchungen bekommen bewusst keine import_id: YNAB versucht importierte
-// Buchungen mit gleich hohen, von Hand erfassten Buchungen (±10 Tage) im
-// selben Konto zusammenzuführen. Im Konto „Geteilt“ sind das die Transfers
-// für Rückzahlungen – bei gleichen Beträgen (sehr häufig: Hälfte zurück)
-// würde YNAB den Anteil mit dem Transfer verschmelzen und der Saldo stimmte
-// nicht mehr. Dubletten verhindert stattdessen der "pending"-Mechanismus.
+// Transactions deliberately get no import_id: YNAB tries to merge imported
+// transactions with manually entered transactions of the same amount (±10
+// days) in the same account. In the "Geteilt" account those are the
+// transfers for reimbursements – with equal amounts (very common: half paid
+// back) YNAB would merge the share with the transfer and the balance would no
+// longer be right. The "pending" mechanism prevents duplicates instead.
 const (
 	pendingHash      = "pending"
 	errorHashPrefix  = "error:"
 	hashVersion      = "v1"
-	chunkSize        = 100 // Buchungen pro POST/PATCH
-	maxDeletesPerRun = 40  // DELETE kostet je eine Anfrage
-	maxSinglePerRun  = 20  // Einzelversuche nach einem abgelehnten Sammelaufruf
-	systemicFailures = 3   // so viele Einzelfehler in Folge ohne Erfolg: Rest zurückstellen
+	chunkSize        = 100 // transactions per POST/PATCH
+	maxDeletesPerRun = 40  // each DELETE costs one request
+	maxSinglePerRun  = 20  // single attempts after a rejected batch call
+	systemicFailures = 3   // this many single failures in a row without success: defer the rest
 	retryDelay       = 5 * time.Minute
 	maxBackoff       = time.Hour
 )
 
+// errTokenInvalid and the other messages stored in Status.Error or
+// ynab_sync.last_error are shown on the YNAB settings page, hence German.
 var errTokenInvalid = errors.New("Der YNAB-Token ist ungültig oder abgelaufen. Bitte einen neuen Token eintragen.")
 
-// backoffError: YNAB wird bis until nicht gefragt (Anfragelimit oder Störung).
+// backoffError: YNAB is not asked until until (rate limit or outage). Only
+// logged, never shown on a page.
 type backoffError struct{ until time.Time }
 
 func (e backoffError) Error() string {
-	return "YNAB pausiert bis " + e.until.Format("15:04") + " Uhr (Anfragelimit oder Störung)."
+	return "YNAB paused until " + e.until.Format("15:04") + " (rate limit or outage)"
 }
 
-// Status ist der Sync-Zustand einer Person (settings-Schlüssel "ynab.status.<id>").
+// Status is the sync state of a person (settings key "ynab.status.<id>").
+// Summary and Error are shown on the YNAB settings page (German).
 type Status struct {
-	LastRun      time.Time     `json:"last_run,omitzero"`  // letzter Versuch
-	LastSync     time.Time     `json:"last_sync,omitzero"` // letzter vollständiger Abgleich
-	Summary      string        `json:"summary,omitempty"`  // Ergebnis des letzten Abgleichs
-	Error        string        `json:"error,omitempty"`    // Fehler des letzten Versuchs (ohne Token)
+	LastRun      time.Time     `json:"last_run,omitzero"`  // last attempt
+	LastSync     time.Time     `json:"last_sync,omitzero"` // last complete sync
+	Summary      string        `json:"summary,omitempty"`  // result of the last sync
+	Error        string        `json:"error,omitempty"`    // error of the last attempt (without token)
 	TokenInvalid bool          `json:"token_invalid,omitempty"`
-	RetryAt      time.Time     `json:"retry_at,omitzero"` // vorher keine Anfragen
-	Backoff      time.Duration `json:"backoff,omitempty"` // letzte Wartezeit nach 429
+	RetryAt      time.Time     `json:"retry_at,omitzero"` // no requests before this
+	Backoff      time.Duration `json:"backoff,omitempty"` // last delay after 429
 }
 
 func statusKey(participantID int64) string {
@@ -93,12 +98,13 @@ func (s *Service) saveStatus(ctx context.Context, participantID int64, st Status
 	return s.d.Store.SetSetting(ctx, statusKey(participantID), string(b))
 }
 
-// syncResult zählt, was ein Lauf bei YNAB bewirkt hat.
+// syncResult counts what a run did in YNAB.
 type syncResult struct {
 	Created, Updated, Deleted, Failed int
-	Again                             bool // es bleibt Arbeit: bald erneut laufen
+	Again                             bool // work remains: run again soon
 }
 
+// String is the summary shown on the YNAB settings page (German).
 func (r syncResult) String() string {
 	s := fmt.Sprintf("%d neu · %d geändert · %d gelöscht", r.Created, r.Updated, r.Deleted)
 	if r.Failed > 0 {
@@ -107,15 +113,20 @@ func (r syncResult) String() string {
 	return s
 }
 
-// want ist der Soll-Zustand einer Buchung in YNAB.
-type want struct {
-	Posting
-	category string // YNAB-Kategorie-ID, "" = unkategorisiert
-	hash     string
-	txnID    string // vorhandene Buchung (für PATCH)
+// logValue summarizes the result for the log.
+func (r syncResult) logValue() string {
+	return fmt.Sprintf("%d created, %d updated, %d deleted, %d failed", r.Created, r.Updated, r.Deleted, r.Failed)
 }
 
-func (w want) milliunits() int64 { return -w.AmountCents * 10 } // 1 Cent = 10 Milliunits; Ausgang negativ
+// want is the desired state of a transaction in YNAB.
+type want struct {
+	Posting
+	category string // YNAB category ID, "" = uncategorized
+	hash     string
+	txnID    string // existing transaction (for PATCH)
+}
+
+func (w want) milliunits() int64 { return -w.AmountCents * 10 } // 1 cent = 10 milliunits; outflow is negative
 
 func (w want) newTxn(accountID string) saveTxn {
 	approved := true
@@ -129,10 +140,10 @@ func (w want) newTxn(accountID string) saveTxn {
 	return t
 }
 
-// patchTxn ändert Datum, Betrag, Empfänger, Memo und – nur wenn zugeordnet –
-// die Kategorie. Ohne Zuordnung bleibt eine in YNAB von Hand gesetzte
-// Kategorie erhalten; cleared/approved fasst der Sync nach dem Anlegen
-// nicht mehr an (z. B. abgeglichene Buchungen).
+// patchTxn changes date, amount, payee, memo and – only if mapped – the
+// category. Without a mapping, a category set manually in YNAB is kept; the
+// sync no longer touches cleared/approved after creation (e.g. reconciled
+// transactions).
 func (w want) patchTxn() saveTxn {
 	t := saveTxn{ID: w.txnID, Date: w.Date.Format(domain.DateLayout), Amount: w.milliunits(), PayeeName: w.Payee, Memo: w.Memo}
 	if w.category != "" {
@@ -148,11 +159,11 @@ func hashOf(w want) string {
 	return hex.EncodeToString(h.Sum(nil)[:16])
 }
 
-// today ist der letzte Tag, den YNAB sicher nicht als Zukunft ablehnt.
+// today is the last day that YNAB will certainly not reject as future.
 func (s *Service) today() time.Time { return Today(s.now(), s.d.Config.Location) }
 
-// Today ist der letzte Tag, den YNAB sicher nicht als Zukunft ablehnt:
-// heute in der App-Zeitzone loc, höchstens aber heute in UTC.
+// Today is the last day that YNAB will certainly not reject as future:
+// today in the app time zone loc, but at most today in UTC.
 func Today(now time.Time, loc *time.Location) time.Time {
 	if loc == nil {
 		loc = time.Local
@@ -164,15 +175,15 @@ func Today(now time.Time, loc *time.Location) time.Time {
 	return local
 }
 
-// desired berechnet den Soll-Zustand einer Person (siehe Selection), nach
-// Ausgaben-ID.
+// desired computes the desired state of a person (see Selection), by
+// expense ID.
 func (s *Service) desired(ctx context.Context, cfg store.YNABConfig) (map[int64]want, error) {
 	sel, err := NewSelection(ctx, s.d.Store, cfg, s.today())
 	if err != nil {
 		return nil, err
 	}
-	// Alle Ausgaben der Person, nicht erst ab Startdatum: auch frühere können
-	// dazugehören (nachträglich erfasst oder schon in YNAB).
+	// All of the person's expenses, not just from the start date: earlier ones
+	// can belong too (entered later or already in YNAB).
 	es, err := s.d.Store.ListExpenses(ctx, store.ExpenseFilter{ParticipantID: cfg.ParticipantID})
 	if err != nil {
 		return nil, err
@@ -193,8 +204,8 @@ func (s *Service) desired(ctx context.Context, cfg store.YNABConfig) (map[int64]
 	return out, nil
 }
 
-// runLevel: Fehler, die den ganzen Lauf der Person abbrechen (auch
-// Datenbankfehler und unklare Ausgänge). Übrige 4xx betreffen einzelne Buchungen.
+// runLevel: errors that abort the person's whole run (including database
+// errors and unclear outcomes). Other 4xx concern single transactions.
 func runLevel(err error) bool {
 	switch statusOf(err) {
 	case 0, http.StatusUnauthorized, http.StatusForbidden, http.StatusNotFound, http.StatusTooManyRequests:
@@ -203,8 +214,8 @@ func runLevel(err error) bool {
 	return uncertain(err)
 }
 
-// syncOne gleicht eine Person ab und pflegt ihren Status. full versucht auch
-// unveränderte, zuvor fehlgeschlagene Buchungen erneut.
+// syncOne syncs one person and maintains their status. full also retries
+// unchanged transactions that failed before.
 func (s *Service) syncOne(ctx context.Context, cfg store.YNABConfig, full bool) (syncResult, Status, error) {
 	pid := cfg.ParticipantID
 	st := s.loadStatus(ctx, pid)
@@ -247,7 +258,7 @@ func (s *Service) syncOne(ctx context.Context, cfg store.YNABConfig, full bool) 
 	return res, st, err
 }
 
-// syncParticipant ist der eigentliche Abgleich einer Person.
+// syncParticipant is the actual sync of one person.
 func (s *Service) syncParticipant(ctx context.Context, cfg store.YNABConfig, full bool) (syncResult, error) {
 	var res syncResult
 	pid := cfg.ParticipantID
@@ -282,7 +293,7 @@ func (s *Service) syncParticipant(ctx context.Context, cfg store.YNABConfig, ful
 		failedSame := r.Hash == errorHashPrefix+w.hash
 		switch {
 		case !full && failedSame:
-			// fehlgeschlagen und unverändert: erst im Vollabgleich erneut
+			// failed and unchanged: retry only in the full sync
 		case !ok || r.TxnID == "":
 			creates = append(creates, w)
 		case r.Hash != w.hash:
@@ -294,8 +305,8 @@ func (s *Service) syncParticipant(ctx context.Context, cfg store.YNABConfig, ful
 		if _, ok := wants[id]; ok {
 			continue
 		}
-		// Entfallen (gelöscht oder Anteil 0): immer löschen, auch wenn der
-		// letzte Versuch (z. B. ein PATCH) fehlschlug.
+		// Gone (deleted or share 0): always delete, even if the last
+		// attempt (e.g. a PATCH) failed.
 		if r.TxnID == "" {
 			forget = append(forget, id)
 		} else {
@@ -323,8 +334,8 @@ func (s *Service) syncParticipant(ctx context.Context, cfg store.YNABConfig, ful
 	return res, nil
 }
 
-// resolvePending klärt Anlagen mit unbekanntem Ergebnis über die
-// Memo-Markierung der Buchungen im Konto (eine Anfrage).
+// resolvePending resolves creations with an unknown outcome via the memo
+// marker of the transactions in the account (one request).
 func (s *Service) resolvePending(ctx context.Context, c *client, cfg store.YNABConfig, rows map[int64]store.YNABSync, pending []int64) error {
 	txns, err := c.accountTransactions(ctx, cfg.PlanID, cfg.AccountID, cfg.StartDate)
 	if err != nil {
@@ -342,7 +353,7 @@ func (s *Service) resolvePending(ctx context.Context, c *client, cfg store.YNABC
 	upd := make([]store.YNABSync, 0, len(pending))
 	for _, id := range pending {
 		r := rows[id]
-		r.TxnID, r.Hash = found[id], "" // "" erzwingt PATCH (gefunden) bzw. Neuanlage
+		r.TxnID, r.Hash = found[id], "" // "" forces a PATCH (found) or a new creation
 		rows[id] = r
 		upd = append(upd, r)
 	}
@@ -359,7 +370,7 @@ func (s *Service) failedRow(cfg store.YNABConfig, w want, txnID string, err erro
 	return r
 }
 
-// create legt neue Buchungen gebündelt an.
+// create creates new transactions in batches.
 func (s *Service) create(ctx context.Context, c *client, cfg store.YNABConfig, ws []want, res *syncResult) error {
 	for len(ws) > 0 {
 		chunk := ws[:min(chunkSize, len(ws))]
@@ -378,14 +389,14 @@ func (s *Service) create(ctx context.Context, c *client, cfg store.YNABConfig, w
 				return err
 			}
 		case uncertain(err):
-			return err // bleibt "pending", der nächste Lauf klärt das
+			return err // stays "pending", the next run resolves it
 		case runLevel(err):
-			// sicher nicht angelegt: Vormerkung zurücknehmen
+			// certainly not created: undo the pending mark
 			s.markPending(ctx, cfg, chunk, "")
 			return err
 		default:
-			// Sammelaufruf abgelehnt (400/409/…): einzeln versuchen, um die
-			// fehlerhafte Buchung zu finden.
+			// Batch call rejected (400/409/…): try one by one to find the
+			// faulty transaction.
 			if err := s.createEach(ctx, c, cfg, chunk, res); err != nil {
 				return err
 			}
@@ -418,7 +429,7 @@ func (s *Service) applyCreated(ctx context.Context, cfg store.YNABConfig, ws []w
 			r.TxnID, r.Hash, r.SyncedAt = txnID, w.hash, now
 			res.Created++
 		} else {
-			// nicht in der Antwort: bleibt "pending" und wird im nächsten Lauf geklärt
+			// not in the response: stays "pending" and is resolved in the next run
 			r.Hash, r.LastError = pendingHash, "YNAB hat das Anlegen nicht bestätigt."
 			res.Failed++
 			res.Again = true
@@ -454,8 +465,8 @@ func (s *Service) createEach(ctx context.Context, c *client, cfg store.YNABConfi
 				return err
 			}
 			if !succeeded && i+1 >= systemicFailures {
-				// Alles scheitert gleich (z. B. Konto geschlossen): Rest nicht
-				// einzeln probieren, sondern bis zum Vollabgleich zurückstellen.
+				// Everything fails the same way (e.g. account closed): do not
+				// try the rest one by one, defer it until the full sync.
 				return s.failAll(ctx, cfg, ws[i+1:], false, err, res)
 			}
 		}
@@ -463,7 +474,7 @@ func (s *Service) createEach(ctx context.Context, c *client, cfg store.YNABConfi
 	return nil
 }
 
-// failAll markiert ws als fehlgeschlagen mit err (ohne Anfragen).
+// failAll marks ws as failed with err (without requests).
 func (s *Service) failAll(ctx context.Context, cfg store.YNABConfig, ws []want, keepTxn bool, err error, res *syncResult) error {
 	rows := make([]store.YNABSync, len(ws))
 	for i, w := range ws {
@@ -477,8 +488,8 @@ func (s *Service) failAll(ctx context.Context, cfg store.YNABConfig, ws []want, 
 	return s.d.Store.PutYNABSync(ctx, rows...)
 }
 
-// update ändert Buchungen gebündelt (PATCH ist idempotent: bei unklarem
-// Ausgang wiederholt der nächste Lauf einfach).
+// update changes transactions in batches (PATCH is idempotent: on an unclear
+// outcome the next run simply repeats it).
 func (s *Service) update(ctx context.Context, c *client, cfg store.YNABConfig, ws []want, res *syncResult) error {
 	for len(ws) > 0 {
 		chunk := ws[:min(chunkSize, len(ws))]
@@ -496,7 +507,7 @@ func (s *Service) update(ctx context.Context, c *client, cfg store.YNABConfig, w
 		case runLevel(err) && statusOf(err) != http.StatusNotFound:
 			return err
 		default:
-			// abgelehnt oder 404 (eine Buchung fehlt in YNAB): einzeln klären
+			// rejected or 404 (a transaction is missing in YNAB): resolve one by one
 			if err := s.updateEach(ctx, c, cfg, chunk, res); err != nil {
 				return err
 			}
@@ -520,7 +531,7 @@ func (s *Service) applyUpdated(ctx context.Context, cfg store.YNABConfig, ws []w
 			r = s.failedRow(cfg, w, w.txnID, errors.New("YNAB hat die Änderung nicht bestätigt."))
 			res.Failed++
 		case t.Deleted:
-			// in YNAB von Hand gelöscht: neu anlegen (die App ist maßgeblich)
+			// deleted manually in YNAB: create again (the app is authoritative)
 			res.Again = true
 		default:
 			r.TxnID, r.Hash, r.SyncedAt = w.txnID, w.hash, now
@@ -546,8 +557,8 @@ func (s *Service) updateEach(ctx context.Context, c *client, cfg store.YNABConfi
 				return err
 			}
 		case statusOf(err) == http.StatusNotFound:
-			// Buchung gibt es in YNAB nicht mehr: neu anlegen. (Ist der ganze
-			// Plan weg, scheitert das Anlegen danach mit einem klaren Fehler.)
+			// The transaction no longer exists in YNAB: create it again. (If
+			// the whole plan is gone, creating then fails with a clear error.)
 			succeeded = true
 			res.Again = true
 			if err := s.d.Store.PutYNABSync(ctx, s.row(cfg, w)); err != nil {
@@ -568,7 +579,7 @@ func (s *Service) updateEach(ctx context.Context, c *client, cfg store.YNABConfi
 	return nil
 }
 
-// remove löscht entfallene Buchungen (einzeln; 404 gilt als erledigt).
+// remove deletes transactions that are gone (one by one; 404 counts as done).
 func (s *Service) remove(ctx context.Context, c *client, cfg store.YNABConfig, rows []store.YNABSync, res *syncResult) error {
 	for i, r := range rows {
 		if i >= maxDeletesPerRun {
@@ -595,8 +606,8 @@ func (s *Service) remove(ctx context.Context, c *client, cfg store.YNABConfig, r
 	return nil
 }
 
-// redact entfernt den Token aus Fehlertexten, bevor sie gespeichert,
-// geloggt oder angezeigt werden.
+// redact removes the token from error texts before they are stored, logged
+// or shown.
 func redact(msg, token string) string {
 	if token != "" {
 		msg = strings.ReplaceAll(msg, token, "•••")

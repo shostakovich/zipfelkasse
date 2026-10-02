@@ -1,7 +1,7 @@
 package store
 
 // Queries for the MCP server (internal/mcp): statistics, schema and the
-// read-only SQL sandbox for the sql_abfrage tool.
+// read-only SQL sandbox for the sql_query tool.
 
 import (
 	"context"
@@ -21,36 +21,36 @@ import (
 	"github.com/shostakovich/zipfelkasse/internal/domain"
 )
 
-// MCPTables are the tables visible via MCP (schema, sql_abfrage).
-// Deliberately an allowlist: new tables only become visible once they are
-// listed here. The YNAB tables (token!) are left out on purpose.
+// MCPTables are the tables visible via MCP (schema, sql_query). Deliberately
+// an allowlist: new tables only become visible once they are listed here. The
+// YNAB tables (token!) are left out on purpose.
 var MCPTables = []string{
 	"participants", "categories", "expenses", "expense_shares",
 	"recurring", "activity", "fx_rates", "settings",
 }
 
-// mcpRowFilter restricts individual tables when copying into the sandbox.
+// mcpRowFilter restricts individual tables when copying them into the sandbox.
 var mcpRowFilter = map[string]string{
 	"settings": `key NOT LIKE 'ynab%'`, // never show YNAB's own keys (ynab.…)
 }
 
 // Limits of the SQL sandbox.
 const (
-	SQLMaxRows      = 500             // maximum number of rows ReadOnlyQuery returns
+	SQLMaxRows      = 500             // the maximum number of rows ReadOnlyQuery returns
 	SQLTimeout      = 5 * time.Second // total duration including the copy
 	sqlMaxCellRunes = 2000            // longer texts are truncated
-	sqlMaxResult    = 8 << 20         // Bytes, sqlite3_limit(SQLITE_LIMIT_LENGTH)
+	sqlMaxResult    = 8 << 20         // bytes, sqlite3_limit(SQLITE_LIMIT_LENGTH)
 )
 
-// QueryResult is the result of ReadOnlyQuery. Rows contains int64,
-// float64, string or nil.
+// QueryResult is the result of ReadOnlyQuery. Rows contains int64, float64,
+// string or nil.
 type QueryResult struct {
 	Columns   []string
 	Rows      [][]any
 	Truncated bool // there were more than SQLMaxRows rows
 }
 
-// SchemaObject is a table or an index together with its CREATE statement.
+// SchemaObject is a table or an index with its CREATE statement.
 type SchemaObject struct {
 	Type string // "table" | "index"
 	Name string
@@ -88,13 +88,13 @@ func schemaObjects(ctx context.Context, q queryer, schema string) ([]SchemaObjec
 // most SQLMaxRows rows.
 //
 // The sandbox is a fresh in-memory database: the tables from MCPTables are
-// copied in through a read-only connection (ATTACH 'file:<path>?mode=ro')
-// within a read transaction, after which the file is detached again. So the
-// query only sees this copy; the YNAB tables including the token do not exist
+// copied into it over a read-only connection (ATTACH 'file:<path>?mode=ro')
+// in a read transaction, then the file is detached again. The query therefore
+// only sees this copy – the YNAB tables including the token do not exist
 // there at all. In addition: ATTACH is forbidden via sqlite3_limit, PRAGMA
 // query_only is on, the query must lexically be exactly one SELECT/WITH and
 // is embedded as a subquery in an aggregation (so it runs in a single step
-// that can be cancelled via the context). Input errors are
+// that can be interrupted via the context). Input errors are
 // domain.ValidationError.
 func (s *Store) ReadOnlyQuery(ctx context.Context, query string) (QueryResult, error) {
 	body, err := checkSelect(query)
@@ -115,11 +115,11 @@ func (s *Store) ReadOnlyQuery(ctx context.Context, query string) (QueryResult, e
 	return res, nil
 }
 
-// sandboxErr translates errors into understandable messages. SQLite errors
-// (syntax, unknown table …) are passed to the caller as ValidationError.
+// sandboxErr turns errors into understandable messages. SQLite errors
+// (syntax, unknown table …) go to the caller as ValidationError.
 func sandboxErr(ctx context.Context, err error) error {
 	if errors.Is(ctx.Err(), context.DeadlineExceeded) || errors.Is(err, context.DeadlineExceeded) {
-		return invalid("Die Abfrage wurde nach %d s abgebrochen. Bitte einschränken (WHERE, LIMIT) oder vereinfachen.", int(SQLTimeout/time.Second))
+		return invalid("The query was aborted after %d s. Please narrow it down (WHERE, LIMIT) or simplify it.", int(SQLTimeout/time.Second))
 	}
 	var ve domain.ValidationError
 	if errors.As(err, &ve) {
@@ -128,9 +128,9 @@ func sandboxErr(ctx context.Context, err error) error {
 	var se *sqlite.Error
 	if errors.As(err, &se) {
 		if se.Code() == sqlite3.SQLITE_TOOBIG {
-			return invalid("Das Ergebnis ist zu groß. Bitte weniger Spalten/Zeilen abfragen.")
+			return invalid("The result is too large. Please query fewer columns/rows.")
 		}
-		return invalid("SQL-Fehler: %s", strings.TrimPrefix(se.Error(), "SQL logic error: "))
+		return invalid("SQL error: %s", strings.TrimPrefix(se.Error(), "SQL logic error: "))
 	}
 	return err
 }
@@ -138,7 +138,7 @@ func sandboxErr(ctx context.Context, err error) error {
 // sandbox builds the in-memory copy and returns the (locked-down) connection.
 func (s *Store) sandbox(ctx context.Context) (*sql.Conn, func(), error) {
 	if s.path == ":memory:" || s.path == "" {
-		return nil, nil, invalid("sql_abfrage braucht eine Datenbankdatei (nicht verfügbar bei :memory:).")
+		return nil, nil, invalid("sql_query needs a database file (not available with :memory:).")
 	}
 	abs, err := filepath.Abs(s.path)
 	if err != nil {
@@ -176,7 +176,7 @@ func fillSandbox(ctx context.Context, conn *sql.Conn, path string) error {
 		if err != nil {
 			return err
 		}
-		// Tables first, then indexes (schemaObjects sorts that way).
+		// Tables first, then indexes (schemaObjects sorts them that way).
 		for _, o := range objs {
 			if _, err := conn.ExecContext(ctx, o.SQL); err != nil {
 				return fmt.Errorf("sandbox %s: %w", o.Name, err)
@@ -213,14 +213,14 @@ func fillSandbox(ctx context.Context, conn *sql.Conn, path string) error {
 	return err
 }
 
-// runWrapped wraps the query:
+// runWrapped embeds the query:
 //
 //	WITH mcp_u(c0, c1, …) AS (<query>)
 //	SELECT count(*), json_group_array(json_array(…)) FROM (SELECT * FROM mcp_u LIMIT n+1)
 //
-// That way the whole result is produced in a single sqlite3_step, which the
-// driver interrupts when the context expires, and the query can syntactically
-// only be a SELECT.
+// This way the whole result is produced in a single sqlite3_step, which the
+// driver interrupts when the context expires, and the query can only be a
+// SELECT syntactically.
 func runWrapped(ctx context.Context, conn *sql.Conn, body string) (QueryResult, error) {
 	var cols []sqlite.ColumnInfo
 	err := conn.Raw(func(dc any) error {
@@ -238,7 +238,7 @@ func runWrapped(ctx context.Context, conn *sql.Conn, body string) (QueryResult, 
 		return QueryResult{}, err
 	}
 	if len(cols) == 0 {
-		return QueryResult{}, invalid("Die Abfrage liefert keine Spalten. Erlaubt ist nur SELECT bzw. WITH … SELECT.")
+		return QueryResult{}, invalid("The query returns no columns. Only SELECT or WITH … SELECT is allowed.")
 	}
 	res := QueryResult{Columns: make([]string, len(cols))}
 	aliases := make([]string, len(cols))
@@ -285,12 +285,12 @@ func runWrapped(ctx context.Context, conn *sql.Conn, body string) (QueryResult, 
 }
 
 // checkSelect checks lexically that query is exactly one statement starting
-// with SELECT or WITH, and returns it without the trailing semicolon.
-// The rules match SQLite's tokenizer: '…', "…", `…` (doubling as escape),
-// […], comments with -- and /* */.
+// with SELECT or WITH and returns it without the trailing semicolon. The
+// rules follow SQLite's tokenizer: '…', "…", `…` (doubling as escape), […],
+// comments with -- and /* */.
 func checkSelect(query string) (string, error) {
 	if strings.IndexByte(query, 0) >= 0 {
-		return "", invalid("Die Abfrage enthält ein NUL-Zeichen.")
+		return "", invalid("The query contains a NUL character.")
 	}
 	end := len(query)
 	first := ""
@@ -324,7 +324,7 @@ func checkSelect(query string) (string, error) {
 			i++
 		default:
 			if end != len(query) {
-				return "", invalid("Bitte nur eine einzelne Abfrage schicken (kein zweites Statement nach „;“).")
+				return "", invalid("Please send only a single query (no second statement after \";\").")
 			}
 			if first == "" {
 				j := i
@@ -340,14 +340,14 @@ func checkSelect(query string) (string, error) {
 		}
 	}
 	if first != "SELECT" && first != "WITH" {
-		return "", invalid("Erlaubt ist nur eine einzelne lesende Abfrage (SELECT … oder WITH … SELECT …).")
+		return "", invalid("Only a single read-only query is allowed (SELECT … or WITH … SELECT …).")
 	}
 	return query[:end], nil
 }
 
 func isLetter(c byte) bool { return c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' }
 
-// skipQuoted returns the position after the literal starting at i.
+// skipQuoted returns the position after the literal that starts at i.
 func skipQuoted(s string, i int, open, close byte) int {
 	for j := i + 1; j < len(s); j++ {
 		if s[j] != close {
@@ -364,12 +364,12 @@ func skipQuoted(s string, i int, open, close byte) int {
 
 // --- Statistics ---------------------------------------------------------------
 
-// Groupings for Stats.
+// Groupings for Stats (also the group_by values of the MCP statistics tool).
 const (
-	StatsByCategory      = "kategorie"
-	StatsByMonth         = "monat"
+	StatsByCategory      = "category"
+	StatsByMonth         = "month"
 	StatsByPerson        = "person"
-	StatsByCategoryMonth = "kategorie_monat"
+	StatsByCategoryMonth = "category_month"
 )
 
 // StatsFilter controls Stats. Reimbursements and deleted expenses never count.
@@ -394,10 +394,10 @@ type StatRow struct {
 	PaidCents   int64 // only for person: paid by the person
 }
 
-// NoCategory is the group name for expenses without a category.
-const NoCategory = "Ohne Kategorie"
+// NoCategory is the group label for expenses without a category.
+const NoCategory = "No category"
 
-// Stats sums expenses (excluding reimbursements and deleted ones) by f.GroupBy.
+// Stats sums up expenses (excluding reimbursements and deleted ones) by f.GroupBy.
 func (s *Store) Stats(ctx context.Context, f StatsFilter) ([]StatRow, error) {
 	where := []string{"e.deleted_at IS NULL", "e.is_reimbursement = 0"}
 	var args []any
@@ -438,7 +438,7 @@ func (s *Store) Stats(ctx context.Context, f StatsFilter) ([]StatRow, error) {
 	case StatsByCategoryMonth:
 		sel, group, order = cat+", "+month, cat+", "+month, "2, 4 DESC, 1"
 	default:
-		return nil, invalid("Unbekannte Gruppierung „%s“.", f.GroupBy)
+		return nil, invalid("Unknown grouping %q.", f.GroupBy)
 	}
 	q := fmt.Sprintf("SELECT %s, count(*), sum(%s) FROM %s WHERE %s GROUP BY %s ORDER BY %s",
 		sel, amount, from, strings.Join(where, " AND "), group, order)
@@ -470,7 +470,7 @@ func (s *Store) statsByPerson(ctx context.Context, where []string, args []any, p
 		(SELECT coalesce(sum(x.amount_cents), 0) FROM expense_shares x JOIN expenses e ON e.id = x.expense_id WHERE x.participant_id = p.id AND %[1]s),
 		(SELECT coalesce(sum(e.amount_cents), 0) FROM expenses e WHERE e.paid_by = p.id AND %[1]s)
 		FROM participants p WHERE 1 = 1%[2]s`, cond, pidCond)
-	// The conditions appear three times, so the parameters do too.
+	// The conditions appear three times, so do the parameters.
 	n := len(args)
 	if participantID != 0 {
 		n--

@@ -80,13 +80,15 @@ functions. That way, parallel work packages only touch their own package.
 
 ### MCP tools
 
-- `salden`
-- `ausgaben_suchen` (date range, category, person, text)
-- `statistik` (grouped by category, month or person)
+- `balances`
+- `search_expenses` (date range, category incl. `none`, person, text, reimbursements)
+- `statistics` (grouped by category, month, person or category and month; optionally only one person's share)
 - `schema`
-- `sql_abfrage` (own connection with `mode=ro` and `PRAGMA query_only`, row limit, timeout)
+- `sql_query` (runs on an in-memory copy of the allowed tables, read-only, row limit, timeout)
 
-Supported methods: `initialize`, `notifications/initialized`, `ping`, `tools/list`, `tools/call`.
+Supported protocol versions: 2026-07-28 (stateless: `server/discover`, `tools/list`, `tools/call`) and the legacy
+versions 2025-11-25, 2025-06-18 and 2025-03-26 (`initialize`, `notifications/initialized`, `ping`, `tools/list`,
+`tools/call`). Details: [MCP.md](MCP.md).
 
 ## Work plan and subagents
 
@@ -136,7 +138,7 @@ Then review with `/code-review` and an end-to-end test (see below).
    - check balances and the suggestion, record a reimbursement
    - look at the activity log
    - check the phone viewport (375 px)
-4. MCP: `curl` with `initialize` / `tools/list` / `tools/call salden` against `/mcp/<secret>`. A 403 is expected for a wrong IP or wrong secret. Then `claude mcp add --transport http zipfelkasse http://localhost:8080/mcp/<secret>` (locally with an extended CIDR) and ask real questions
+4. MCP: `curl` with `initialize` / `tools/list` / `tools/call balances` against `/mcp/<secret>`. A 403 is expected for a wrong IP or wrong secret. Then `claude mcp add --transport http zipfelkasse http://localhost:8080/mcp/<secret>` (locally with an extended CIDR) and ask real questions
 5. YNAB: check against a test budget with account "Geteilt":
    - create, change, delete an expense → transaction appears, changes, or disappears
    - balance of "Geteilt" = balance in the app

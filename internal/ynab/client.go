@@ -16,29 +16,30 @@ import (
 	"github.com/shostakovich/zipfelkasse/internal/domain"
 )
 
-// DefaultBaseURL ist die YNAB-API (v1). Budgets heißen dort seit v1.79
-// „plans“; wir nutzen die /plans-Pfade.
+// DefaultBaseURL is the YNAB API (v1). Since v1.79 budgets are called
+// "plans" there; we use the /plans paths.
 const DefaultBaseURL = "https://api.ynab.com/v1"
 
-// Feldlängen laut OpenAPI-Spec (SaveTransactionWithOptionalFields).
+// Field lengths according to the OpenAPI spec (SaveTransactionWithOptionalFields).
 const (
 	maxPayeeLen = 200
 	maxMemoLen  = 500
 )
 
-// client spricht mit der YNAB-API im Namen eines Tokens.
+// client talks to the YNAB API on behalf of a token.
 type client struct {
 	http    *http.Client
 	baseURL string
 	token   string
 }
 
-// APIError ist eine Fehlerantwort der YNAB-API.
+// APIError is an error response of the YNAB API. Its message (German) is
+// shown on the YNAB settings page.
 type APIError struct {
 	Status     int
-	ID, Name   string // aus {"error": {"id", "name", "detail"}}
+	ID, Name   string // from {"error": {"id", "name", "detail"}}
 	Detail     string
-	RetryAfter time.Duration // bei 429, falls angegeben
+	RetryAfter time.Duration // on 429, if given
 }
 
 func (e *APIError) Error() string {
@@ -65,21 +66,21 @@ func statusOf(err error) int {
 	return 0
 }
 
-// unclearError: Transportfehler, Timeout oder unlesbare Antwort – ob YNAB
-// die Anfrage verarbeitet hat, ist unbekannt.
+// unclearError: transport error, timeout or unreadable response – whether
+// YNAB processed the request is unknown.
 type unclearError struct{ err error }
 
 func (e unclearError) Error() string { return e.err.Error() }
 func (e unclearError) Unwrap() error { return e.err }
 
-// uncertain meldet Fehler, bei denen unklar ist, ob YNAB die Anfrage
-// verarbeitet hat (Netzwerkfehler, Timeout, 5xx).
+// uncertain reports errors for which it is unclear whether YNAB processed
+// the request (network error, timeout, 5xx).
 func uncertain(err error) bool {
 	var ue unclearError
 	return errors.As(err, &ue) || statusOf(err) >= 500
 }
 
-// --- Antworttypen (nur die genutzten Felder) ---------------------------------
+// --- Response types (only the fields in use) ---------------------------------
 
 type apiPlan struct {
 	ID             string `json:"id"`
@@ -143,7 +144,7 @@ func (t apiTxn) memo() string {
 	return *t.Memo
 }
 
-// saveTxn ist eine anzulegende (ohne ID) oder zu ändernde (mit ID) Buchung.
+// saveTxn is a transaction to create (without ID) or to update (with ID).
 type saveTxn struct {
 	ID         string  `json:"id,omitempty"`
 	AccountID  string  `json:"account_id,omitempty"`
@@ -151,12 +152,12 @@ type saveTxn struct {
 	Amount     int64   `json:"amount"`
 	PayeeName  string  `json:"payee_name"`
 	Memo       string  `json:"memo"`
-	CategoryID *string `json:"category_id,omitempty"` // nil = nicht setzen (neu: unkategorisiert)
+	CategoryID *string `json:"category_id,omitempty"` // nil = do not set (new: uncategorized)
 	Cleared    string  `json:"cleared,omitempty"`
 	Approved   *bool   `json:"approved,omitempty"`
 }
 
-// --- Aufrufe -----------------------------------------------------------------
+// --- Calls -------------------------------------------------------------------
 
 func (c *client) do(ctx context.Context, method, path string, body, out any) error {
 	var rd io.Reader
@@ -176,6 +177,7 @@ func (c *client) do(ctx context.Context, method, path string, body, out any) err
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}
+	// The error messages end up on the YNAB settings page, hence German.
 	res, err := c.http.Do(req)
 	if err != nil {
 		return unclearError{fmt.Errorf("YNAB nicht erreichbar: %w", err)}
@@ -213,7 +215,7 @@ func (c *client) do(ctx context.Context, method, path string, body, out any) err
 
 func planPath(planID string) string { return "/plans/" + url.PathEscape(planID) }
 
-// plans liefert alle Pläne inkl. Konten (ein einziger Aufruf).
+// plans returns all plans including accounts (a single call).
 func (c *client) plans(ctx context.Context) ([]apiPlan, error) {
 	var out struct {
 		Data struct {
@@ -224,7 +226,7 @@ func (c *client) plans(ctx context.Context) ([]apiPlan, error) {
 	return out.Data.Plans, err
 }
 
-// categories liefert die Kategoriegruppen eines Plans.
+// categories returns the category groups of a plan.
 func (c *client) categories(ctx context.Context, planID string) ([]apiCategoryGroup, error) {
 	var out struct {
 		Data struct {
@@ -242,26 +244,26 @@ type saveResult struct {
 	} `json:"data"`
 }
 
-// createTransactions legt mehrere Buchungen mit einem Aufruf an.
+// createTransactions creates several transactions with one call.
 func (c *client) createTransactions(ctx context.Context, planID string, txns []saveTxn) ([]apiTxn, error) {
 	var out saveResult
 	err := c.do(ctx, http.MethodPost, planPath(planID)+"/transactions", map[string]any{"transactions": txns}, &out)
 	return out.Data.Transactions, err
 }
 
-// updateTransactions ändert mehrere Buchungen (per id) mit einem Aufruf.
+// updateTransactions updates several transactions (by id) with one call.
 func (c *client) updateTransactions(ctx context.Context, planID string, txns []saveTxn) ([]apiTxn, error) {
 	var out saveResult
 	err := c.do(ctx, http.MethodPatch, planPath(planID)+"/transactions", map[string]any{"transactions": txns}, &out)
 	return out.Data.Transactions, err
 }
 
-// deleteTransaction löscht eine Buchung.
+// deleteTransaction deletes a transaction.
 func (c *client) deleteTransaction(ctx context.Context, planID, txnID string) error {
 	return c.do(ctx, http.MethodDelete, planPath(planID)+"/transactions/"+url.PathEscape(txnID), nil, nil)
 }
 
-// accountTransactions liefert die (nicht gelöschten) Buchungen eines Kontos ab since.
+// accountTransactions returns the (non-deleted) transactions of an account from since on.
 func (c *client) accountTransactions(ctx context.Context, planID, accountID string, since time.Time) ([]apiTxn, error) {
 	var out struct {
 		Data struct {

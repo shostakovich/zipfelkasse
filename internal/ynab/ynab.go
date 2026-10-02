@@ -1,10 +1,10 @@
-// Package ynab synchronisiert den eigenen Anteil jeder Ausgabe in ein
-// YNAB-Verrechnungskonto „Geteilt“ (pro Person mit eigenem Token).
+// Package ynab syncs each person's own share of every expense into a YNAB
+// clearing account "Geteilt" (per person, with their own token).
 //
-// Modell: Die App schreibt je Ausgabe nur den Anteil der Person als Ausgang
-// mit zugeordneter YNAB-Kategorie. Bank-Zahlungen für geteilte Ausgaben und
-// Rückzahlungen markiert man in YNAB als Transfer ↔ „Geteilt“. Dann gilt:
-// Saldo „Geteilt“ in YNAB = Saldo der Person in der App.
+// Model: for each expense the app writes only the person's share as an
+// outflow with the mapped YNAB category. Bank payments for shared expenses and
+// reimbursements are marked in YNAB as transfers ↔ "Geteilt". Then:
+// balance of "Geteilt" in YNAB = the person's balance in the app.
 package ynab
 
 import (
@@ -24,14 +24,14 @@ import (
 var templatesFS embed.FS
 
 const (
-	defaultDebounce   = 5 * time.Second  // Sammeln von Änderungen vor einem Lauf
-	defaultStartDelay = 15 * time.Second // erster Vollabgleich nach dem Start
-	fullInterval      = time.Hour        // Vollabgleich
-	cacheTTL          = 10 * time.Minute // Pläne/Konten/Kategorien für die Einstellungsseite
+	defaultDebounce   = 5 * time.Second  // collect changes before a run
+	defaultStartDelay = 15 * time.Second // first full sync after startup
+	fullInterval      = time.Hour        // full sync
+	cacheTTL          = 10 * time.Minute // plans/accounts/categories for the settings page
 	httpTimeout       = 30 * time.Second
 )
 
-// Service ist der Sync-Worker plus Einstellungsseiten.
+// Service is the sync worker plus the settings pages.
 type Service struct {
 	d     web.Deps
 	pages *web.Pages
@@ -40,18 +40,18 @@ type Service struct {
 	baseURL string
 	now     func() time.Time
 
-	wake       chan struct{} // Trigger → Run (Puffer 1, nie blockierend)
+	wake       chan struct{} // Trigger → Run (buffer 1, never blocking)
 	debounce   time.Duration
 	startDelay time.Duration
 
-	syncMu sync.Mutex // höchstens ein Abgleich gleichzeitig (Worker oder Knopf)
+	syncMu sync.Mutex // at most one sync at a time (worker or button)
 
-	// Hintergrund-Abgleiche über „Jetzt synchronisieren“ (siehe
-	// syncInBackground). Run bricht sie beim Beenden ab und wartet auf sie.
+	// Background syncs via "Jetzt synchronisieren" (see syncInBackground).
+	// Run cancels them on shutdown and waits for them.
 	bgMu     sync.Mutex
 	bgCtx    context.Context
 	bgCancel context.CancelFunc
-	bgBusy   map[int64]bool // Person → Abgleich läuft schon
+	bgBusy   map[int64]bool // person → sync already running
 	bgWG     sync.WaitGroup
 
 	cacheMu sync.Mutex
@@ -63,7 +63,7 @@ type cacheEntry struct {
 	val any
 }
 
-// New erzeugt den Service und registriert Trigger am Store-Change-Hook.
+// New creates the service and registers Trigger with the store change hook.
 func New(d web.Deps) (*Service, error) {
 	pages, err := d.Render.Load(templatesFS, "templates/*.html")
 	if err != nil {
@@ -95,19 +95,19 @@ func (s *Service) loc() *time.Location {
 	return time.Local
 }
 
-// Trigger merkt einen Abgleich vor. Blockiert nie. Jeder Lauf vergleicht den
-// kompletten Soll-Zustand mit ynab_sync (ohne Anfragen, wenn nichts anders
-// ist), daher genügt ein Signal; die Ausgaben-ID wird nicht gebraucht.
+// Trigger schedules a sync. It never blocks. Every run compares the complete
+// desired state with ynab_sync (without requests if nothing differs), so a
+// signal is enough; the expense ID is not needed.
 func (s *Service) Trigger(expenseID int64) {
 	select {
 	case s.wake <- struct{}{}:
-	default: // es steht schon ein Lauf an
+	default: // a run is already pending
 	}
 }
 
-// Run arbeitet Trigger ab (gesammelt nach kurzer Wartezeit), gleicht
-// stündlich vollständig ab und wiederholt nach Anfragelimit/Störung, bis ctx
-// beendet ist (eigene Goroutine).
+// Run processes triggers (batched after a short delay), runs a full sync
+// every hour and retries after rate limits/outages until ctx is done (run it
+// in its own goroutine).
 func (s *Service) Run(ctx context.Context) {
 	timer := time.NewTimer(s.startDelay)
 	defer timer.Stop()
@@ -135,15 +135,15 @@ func (s *Service) Run(ctx context.Context) {
 	}
 }
 
-// SyncAll gleicht alle eingerichteten Personen ab und liefert die Wartezeit
-// bis zum nächsten nötigen Lauf.
+// SyncAll syncs all configured people and returns the delay until the next
+// necessary run.
 func (s *Service) SyncAll(ctx context.Context, full bool) time.Duration {
 	s.syncMu.Lock()
 	defer s.syncMu.Unlock()
 	next := fullInterval
 	cfgs, err := s.d.Store.ListYNABConfigs(ctx)
 	if err != nil {
-		s.d.Log.Error("ynab: konfigurationen lesen", "err", err)
+		s.d.Log.Error("ynab: read configs", "err", err)
 		return retryDelay
 	}
 	for _, cfg := range cfgs {
@@ -157,12 +157,12 @@ func (s *Service) SyncAll(ctx context.Context, full bool) time.Duration {
 		switch err.(type) {
 		case nil:
 			if res.Created+res.Updated+res.Deleted+res.Failed > 0 {
-				s.d.Log.Info("ynab: abgeglichen", "person", cfg.ParticipantID, "ergebnis", res.String())
+				s.d.Log.Info("ynab: synced", "person", cfg.ParticipantID, "result", res.logValue())
 			}
 		case backoffError:
 		default:
 			if err != errTokenInvalid {
-				s.d.Log.Warn("ynab: abgleich fehlgeschlagen", "person", cfg.ParticipantID, "err", redact(err.Error(), cfg.Token))
+				s.d.Log.Warn("ynab: sync failed", "person", cfg.ParticipantID, "err", redact(err.Error(), cfg.Token))
 			}
 		}
 		if res.Again {
@@ -175,7 +175,7 @@ func (s *Service) SyncAll(ctx context.Context, full bool) time.Duration {
 	return next
 }
 
-// SyncNow gleicht eine Person sofort vollständig ab („Jetzt synchronisieren“).
+// SyncNow fully syncs one person right away ("Jetzt synchronisieren").
 func (s *Service) SyncNow(ctx context.Context, participantID int64) (syncResult, error) {
 	s.syncMu.Lock()
 	defer s.syncMu.Unlock()
@@ -190,10 +190,10 @@ func (s *Service) SyncNow(ctx context.Context, participantID int64) (syncResult,
 	return res, err
 }
 
-// syncInBackground startet SyncNow für participantID in einer eigenen
-// Goroutine, damit der Request nicht auf YNAB wartet. Läuft für die Person
-// schon einer oder ist Run beendet, passiert nichts. Das Ergebnis steht
-// danach im Status der Person.
+// syncInBackground starts SyncNow for participantID in its own goroutine so
+// that the request does not wait for YNAB. If one is already running for the
+// person or Run has ended, nothing happens. The result ends up in the
+// person's status.
 func (s *Service) syncInBackground(participantID int64) {
 	s.bgMu.Lock()
 	defer s.bgMu.Unlock()
@@ -208,15 +208,15 @@ func (s *Service) syncInBackground(participantID int64) {
 			s.bgMu.Unlock()
 		}()
 		if res, err := s.SyncNow(s.bgCtx, participantID); err != nil {
-			s.d.Log.Warn("ynab: abgleich (jetzt) fehlgeschlagen", "person", participantID, "err", err.Error())
+			s.d.Log.Warn("ynab: sync (now) failed", "person", participantID, "err", err.Error())
 		} else {
-			s.d.Log.Info("ynab: abgeglichen (jetzt)", "person", participantID, "ergebnis", res.String())
+			s.d.Log.Info("ynab: synced (now)", "person", participantID, "result", res.logValue())
 		}
 	})
 }
 
-// stopBackground bricht laufende Hintergrund-Abgleiche ab und wartet auf sie
-// (damit main den Store erst danach schließt).
+// stopBackground cancels running background syncs and waits for them (so
+// that main closes the store only afterwards).
 func (s *Service) stopBackground() {
 	s.bgMu.Lock()
 	s.bgCancel()
@@ -224,10 +224,10 @@ func (s *Service) stopBackground() {
 	s.bgWG.Wait()
 }
 
-// waitBackground wartet auf laufende Hintergrund-Abgleiche (Tests).
+// waitBackground waits for running background syncs (tests).
 func (s *Service) waitBackground() { s.bgWG.Wait() }
 
-// --- Cache für die Einstellungsseite ----------------------------------------
+// --- Cache for the settings page --------------------------------------------
 
 func fingerprint(token string) string {
 	sum := sha256.Sum256([]byte(token))

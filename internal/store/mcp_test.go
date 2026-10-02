@@ -13,7 +13,7 @@ import (
 )
 
 // newFileFixture is newFixture with a real file (the sandbox attaches the
-// file read-only, which does not work with :memory:) and a YNAB token.
+// file read-only, :memory: does not work for that) and a YNAB token.
 func newFileFixture(t *testing.T) fixture {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "zipfelkasse.db")
@@ -26,10 +26,10 @@ func newFileFixture(t *testing.T) fixture {
 	cats, _ := s.ListCategories(context.Background(), false)
 	f.food = cats[0].ID
 	ctx := context.Background()
-	if _, err := s.db.ExecContext(ctx, `INSERT INTO ynab_config (participant_id, token, updated_at) VALUES (?, 'GEHEIMES-TOKEN', '2026-01-01T00:00:00Z')`, f.anna); err != nil {
+	if _, err := s.db.ExecContext(ctx, `INSERT INTO ynab_config (participant_id, token, updated_at) VALUES (?, 'SECRET-TOKEN', '2026-01-01T00:00:00Z')`, f.anna); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.SetSetting(ctx, "ynab.token_backup", "GEHEIMES-TOKEN"); err != nil {
+	if err := s.SetSetting(ctx, "ynab.token_backup", "SECRET-TOKEN"); err != nil {
 		t.Fatal(err)
 	}
 	return f
@@ -60,7 +60,7 @@ func TestCheckSelect(t *testing.T) {
 		}
 	}
 	bad := []string{
-		"", "   ", "-- comment only",
+		"", "   ", "-- only a comment",
 		"DELETE FROM expenses",
 		"PRAGMA query_only = OFF",
 		"ATTACH 'x.db' AS x",
@@ -86,12 +86,12 @@ func TestReadOnlyQuery(t *testing.T) {
 	f.mustCreate(t, f.equal("Rewe", 3000, "2026-09-01", f.anna, f.anna, f.ben, f.cleo))
 	f.mustCreate(t, f.equal("Kino", 2000, "2026-09-02", f.ben, f.anna, f.ben))
 
-	res, err := f.s.ReadOnlyQuery(ctx, `SELECT e.title AS titel, e.amount_cents, e.fx_rate, NULL AS nix, x'00ff' AS b
+	res, err := f.s.ReadOnlyQuery(ctx, `SELECT e.title AS title, e.amount_cents, e.fx_rate, NULL AS empty, x'00ff' AS b
 		FROM expenses e WHERE e.deleted_at IS NULL ORDER BY e.date DESC;`)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Join(res.Columns, ",") != "titel,amount_cents,fx_rate,nix,b" {
+	if strings.Join(res.Columns, ",") != "title,amount_cents,fx_rate,empty,b" {
 		t.Errorf("columns = %v", res.Columns)
 	}
 	want := fmt.Sprint([][]any{{"Kino", int64(2000), int64(1), nil, "[BLOB, 2 Bytes]"}, {"Rewe", int64(3000), int64(1), nil, "[BLOB, 2 Bytes]"}})
@@ -99,8 +99,8 @@ func TestReadOnlyQuery(t *testing.T) {
 		t.Errorf("rows = %s (truncated %v), want %s", got, res.Truncated, want)
 	}
 
-	// Empty result, WITH, row limit, ordering.
-	res, err = f.s.ReadOnlyQuery(ctx, "SELECT * FROM participants WHERE name = 'Niemand'")
+	// Empty result, WITH, row limit, order.
+	res, err = f.s.ReadOnlyQuery(ctx, "SELECT * FROM participants WHERE name = 'Nobody'")
 	if err != nil || len(res.Rows) != 0 || len(res.Columns) != 4 {
 		t.Errorf("empty: %+v, %v", res, err)
 	}
@@ -117,7 +117,7 @@ func TestReadOnlyQuery(t *testing.T) {
 		t.Errorf("truncation: %v", err)
 	}
 	// SQL errors are ValidationErrors with the SQLite message.
-	if _, err := f.s.ReadOnlyQuery(ctx, "SELECT nix FROM gibtsnicht"); !isValidation(err) || !strings.Contains(err.Error(), "gibtsnicht") {
+	if _, err := f.s.ReadOnlyQuery(ctx, "SELECT x FROM doesnotexist"); !isValidation(err) || !strings.Contains(err.Error(), "doesnotexist") {
 		t.Errorf("unknown table: %v", err)
 	}
 }
@@ -148,7 +148,7 @@ func TestReadOnlyQueryHidesYNAB(t *testing.T) {
 			t.Errorf("%s: err = %v, want error", q, err)
 		}
 	}
-	// Nothing in the sandbox contains the token, not even via schema or settings.
+	// Nothing in the sandbox contains the token – not via the schema or settings either.
 	for _, q := range []string{
 		"SELECT * FROM settings",
 		"SELECT name, sql FROM sqlite_schema",
@@ -159,8 +159,8 @@ func TestReadOnlyQueryHidesYNAB(t *testing.T) {
 		if err != nil {
 			t.Fatalf("%s: %v", q, err)
 		}
-		if s := fmt.Sprint(res.Rows); strings.Contains(s, "GEHEIM") || strings.Contains(strings.ToLower(s), "ynab") {
-			t.Errorf("%s leaks YNAB: %s", q, s)
+		if s := fmt.Sprint(res.Rows); strings.Contains(s, "SECRET") || strings.Contains(strings.ToLower(s), "ynab") {
+			t.Errorf("%s reveals YNAB: %s", q, s)
 		}
 	}
 	res, _ := f.s.ReadOnlyQuery(ctx, "SELECT key FROM settings ORDER BY key")
@@ -182,7 +182,7 @@ func TestReadOnlyQueryHidesYNAB(t *testing.T) {
 		}
 	}
 	if tables != len(MCPTables) {
-		t.Errorf("%d tables in schema, want %d", tables, len(MCPTables))
+		t.Errorf("%d tables in the schema, want %d", tables, len(MCPTables))
 	}
 }
 
@@ -199,15 +199,15 @@ func TestSandboxLayers(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer closeFn()
-	other := filepath.Join(t.TempDir(), "kopie.db")
+	other := filepath.Join(t.TempDir(), "copy.db")
 	for _, q := range []string{
 		"INSERT INTO participants (name, created_at) VALUES ('X', 'x')",
 		"UPDATE expenses SET amount_cents = 1",
 		"DELETE FROM expenses",
 		"CREATE TABLE t (x)",
 		"CREATE TEMP TABLE t (x)",
-		"ATTACH DATABASE '" + f.s.Path() + "' AS echt",
-		"ATTACH DATABASE 'file:" + f.s.Path() + "?mode=ro' AS echt",
+		"ATTACH DATABASE '" + f.s.Path() + "' AS real",
+		"ATTACH DATABASE 'file:" + f.s.Path() + "?mode=ro' AS real",
 		"VACUUM INTO '" + other + "'",
 	} {
 		if _, err := conn.ExecContext(ctx, q); err == nil {
@@ -217,17 +217,17 @@ func TestSandboxLayers(t *testing.T) {
 	if _, err := os.Stat(other); err == nil {
 		t.Error("VACUUM INTO wrote a file")
 	}
-	// Even if someone turns off query_only, the file is not reachable.
+	// Even if someone turns query_only off: the file is out of reach.
 	if _, err := conn.ExecContext(ctx, "PRAGMA query_only = OFF"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := conn.ExecContext(ctx, "ATTACH DATABASE '"+f.s.Path()+"' AS echt"); err == nil {
-		t.Error("ATTACH possible despite limit")
+	if _, err := conn.ExecContext(ctx, "ATTACH DATABASE '"+f.s.Path()+"' AS real"); err == nil {
+		t.Error("ATTACH possible despite the limit")
 	}
 	if _, err := conn.ExecContext(ctx, "DELETE FROM expenses"); err != nil {
 		t.Fatalf("delete in the copy: %v", err)
 	}
-	// Wrapped by runWrapped, only SELECTs are syntactically possible.
+	// Embedded in runWrapped, only SELECTs are syntactically possible.
 	for _, body := range []string{"DELETE FROM expenses", "PRAGMA query_only = OFF", "SELECT 1) SELECT 1; ATTACH 'x' AS y; SELECT (1"} {
 		if _, err := runWrapped(ctx, conn, body); err == nil {
 			t.Errorf("runWrapped(%q): no error", body)
@@ -251,11 +251,11 @@ func TestReadOnlyQueryTimeout(t *testing.T) {
 	defer cancel()
 	start := time.Now()
 	_, err := f.s.ReadOnlyQuery(ctx, "WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n) SELECT i FROM n WHERE i < 0")
-	if !isValidation(err) || !strings.Contains(err.Error(), "abgebrochen") {
-		t.Errorf("err = %v, want cancellation", err)
+	if !isValidation(err) || !strings.Contains(err.Error(), "aborted") {
+		t.Errorf("err = %v, want abort", err)
 	}
 	if d := time.Since(start); d > 3*time.Second {
-		t.Errorf("cancellation took %v", d)
+		t.Errorf("abort took %v", d)
 	}
 }
 
@@ -276,14 +276,14 @@ func TestStats(t *testing.T) {
 	in := f.equal("Pizza", 4000, "2026-09-10", f.cleo, f.ben, f.cleo)
 	in.CategoryID = rest
 	f.mustCreate(t, in)
-	in = f.equal("Ohne", 500, "2026-09-11", f.anna, f.anna)
+	in = f.equal("Uncategorized", 500, "2026-09-11", f.anna, f.anna)
 	in.CategoryID = 0
 	f.mustCreate(t, in)
-	del := f.mustCreate(t, f.equal("Gelöscht", 9999, "2026-09-12", f.anna, f.anna))
+	del := f.mustCreate(t, f.equal("Deleted", 9999, "2026-09-12", f.anna, f.anna))
 	if err := f.s.DeleteExpense(ctx, f.anna, del); err != nil {
 		t.Fatal(err)
 	}
-	f.mustCreate(t, ExpenseInput{Title: "Rückzahlung", Date: date("2026-09-13"), PaidBy: f.ben, AmountCents: 777,
+	f.mustCreate(t, ExpenseInput{Title: "Reimbursement", Date: date("2026-09-13"), PaidBy: f.ben, AmountCents: 777,
 		IsReimbursement: true, Parts: []domain.Part{{ParticipantID: f.anna}}})
 
 	str := func(rows []StatRow) string {
@@ -297,14 +297,14 @@ func TestStats(t *testing.T) {
 		f    StatsFilter
 		want string
 	}{
-		{StatsFilter{GroupBy: StatsByCategory}, "Lebensmittel|||2|4000|0;Restaurant|||1|4000|0;Ohne Kategorie|||1|500|0;"},
+		{StatsFilter{GroupBy: StatsByCategory}, "Lebensmittel|||2|4000|0;Restaurant|||1|4000|0;No category|||1|500|0;"},
 		{StatsFilter{GroupBy: StatsByMonth}, "|2026-08||1|3000|0;|2026-09||3|5500|0;"},
-		{StatsFilter{GroupBy: StatsByCategoryMonth, From: date("2026-09-01")}, "Restaurant|2026-09||1|4000|0;Lebensmittel|2026-09||1|1000|0;Ohne Kategorie|2026-09||1|500|0;"},
+		{StatsFilter{GroupBy: StatsByCategoryMonth, From: date("2026-09-01")}, "Restaurant|2026-09||1|4000|0;Lebensmittel|2026-09||1|1000|0;No category|2026-09||1|500|0;"},
 		{StatsFilter{GroupBy: StatsByCategory, ParticipantID: f.ben}, "Restaurant|||1|2000|0;Lebensmittel|||2|1500|0;"},
 		{StatsFilter{GroupBy: StatsByMonth, ParticipantID: f.anna, To: date("2026-08-31")}, "|2026-08||1|1000|0;"},
 		{StatsFilter{GroupBy: StatsByPerson}, "||Ben|3|3500|1000;||Cleo|2|3000|4000;||Anna|3|2000|3500;"},
 		{StatsFilter{GroupBy: StatsByPerson, From: date("2026-09-01"), ParticipantID: f.anna}, "||Anna|2|1000|500;"},
-		{StatsFilter{GroupBy: StatsByCategory, WithoutCategory: true}, "Ohne Kategorie|||1|500|0;"},
+		{StatsFilter{GroupBy: StatsByCategory, WithoutCategory: true}, "No category|||1|500|0;"},
 		{StatsFilter{GroupBy: StatsByMonth, CategoryID: f.food}, "|2026-08||1|3000|0;|2026-09||1|1000|0;"},
 		{StatsFilter{GroupBy: StatsByPerson, CategoryID: rest}, "||Ben|1|2000|0;||Cleo|1|2000|4000;"},
 		{StatsFilter{GroupBy: StatsByPerson, WithoutCategory: true}, "||Anna|1|500|500;"},
@@ -318,7 +318,7 @@ func TestStats(t *testing.T) {
 			t.Errorf("%+v:\n got %s\nwant %s", tt.f, got, tt.want)
 		}
 	}
-	if _, err := f.s.Stats(ctx, StatsFilter{GroupBy: "quatsch"}); !isValidation(err) {
+	if _, err := f.s.Stats(ctx, StatsFilter{GroupBy: "nonsense"}); !isValidation(err) {
 		t.Errorf("unknown grouping: %v", err)
 	}
 }

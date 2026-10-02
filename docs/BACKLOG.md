@@ -13,11 +13,11 @@ Deliberately deferred to keep version 1 lean. Source: acceptance test with the r
 
 ## MCP
 
-- `ausgaben_suchen`: sorting, amount bounds, multiple search terms, `bezahlt_von` separate from "beteiligt"
-  (involved), more compact output.
-- `statistik`: groupings `jahr`, `woche`, `titel` (merchant), filters `kategorie`/`text`, empty months as 0,
-  year-over-year comparison.
-- New tools `aktivitaet` and `saldo_verlauf`.
+- `search_expenses`: sorting, amount bounds, multiple search terms, `paid_by` separate from "involved", more
+  compact output.
+- `statistics`: groupings `year`, `week`, `title` (merchant), `text` filter, empty months as 0, year-over-year
+  comparison.
+- New tools `activity` and `balance_history`.
 - Data overview in the instructions (date range, count, share without category), all values of `activity.action`.
 - Halve the response size (the text is currently a copy of `structuredContent`; check `outputSchema`).
 
