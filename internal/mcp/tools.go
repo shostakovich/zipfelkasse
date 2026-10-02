@@ -195,8 +195,8 @@ func newServer(d web.Deps) *server {
 		map[string]any{
 			"type": "object",
 			"properties": map[string]any{
-				"from":     dateProp("First date (inclusive)."),
-				"to":       dateProp("Last date (inclusive)."),
+				"from":       dateProp("First date (inclusive)."),
+				"to":         dateProp("Last date (inclusive)."),
 				"category":   map[string]any{"type": "string", "description": `Category name, e.g. "Lebensmittel". ` + categoryHint},
 				"person":     map[string]any{"type": "string", "description": "Name of a person: finds expenses they paid OR take part in."},
 				"paid_by":    map[string]any{"type": "string", "description": "Name of a person: only expenses this person paid."},
