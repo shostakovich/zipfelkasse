@@ -18,7 +18,7 @@ import (
 	"github.com/shostakovich/zipfelkasse/internal/web"
 )
 
-const serverVersion = "1.0.0"
+const serverVersion = "1.1.0"
 
 func serverInfo() map[string]any {
 	return map[string]any{"name": "zipfelkasse", "title": "Zipfelkasse – shared expenses", "version": serverVersion}
