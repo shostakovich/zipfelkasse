@@ -13,6 +13,10 @@ Er läuft unter `/mcp/<MCP_SECRET>`. Ohne `MCP_SECRET` ist er abgeschaltet.
 | `schema` | erklärt Tabellen und Spalten, listet Personen und Kategorien, liefert die CREATE-Statements |
 | `sql_abfrage` | ein beliebiges `SELECT`/`WITH` (SQLite), höchstens 500 Zeilen, Abbruch nach 5 s |
 
+`kategorie: "ohne"` selects expenses without a category, both in `ausgaben_suchen` and in `statistik` (which labels
+them „Ohne Kategorie“). The instructions and the `schema` text state today's date in the server time zone (`TZ`),
+computed per request; `server/discover` is therefore cached at most until midnight.
+
 Jeder Betrag kommt zweimal: als Text `"1234,56"` und als Cent-Wert (Feld mit der Endung `_cent`).
 
 **Schutz in `sql_abfrage`:** Die Abfrage läuft nicht auf der echten Datenbank. Sie läuft auf einer frischen

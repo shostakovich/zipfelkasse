@@ -79,11 +79,13 @@ func (e Expense) ShareOf(participantID int64) int64 {
 
 // ExpenseFilter schränkt ListExpenses ein. Nullwerte bedeuten „kein Filter“.
 type ExpenseFilter struct {
-	Text          string    // Teilstring in Titel oder Notiz, Groß-/Kleinschreibung egal (auch Umlaute, ß = ss)
-	CategoryID    int64     //
-	ParticipantID int64     // hat bezahlt oder ist beteiligt
-	From, To      time.Time // Datum, jeweils inklusive
-	Limit, Offset int       // Limit 0 = alle
+	Text       string // Teilstring in Titel oder Notiz, Groß-/Kleinschreibung egal (auch Umlaute, ß = ss)
+	CategoryID int64  //
+	// WithoutCategory: only expenses without a category (CategoryID is ignored).
+	WithoutCategory bool
+	ParticipantID   int64     // hat bezahlt oder ist beteiligt
+	From, To        time.Time // Datum, jeweils inklusive
+	Limit, Offset   int       // Limit 0 = alle
 }
 
 // normalize prüft die Eingabe (auch die Aufteilung). Die Cent-Anteile
@@ -334,7 +336,10 @@ func (s *Store) ListExpenses(ctx context.Context, f ExpenseFilter) ([]Expense, e
 		where = append(where, "(instr("+foldFunc+"(e.title), ?) > 0 OR instr("+foldFunc+"(e.notes), ?) > 0)")
 		args = append(args, t, t)
 	}
-	if f.CategoryID != 0 {
+	switch {
+	case f.WithoutCategory:
+		where = append(where, "e.category_id IS NULL")
+	case f.CategoryID != 0:
 		where = append(where, "e.category_id = ?")
 		args = append(args, f.CategoryID)
 	}

@@ -494,6 +494,7 @@ func TestListExpensesFilter(t *testing.T) {
 		{"Text in Titel/Notiz", ExpenseFilter{Text: "rewe"}, []int64{c, a}},
 		{"LIKE-Zeichen escaped", ExpenseFilter{Text: "100%"}, []int64{b}},
 		{"Kategorie", ExpenseFilter{CategoryID: f.food}, []int64{b, a}},
+		{"ohne Kategorie", ExpenseFilter{WithoutCategory: true}, []int64{c}},
 		{"Person zahlt oder beteiligt", ExpenseFilter{ParticipantID: f.cleo}, []int64{c, b}},
 		{"Zeitraum", ExpenseFilter{From: date("2026-09-01"), To: date("2026-09-15")}, []int64{b, a}},
 		{"Limit/Offset", ExpenseFilter{Limit: 1, Offset: 1}, []int64{b}},

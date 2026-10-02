@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"net/netip"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -302,6 +303,38 @@ func TestLegacyProtocol(t *testing.T) {
 	}
 }
 
+// The current date (server time zone) is computed per request for the
+// instructions and the schema text; discover is cached at most until midnight.
+func TestTodayInInstructionsAndSchema(t *testing.T) {
+	e := newEnv(t)
+	cfg := config.Config{MCPSecret: testSecret, MCPAllowedCIDRs: []netip.Prefix{netip.MustParsePrefix("160.79.104.0/21")},
+		Location: time.FixedZone("Test/Zone", 2*3600)}
+	srv := newServer(web.Deps{Config: cfg, Store: e.st})
+	now := time.Date(2026, 10, 2, 21, 30, 0, 0, time.UTC) // 23:30 local time
+	srv.now = func() time.Time { return now }
+	mux := http.NewServeMux()
+	mux.Handle("/mcp/{secret}", srv)
+	e.h = mux
+
+	const friday = "Today is 2026-10-02 (Friday), server time zone Test/Zone."
+	res := e.send("POST", "/mcp/"+testSecret, "", nil,
+		`{"jsonrpc":"2.0","id":0,"method":"initialize","params":{"protocolVersion":"2025-06-18"}}`).result(t)
+	if !strings.Contains(res["instructions"].(string), friday) {
+		t.Errorf("initialize instructions: %s", res["instructions"])
+	}
+	res = e.modern("server/discover", nil, nil).result(t)
+	if !strings.Contains(res["instructions"].(string), friday) || res["ttlMs"].(float64) != 30*60*1000 {
+		t.Errorf("discover: ttlMs %v, %s", res["ttlMs"], res["instructions"])
+	}
+	now = now.Add(time.Hour) // 00:30 local time, next day
+	if _, text, _ := e.call("schema", nil); !strings.Contains(text, "Today is 2026-10-03 (Saturday), server time zone Test/Zone.") {
+		t.Errorf("schema without date: %.200s", text)
+	}
+	if res = e.modern("server/discover", nil, nil).result(t); res["ttlMs"].(float64) != float64(listTTL.Milliseconds()) {
+		t.Errorf("discover ttlMs after midnight = %v", res["ttlMs"])
+	}
+}
+
 func TestModernProtocol(t *testing.T) {
 	e := newEnv(t)
 	r := e.modern("server/discover", nil, nil)
@@ -416,6 +449,31 @@ func TestAusgabenSuchenUmlaute(t *testing.T) {
 		if isErr || sc["treffer"].(float64) != 1 || sc["ausgaben"].([]any)[0].(map[string]any)["titel"] != want {
 			t.Errorf("text %q: %s", text, msg)
 		}
+	}
+}
+
+// kategorie "ohne" matches the statistik label "Ohne Kategorie".
+func TestCategoryWithout(t *testing.T) {
+	e := newEnv(t)
+	e.expense("Tanken", 5000, "2026-09-01", "Anna", "", "Anna", "Ben")
+	e.expense("Rewe", 3000, "2026-09-02", "Ben", "Lebensmittel", "Anna", "Ben")
+	e.expense("Pizza", 2000, "2026-09-03", "Ben", "Restaurant", "Ben")
+	for _, cat := range []string{"ohne", "Ohne Kategorie", "OHNE"} {
+		sc, text, isErr := e.call("ausgaben_suchen", map[string]any{"kategorie": cat})
+		if isErr || sc["treffer"].(float64) != 1 || sc["ausgaben"].([]any)[0].(map[string]any)["titel"] != "Tanken" {
+			t.Errorf("ausgaben_suchen %q: %s", cat, text)
+		}
+	}
+	sc, text, isErr := e.call("statistik", map[string]any{"gruppierung": "kategorie", "kategorie": "ohne"})
+	if rows := sc["zeilen"].([]any); isErr || len(rows) != 1 || rows[0].(map[string]any)["kategorie"] != "Ohne Kategorie" || sc["gesamt_cent"].(float64) != 5000 {
+		t.Errorf("statistik ohne: %s", text)
+	}
+	sc, text, _ = e.call("statistik", map[string]any{"gruppierung": "person", "kategorie": "lebensmittel"})
+	if rows := sc["zeilen"].([]any); len(rows) != 2 || sc["gesamt_cent"].(float64) != 3000 {
+		t.Errorf("statistik person/Lebensmittel: %s", text)
+	}
+	if _, text, isErr := e.call("statistik", map[string]any{"gruppierung": "monat", "kategorie": "Yacht"}); !isErr || !strings.Contains(text, "Yacht") {
+		t.Errorf("unknown category: %v %s", isErr, text)
 	}
 }
 

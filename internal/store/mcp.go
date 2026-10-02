@@ -377,6 +377,10 @@ type StatsFilter struct {
 	GroupBy       string    // StatsBy…
 	From, To      time.Time // Datum inklusive, Nullwert = offen
 	ParticipantID int64     // 0 = Gesamtbeträge, sonst nur der Anteil dieser Person
+	// CategoryID limits the statistics to one category (0 = all);
+	// WithoutCategory to expenses without a category (label NoCategory).
+	CategoryID      int64
+	WithoutCategory bool
 }
 
 // StatRow ist eine Zeile der Statistik. Je nach Gruppierung sind Category,
@@ -404,6 +408,13 @@ func (s *Store) Stats(ctx context.Context, f StatsFilter) ([]StatRow, error) {
 	if !f.To.IsZero() {
 		where = append(where, "e.date <= ?")
 		args = append(args, formatDate(f.To))
+	}
+	switch {
+	case f.WithoutCategory:
+		where = append(where, "e.category_id IS NULL")
+	case f.CategoryID != 0:
+		where = append(where, "e.category_id = ?")
+		args = append(args, f.CategoryID)
 	}
 	if f.GroupBy == StatsByPerson {
 		return s.statsByPerson(ctx, where, args, f.ParticipantID)

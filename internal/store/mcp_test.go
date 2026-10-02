@@ -304,6 +304,10 @@ func TestStats(t *testing.T) {
 		{StatsFilter{GroupBy: StatsByMonth, ParticipantID: f.anna, To: date("2026-08-31")}, "|2026-08||1|1000|0;"},
 		{StatsFilter{GroupBy: StatsByPerson}, "||Ben|3|3500|1000;||Cleo|2|3000|4000;||Anna|3|2000|3500;"},
 		{StatsFilter{GroupBy: StatsByPerson, From: date("2026-09-01"), ParticipantID: f.anna}, "||Anna|2|1000|500;"},
+		{StatsFilter{GroupBy: StatsByCategory, WithoutCategory: true}, "Ohne Kategorie|||1|500|0;"},
+		{StatsFilter{GroupBy: StatsByMonth, CategoryID: f.food}, "|2026-08||1|3000|0;|2026-09||1|1000|0;"},
+		{StatsFilter{GroupBy: StatsByPerson, CategoryID: rest}, "||Ben|1|2000|0;||Cleo|1|2000|4000;"},
+		{StatsFilter{GroupBy: StatsByPerson, WithoutCategory: true}, "||Anna|1|500|500;"},
 	}
 	for _, tt := range tests {
 		rows, err := f.s.Stats(ctx, tt.f)

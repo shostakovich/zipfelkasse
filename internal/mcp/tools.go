@@ -22,14 +22,18 @@ func serverInfo() map[string]any {
 	return map[string]any{"name": "teilen", "title": "teilen – geteilte Ausgaben", "version": serverVersion}
 }
 
-// instructions erklärt dem Modell den Server (initialize/server/discover).
-const instructions = `teilen ist die Ausgabenverwaltung einer einzigen Gruppe (wie Splitwise/Spliit). Alle Tools sind nur lesend.
+// instructionsText explains the server to the model (initialize,
+// server/discover); instructions() appends today's date.
+const instructionsText = `teilen ist die Ausgabenverwaltung einer einzigen Gruppe (wie Splitwise/Spliit). Alle Tools sind nur lesend.
 Beträge sind Euro. In Ergebnissen steht jeder Betrag zweimal: als Text „1234,56“ und als Ganzzahl in Cent (Feld mit Endung _cent).
 Saldo: positiv = bekommt Geld von den anderen, negativ = schuldet Geld.
 Rückzahlungen sind Ausgleichszahlungen zwischen zwei Personen, keine Ausgaben; sie zählen für Salden, nicht für Ausgaben-Statistiken.
 Datumsangaben im Format JJJJ-MM-TT. Personen und Kategorien mit ihrem Namen angeben (Groß-/Kleinschreibung egal).
 Vorgehen: Salden und Ausgleich → salden. Einzelne Buchungen finden → ausgaben_suchen. Summen nach Kategorie, Monat oder Person → statistik.
 Alles andere → zuerst schema lesen, dann sql_abfrage (SQLite, nur SELECT).`
+
+// categoryHint explains the kategorie value for expenses without a category.
+const categoryHint = `Use "ohne" for expenses without a category (statistik shows them as "` + store.NoCategory + `").`
 
 // server ist der MCP-Handler mit seinen Tools.
 type server struct {
@@ -38,6 +42,34 @@ type server struct {
 	order  []string // Tool-Reihenfolge für tools/list (deterministisch)
 	tools  map[string]tool
 	sqlSem chan struct{} // begrenzt parallele sql_abfrage-Sandboxen
+	now    func() time.Time
+}
+
+// location is the server time zone (TZ).
+func (s *server) location() *time.Location {
+	if s.d.Config.Location != nil {
+		return s.d.Config.Location
+	}
+	return time.Local
+}
+
+// todayLine states the current date in the server time zone. It is computed
+// per request so that long-running servers never report a stale date.
+func (s *server) todayLine() string {
+	loc := s.location()
+	today := domain.DateOf(s.now().In(loc))
+	return fmt.Sprintf("Today is %s (%s), server time zone %s. Resolve relative periods such as \"last month\" from this date.",
+		today.Format(domain.DateLayout), today.Weekday(), loc)
+}
+
+func (s *server) instructions() string { return instructionsText + "\n" + s.todayLine() }
+
+// discoverTTL caches server/discover (which contains the date) at most until
+// the next midnight in the server time zone.
+func (s *server) discoverTTL() time.Duration {
+	now := s.now().In(s.location())
+	y, m, d := now.Date()
+	return min(listTTL, time.Date(y, m, d+1, 0, 0, 0, 0, now.Location()).Sub(now))
 }
 
 type tool struct {
@@ -53,7 +85,7 @@ type toolResult struct {
 }
 
 func newServer(d web.Deps) *server {
-	s := &server{d: d, log: newLogger(d), tools: map[string]tool{}, sqlSem: make(chan struct{}, 2)}
+	s := &server{d: d, log: newLogger(d), tools: map[string]tool{}, sqlSem: make(chan struct{}, 2), now: time.Now}
 	readOnly := map[string]any{"readOnlyHint": true, "destructiveHint": false, "idempotentHint": true, "openWorldHint": false}
 	add := func(name, title, desc string, schema map[string]any, run func(context.Context, json.RawMessage) (toolResult, error)) {
 		s.order = append(s.order, name)
@@ -81,7 +113,7 @@ func newServer(d web.Deps) *server {
 			"properties": map[string]any{
 				"von":       dateProp("Erstes Datum (inklusive)."),
 				"bis":       dateProp("Letztes Datum (inklusive)."),
-				"kategorie": map[string]any{"type": "string", "description": "Name der Kategorie, z. B. „Lebensmittel“."},
+				"kategorie": map[string]any{"type": "string", "description": "Name der Kategorie, z. B. „Lebensmittel“. " + categoryHint},
 				"person":    map[string]any{"type": "string", "description": "Name einer Person: findet Ausgaben, die sie bezahlt hat ODER an denen sie beteiligt ist."},
 				"text":      map[string]any{"type": "string", "description": "Teilstring in Titel oder Notiz (Groß-/Kleinschreibung egal)."},
 				"rueckzahlungen": map[string]any{"type": "string", "enum": []string{"ohne", "mit", "nur"},
@@ -102,9 +134,10 @@ func newServer(d web.Deps) *server {
 			"properties": map[string]any{
 				"gruppierung": map[string]any{"type": "string", "enum": []string{store.StatsByCategory, store.StatsByMonth, store.StatsByPerson, store.StatsByCategoryMonth},
 					"description": "Wonach gruppiert wird."},
-				"von":    dateProp("Erstes Datum (inklusive)."),
-				"bis":    dateProp("Letztes Datum (inklusive)."),
-				"person": map[string]any{"type": "string", "description": "Name einer Person: nur ihr Anteil zählt (Sicht dieser Person). Leer = Gesamtbeträge."},
+				"von":       dateProp("Erstes Datum (inklusive)."),
+				"bis":       dateProp("Letztes Datum (inklusive)."),
+				"person":    map[string]any{"type": "string", "description": "Name einer Person: nur ihr Anteil zählt (Sicht dieser Person). Leer = Gesamtbeträge."},
+				"kategorie": map[string]any{"type": "string", "description": "Only count expenses of this category (name, case-insensitive). " + categoryHint},
 			},
 			"required":             []string{"gruppierung"},
 			"additionalProperties": false,
@@ -246,6 +279,26 @@ func (s *server) findCategory(ctx context.Context, name string) (store.Category,
 	return store.Category{}, invalid("Unbekannte Kategorie „%s“. Vorhanden: %s.", name, strings.Join(names, ", "))
 }
 
+// categoryArg resolves a kategorie argument: a category name, or "ohne" /
+// "Ohne Kategorie" (the statistik label) for expenses without a category.
+// A real category with that name takes precedence.
+func (s *server) categoryArg(ctx context.Context, name string) (id int64, without bool, err error) {
+	if strings.TrimSpace(name) == "" {
+		return 0, false, nil
+	}
+	c, err := s.findCategory(ctx, name)
+	if err == nil {
+		return c.ID, false, nil
+	}
+	if n := strings.TrimSpace(name); strings.EqualFold(n, noCategoryArg) || strings.EqualFold(n, store.NoCategory) {
+		return 0, true, nil
+	}
+	return 0, false, err
+}
+
+// noCategoryArg is the kategorie value for expenses without a category.
+const noCategoryArg = "ohne"
+
 // --- salden ------------------------------------------------------------------
 
 type balanceOut struct {
@@ -346,12 +399,8 @@ func (s *server) ausgabenSuchen(ctx context.Context, raw json.RawMessage) (toolR
 		return toolResult{}, err
 	}
 	f.Text = strings.TrimSpace(args.Text)
-	if strings.TrimSpace(args.Kategorie) != "" {
-		c, err := s.findCategory(ctx, args.Kategorie)
-		if err != nil {
-			return toolResult{}, err
-		}
-		f.CategoryID = c.ID
+	if f.CategoryID, f.WithoutCategory, err = s.categoryArg(ctx, args.Kategorie); err != nil {
+		return toolResult{}, err
 	}
 	var person store.Participant
 	if strings.TrimSpace(args.Person) != "" {
@@ -457,6 +506,7 @@ func (s *server) statistik(ctx context.Context, raw json.RawMessage) (toolResult
 		Von         string `json:"von"`
 		Bis         string `json:"bis"`
 		Person      string `json:"person"`
+		Kategorie   string `json:"kategorie"`
 	}
 	if err := decodeArgs(raw, &args); err != nil {
 		return toolResult{}, err
@@ -468,6 +518,9 @@ func (s *server) statistik(ctx context.Context, raw json.RawMessage) (toolResult
 	}
 	var err error
 	if f.From, f.To, err = parseRange(args.Von, args.Bis); err != nil {
+		return toolResult{}, err
+	}
+	if f.CategoryID, f.WithoutCategory, err = s.categoryArg(ctx, args.Kategorie); err != nil {
 		return toolResult{}, err
 	}
 	view := "Gesamtbeträge der Ausgaben"
@@ -565,6 +618,8 @@ func (s *server) schema(ctx context.Context, raw json.RawMessage) (toolResult, e
 		return toolResult{}, err
 	}
 	var b strings.Builder
+	b.WriteString(s.todayLine())
+	b.WriteString("\n\n")
 	b.WriteString(schemaText)
 	b.WriteString("\nPersonen (id: Name): ")
 	for i, p := range ps {

@@ -297,15 +297,15 @@ func (s *server) dispatch(ctx context.Context, modern bool, method string, p par
 			"protocolVersion": info.version,
 			"capabilities":    map[string]any{"tools": map[string]any{"listChanged": false}},
 			"serverInfo":      serverInfo(),
-			"instructions":    instructions,
+			"instructions":    s.instructions(),
 		}, nil
 	case "server/discover":
 		return map[string]any{
 			"supportedVersions": allVersions,
 			"capabilities":      map[string]any{"tools": map[string]any{"listChanged": false}},
-			"instructions":      instructions,
+			"instructions":      s.instructions(),
 			"_meta":             map[string]any{metaServerInfo: serverInfo()},
-			"ttlMs":             listTTL.Milliseconds(),
+			"ttlMs":             s.discoverTTL().Milliseconds(),
 			"cacheScope":        "public",
 		}, nil
 	case "ping":
