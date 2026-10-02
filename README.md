@@ -43,6 +43,11 @@ docker build -t zipfelkasse .
 docker run -p 8080:8080 -v zipfelkasse-data:/data -e MCP_SECRET=… zipfelkasse
 ```
 
+Or use the prebuilt image (linux/amd64), built by GitHub Actions after the tests pass:
+`ghcr.io/shostakovich/zipfelkasse:latest` follows `main`, version tags `v1.2.3` become `1.2.3` and `1.2`,
+and every build is also tagged `sha-<commit>`. In `compose.yaml`, replace `build: .` with
+`image: ghcr.io/shostakovich/zipfelkasse:latest` and update with `docker compose pull && docker compose up -d`.
+
 The image is based on `scratch` and runs as user `65532`. If you use a bind mount instead of a volume, the
 directory must be writable for that user (`chown 65532:65532 ./data`). The container health check runs
 `zipfelkasse healthcheck` (checks `GET /healthz`).
