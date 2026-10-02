@@ -453,28 +453,13 @@ func splitParts(mode domain.SplitMode, cur string, rows []splitRow) ([]domain.Pa
 // points or an amount in the original currency (empty = 0); 0 for "equal".
 func splitWeight(mode domain.SplitMode, cur string, row splitRow) (int64, error) {
 	v := row.Value
-	switch mode {
-	case domain.SplitShares:
-		if v == "" {
+	if v == "" {
+		v = "0"
+		if mode == domain.SplitShares {
 			v = "1"
 		}
-		w, err := strconv.ParseInt(v, 10, 64)
-		if err != nil {
-			return 0, invalidf("%s: Anteile müssen ganze Zahlen sein („%s“).", row.Name, v)
-		}
-		return w, nil
-	case domain.SplitPercent:
-		if v == "" {
-			v = "0"
-		}
-		return domain.ParseBasisPoints(v)
-	case domain.SplitAmount:
-		if v == "" {
-			v = "0"
-		}
-		return domain.ParseMinor(v, domain.CurrencyDecimals(cur))
 	}
-	return 0, nil
+	return domain.ParseWeight(mode, cur, v)
 }
 
 // formRate returns rate and source for a foreign currency expense:
