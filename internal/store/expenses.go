@@ -88,6 +88,10 @@ type ExpenseFilter struct {
 	Limit, Offset   int       // Limit 0 = all
 }
 
+// maxNotesLen is the maximum length of the notes in characters (as maxlength
+// in the expense form).
+const maxNotesLen = 2000
+
 // normalize validates the input (including the split). The cent shares are
 // computed afterwards by splitShares, once the expense ID is known.
 func normalize(in ExpenseInput) (ExpenseInput, error) {
@@ -98,6 +102,10 @@ func normalize(in ExpenseInput) (ExpenseInput, error) {
 		return in, invalid("Bitte einen Titel angeben.")
 	case len([]rune(in.Title)) > 200:
 		return in, invalid("Der Titel ist zu lang (höchstens 200 Zeichen).")
+	// Browsers count a line break as one character for maxlength but send
+	// it as CR LF.
+	case len([]rune(strings.ReplaceAll(in.Notes, "\r\n", "\n"))) > maxNotesLen:
+		return in, invalid("Die Notiz ist zu lang (höchstens %d Zeichen).", maxNotesLen)
 	case in.Date.IsZero():
 		return in, invalid("Bitte ein Datum angeben.")
 	case in.PaidBy <= 0:

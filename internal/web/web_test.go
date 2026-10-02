@@ -282,3 +282,48 @@ func TestSafeReturn(t *testing.T) {
 		}
 	}
 }
+
+// Request bodies are limited to maxBodyBytes: too large ones get a 413 with
+// an error page (JSON under /api/), whether the length is known up front or
+// not. /mcp/ applies its own limit with JSON-RPC errors.
+func TestBodyLimit(t *testing.T) {
+	srv, d := newTestServer(t)
+	anna, _ := d.Store.CreateParticipant(context.Background(), "Anna")
+	big := url.Values{"name": {strings.Repeat("a", maxBodyBytes)}}.Encode()
+	post := func(path string, chunked bool) (*http.Response, string) {
+		req := httptest.NewRequest("POST", path, strings.NewReader(big))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		req.AddCookie(whoCookie(anna))
+		if chunked {
+			req.ContentLength = -1
+		}
+		res := srv.do(req)
+		b, _ := io.ReadAll(res.Body)
+		return res, string(b)
+	}
+	for _, chunked := range []bool{false, true} {
+		res, body := post("/einstellungen/teilnehmer", chunked)
+		if res.StatusCode != http.StatusRequestEntityTooLarge || !strings.Contains(body, "zu groß") ||
+			!strings.HasPrefix(res.Header.Get("Content-Type"), "text/html") {
+			t.Errorf("chunked=%v: %d %.200s", chunked, res.StatusCode, body)
+		}
+		res, body = post("/api/kurs", chunked)
+		if res.StatusCode != http.StatusRequestEntityTooLarge || !strings.HasPrefix(res.Header.Get("Content-Type"), "application/json") ||
+			!strings.Contains(body, "zu groß") {
+			t.Errorf("api chunked=%v: %d %.200s", chunked, res.StatusCode, body)
+		}
+	}
+	if res, _ := post("/mcp/geheim", false); res.StatusCode == http.StatusRequestEntityTooLarge {
+		t.Error("/mcp/ rejected by the web limit instead of its own")
+	}
+	if ps, _ := d.Store.ListParticipants(context.Background(), true); len(ps) != 1 {
+		t.Errorf("participants: %d", len(ps))
+	}
+	// Normal requests pass.
+	req := httptest.NewRequest("POST", "/einstellungen/teilnehmer", strings.NewReader("name=Ben"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(whoCookie(anna))
+	if res := srv.do(req); res.StatusCode != http.StatusSeeOther {
+		t.Errorf("small request: %d", res.StatusCode)
+	}
+}

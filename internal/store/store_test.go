@@ -259,6 +259,7 @@ func TestCreateExpenseValidation(t *testing.T) {
 		{"without title", func(in *ExpenseInput) { in.Title = " " }},
 		{"without date", func(in *ExpenseInput) { in.Date = time.Time{} }},
 		{"without payer", func(in *ExpenseInput) { in.PaidBy = 0 }},
+		{"note too long", func(in *ExpenseInput) { in.Notes = strings.Repeat("ä", 2001) }},
 		{"amount 0", func(in *ExpenseInput) { in.AmountCents = 0 }},
 		{"no participants", func(in *ExpenseInput) { in.Parts = nil }},
 		{"unknown payer", func(in *ExpenseInput) { in.PaidBy = 999 }},
@@ -288,6 +289,21 @@ func TestCreateExpenseValidation(t *testing.T) {
 	}
 	if es, _ := f.s.ListExpenses(ctx, ExpenseFilter{}); len(es) != 0 {
 		t.Errorf("invalid expenses were stored: %d", len(es))
+	}
+}
+
+// Notes up to 2000 characters as in the form; line breaks arrive as CR LF but
+// count as one character there.
+func TestNotesLength(t *testing.T) {
+	f := newFixture(t)
+	in := f.equal("Einkauf", 1000, "2026-08-01", f.anna, f.anna)
+	in.Notes = strings.Repeat("a\r\n", 999) + "aa"
+	if _, err := f.s.CreateExpense(context.Background(), f.anna, in); err != nil {
+		t.Errorf("2000 characters: %v", err)
+	}
+	in.Notes += "a"
+	if _, err := f.s.CreateExpense(context.Background(), f.anna, in); !isValidation(err) || !strings.Contains(err.Error(), "2000 Zeichen") {
+		t.Errorf("2001 characters: %v", err)
 	}
 }
 

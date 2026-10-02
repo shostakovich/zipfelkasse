@@ -2,6 +2,7 @@ package web
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -114,10 +115,53 @@ func securityHeaders(next http.Handler) http.Handler {
 	})
 }
 
-// Wrap wraps the shared middlewares (security headers, CSRF protection,
-// identity) around the complete mux. main calls it exactly once.
+// Wrap wraps the shared middlewares (security headers, body limit, CSRF
+// protection, identity) around the complete mux. main calls it exactly once.
 func Wrap(d Deps, h http.Handler) http.Handler {
-	return securityHeaders(crossOrigin(d, identity(d.Store, h)))
+	return securityHeaders(limitBody(d, crossOrigin(d, identity(d.Store, h))))
+}
+
+// maxBodyBytes limits request bodies (forms are a few KB). The same as the
+// MCP limit (mcp.maxBody).
+const maxBodyBytes = 1 << 20
+
+// limitBody rejects request bodies larger than maxBodyBytes with 413. Form
+// bodies without Content-Length are parsed here already, so that an oversized
+// one also yields 413 instead of an empty form (r.FormValue ignores parse
+// errors). /mcp/ only gets the reader limit: it reports too large messages
+// itself as JSON-RPC errors.
+func limitBody(d Deps, next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Body == nil || r.Body == http.NoBody {
+			next.ServeHTTP(w, r)
+			return
+		}
+		r.Body = http.MaxBytesReader(w, r.Body, maxBodyBytes)
+		if strings.HasPrefix(r.URL.Path, "/mcp/") {
+			next.ServeHTTP(w, r)
+			return
+		}
+		tooLarge := r.ContentLength > maxBodyBytes
+		if r.ContentLength < 0 {
+			if err := r.ParseForm(); err != nil {
+				var mbe *http.MaxBytesError
+				tooLarge = errors.As(err, &mbe)
+			}
+		}
+		if !tooLarge {
+			next.ServeHTTP(w, r)
+			return
+		}
+		if d.Log != nil {
+			d.Log.Warn("request body too large", "method", r.Method, "path", r.URL.Path, "content_length", r.ContentLength)
+		}
+		w.Header().Set("Connection", "close")
+		if strings.HasPrefix(r.URL.Path, "/api/") {
+			WriteJSON(w, http.StatusRequestEntityTooLarge, map[string]string{"error": "Die Anfrage ist zu groß."})
+			return
+		}
+		d.Render.Error(w, r, http.StatusRequestEntityTooLarge, "Die gesendeten Daten sind zu groß. Bitte kürze die Eingaben und versuche es noch einmal.")
+	})
 }
 
 // crossOrigin rejects POSTs and the like that a browser sends from a foreign
