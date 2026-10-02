@@ -2,6 +2,7 @@ package web
 
 import (
 	"cmp"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -212,7 +213,8 @@ type expensePage struct {
 	Currencies []string
 	SplitModes []domain.SplitMode
 	History    []activityItem
-	Rotation   int64 // expense ID (the expected one for new expenses) for the cent distribution of the preview
+	Rotation   int64  // expense ID (the expected one for new expenses) for the cent distribution of the preview
+	Suggest    string // categorySuggestions as JSON for expense-form.js
 }
 
 // formFromExpense fills the form from a saved expense.
@@ -551,6 +553,17 @@ func (h handlers) renderExpense(w http.ResponseWriter, r *http.Request, status i
 			p.Categories = append(p.Categories, c)
 		}
 	}
+	hist, err := h.d.Store.CategoryHistory(ctx)
+	if err != nil {
+		h.serverError(w, r, err)
+		return
+	}
+	suggest, err := json.Marshal(suggestCategories(hist))
+	if err != nil {
+		h.serverError(w, r, err)
+		return
+	}
+	p.Suggest = string(suggest)
 	for _, x := range people {
 		if !x.Archived() || x.ID == f.PaidBy {
 			p.Payers = append(p.Payers, x)

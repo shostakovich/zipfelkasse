@@ -99,3 +99,40 @@ func TestExpenseCounts(t *testing.T) {
 		t.Errorf("ExpenseCountByCategory = %v", byC)
 	}
 }
+
+func TestCategoryHistory(t *testing.T) {
+	f := newFixture(t)
+	ctx := context.Background()
+	cats, _ := f.s.ListCategories(ctx, false)
+	other, archived := cats[1].ID, cats[2].ID
+	mk := func(title, d string, cat int64) int64 {
+		in := f.equal(title, 1000, d, f.anna, f.anna, f.ben)
+		in.CategoryID = cat
+		id, err := f.s.CreateExpense(ctx, f.anna, in)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return id
+	}
+	mk("Kaufland", "2026-09-01", f.food)
+	mk("Kino", "2026-09-10", other)
+	mk("Ohne", "2026-09-11", 0)
+	mk("Archiviert", "2026-09-12", archived)
+	gone := mk("Gelöscht", "2026-09-13", f.food)
+	f.s.DeleteExpense(ctx, f.anna, gone)
+	f.s.SetCategoryArchived(ctx, archived, true)
+	back := f.equal("Rückzahlung", 500, "2026-09-14", f.ben, f.anna)
+	back.IsReimbursement = true
+	if _, err := f.s.CreateExpense(ctx, f.ben, back); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := f.s.CategoryHistory(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []TitleCategory{{"Kino", other}, {"Kaufland", f.food}}
+	if len(got) != len(want) || got[0] != want[0] || got[1] != want[1] {
+		t.Errorf("CategoryHistory = %v, want %v", got, want)
+	}
+}

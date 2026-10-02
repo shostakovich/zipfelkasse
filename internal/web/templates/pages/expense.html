@@ -34,12 +34,13 @@
         </div>
         <div class="field">
           <label for="kategorie">Kategorie</label>
-          <select id="kategorie" name="kategorie">
+          <select id="kategorie" name="kategorie" data-suggest="{{.Data.Suggest}}" aria-describedby="kategorie-hinweis">
             <option value="">Keine Kategorie</option>
             {{- range .Data.Categories}}
             <option value="{{.ID}}"{{if eq .ID $f.Category}} selected{{end}}>{{.Name}}{{if .Archived}} (archiviert){{end}}</option>
             {{- end}}
           </select>
+          <p class="help" id="kategorie-hinweis" hidden>Vorschlag anhand früherer Ausgaben</p>
         </div>
         <div class="field">
           <label for="bezahlt_von"><span class="not-reimbursement">Bezahlt von</span><span class="only-reimbursement">Zurückgezahlt von</span></label>

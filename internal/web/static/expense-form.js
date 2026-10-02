@@ -309,7 +309,47 @@
       });
   }
 
+  // --- Category suggestion ---------------------------------------------------
+
+  // Suggests the category of earlier expenses with the same title, otherwise
+  // of the title word with the most support (see web.categorySuggestions), as
+  // long as nobody has chosen a category by hand.
+  var catEl = $("kategorie"), catHint = $("kategorie-hinweis");
+  var suggest = {};
+  try { suggest = JSON.parse(catEl.getAttribute("data-suggest")) || {}; } catch (e) {}
+  var suggested = false; // the selected category is our suggestion
+
+  function own(obj, key) {
+    return obj && Object.prototype.hasOwnProperty.call(obj, key) ? obj[key] : undefined;
+  }
+
+  // titleKey must match web.titleKey.
+  function titleKey(s) {
+    return s.toLowerCase().split(/[^\p{L}]+/u).filter(Boolean).join(" ");
+  }
+
+  function suggestCategory() {
+    if (catEl.value !== "" && !suggested) return;
+    var key = titleKey(titleEl.value), cat = own(suggest.t, key) || 0, support = 0;
+    if (!cat) {
+      key.split(" ").forEach(function (word) {
+        var s = own(suggest.w, word);
+        if (s && s[1] > support) { cat = s[0]; support = s[1]; }
+      });
+    }
+    if (cat && !catEl.querySelector('option[value="' + cat + '"]')) cat = 0;
+    catEl.value = cat ? String(cat) : "";
+    suggested = !!cat;
+    catHint.hidden = !suggested;
+  }
+
   // --- Events ----------------------------------------------------------------
+
+  titleEl.addEventListener("input", suggestCategory);
+  catEl.addEventListener("change", function () {
+    suggested = false;
+    catHint.hidden = true;
+  });
 
   currencyEl.addEventListener("change", function () {
     rateEl.value = "";

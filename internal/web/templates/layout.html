@@ -16,10 +16,10 @@
   <script src="{{static "app.js"}}" defer></script>
   {{- block "head" .}}{{end}}
 </head>
-<body>
+<body{{if .Me}} class="has-tabbar"{{end}}>
   <header class="site-header">
     <div class="container site-header-inner">
-      <a class="brand" href="/">{{.GroupName}}</a>
+      <a class="brand" href="/"><img src="{{static "mascot.webp"}}" alt="" width="155" height="144">Zipfelkasse</a>
       {{- with .Me}}
       <p class="whoami">Du bist <strong>{{.Name}}</strong> · <a href="/wer">wechseln</a></p>
       {{- end}}
