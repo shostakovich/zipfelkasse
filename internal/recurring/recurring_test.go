@@ -386,11 +386,12 @@ func TestHandlers(t *testing.T) {
 	}
 
 	base := "/einstellungen/wiederkehrend/" + strconv.FormatInt(rid, 10)
-	for action, text := range map[string]string{
-		"pausieren":  "Wiederholung „Miete“ (monatlich) pausiert",
-		"fortsetzen": "Wiederholung „Miete“ (monatlich) fortgesetzt",
-		"vorlage":    "Wiederholung „Miete“ (monatlich): Vorlage aus der letzten Ausgabe übernommen",
+	for _, step := range [][2]string{
+		{"pausieren", "Wiederholung „Miete“ (monatlich) pausiert"},
+		{"fortsetzen", "Wiederholung „Miete“ (monatlich) fortgesetzt"},
+		{"vorlage", "Wiederholung „Miete“ (monatlich): Vorlage aus der letzten Ausgabe übernommen"},
 	} {
+		action, text := step[0], step[1]
 		if rec = e.do("POST", base+"/"+action, nil); rec.Code != http.StatusSeeOther {
 			t.Errorf("%s: %d", action, rec.Code)
 		}

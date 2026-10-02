@@ -75,7 +75,8 @@ type load struct {
 // Datei wird nie parallel geladen: Weitere Aufrufer warten auf den laufenden
 // Abruf. Kurz nach einem Abruf liefert fetch dessen Ergebnis erneut, ohne zu
 // laden (force umgeht das). Der Abruf läuft unabhängig von ctx zu Ende (der
-// HTTP-Client hat ein Timeout), ctx begrenzt nur das Warten.
+// HTTP-Client hat ein Timeout), ctx begrenzt nur das Warten. Beim Beenden
+// (Ende von Run) werden Abrufe abgebrochen und keine neuen gestartet.
 func (s *Service) fetch(ctx context.Context, file string, force bool) (loadResult, error) {
 	s.mu.Lock()
 	l := s.loads[file]
@@ -95,10 +96,14 @@ func (s *Service) fetch(ctx context.Context, file string, force bool) (loadResul
 		}
 	}
 	if l == nil {
+		if err := s.bgCtx.Err(); err != nil {
+			s.mu.Unlock()
+			return loadResult{}, &FetchError{File: file, Err: err}
+		}
 		l = &load{done: make(chan struct{})}
 		s.loads[file] = l
-		go func() {
-			res, err := s.download(context.WithoutCancel(ctx), file)
+		s.bg.Go(func() {
+			res, err := s.download(s.bgCtx, file)
 			if err != nil {
 				s.d.Log.Warn("EZB-Kurse laden fehlgeschlagen", "datei", file, "err", err)
 				err = &FetchError{File: file, Err: err}
@@ -110,7 +115,7 @@ func (s *Service) fetch(ctx context.Context, file string, force bool) (loadResul
 			l.res, l.err, l.at = res, err, s.now()
 			s.mu.Unlock()
 			close(l.done)
-		}()
+		})
 	}
 	s.mu.Unlock()
 	select {

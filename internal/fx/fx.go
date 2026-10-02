@@ -43,6 +43,13 @@ type Service struct {
 
 	mu    sync.Mutex
 	loads map[string]*load // letzter bzw. laufender Abruf pro Datei
+
+	// Abrufe laufen in eigenen Goroutinen mit bgCtx (unabhängig vom
+	// Request). Run bricht sie beim Beenden ab und wartet auf sie, damit
+	// main den Store erst danach schließt.
+	bgCtx    context.Context
+	bgCancel context.CancelFunc
+	bg       sync.WaitGroup
 }
 
 var _ web.FXRater = (*Service)(nil)
@@ -57,7 +64,7 @@ func New(d web.Deps) (*Service, error) {
 	if err != nil {
 		berlin = time.FixedZone("MEZ", 3600)
 	}
-	return &Service{
+	s := &Service{
 		d:       d,
 		pages:   pages,
 		client:  &http.Client{Timeout: 60 * time.Second},
@@ -65,7 +72,17 @@ func New(d web.Deps) (*Service, error) {
 		now:     time.Now,
 		berlin:  berlin,
 		loads:   map[string]*load{},
-	}, nil
+	}
+	s.bgCtx, s.bgCancel = context.WithCancel(context.Background())
+	return s, nil
+}
+
+// stop bricht laufende Abrufe ab, wartet auf sie und verhindert neue.
+func (s *Service) stop() {
+	s.mu.Lock()
+	s.bgCancel()
+	s.mu.Unlock()
+	s.bg.Wait()
 }
 
 // today liefert das heutige Datum in der konfigurierten Zeitzone.
@@ -209,6 +226,7 @@ func (s *Service) Refresh(ctx context.Context) (time.Time, error) {
 // Bankarbeitstag nach 16:30 Uhr (Europe/Berlin) die neuen. Fehler werden nur
 // protokolliert. Blockiert, bis ctx beendet ist.
 func (s *Service) Run(ctx context.Context) {
+	defer s.stop()
 	if stats, err := s.d.Store.ECBCacheStats(ctx); err == nil && stats.To.Before(s.expectedDate(s.today())) {
 		s.refreshLogged(ctx)
 	}

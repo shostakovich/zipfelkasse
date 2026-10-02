@@ -47,7 +47,7 @@ Jeder Zugriff wird geloggt: IP, Methode, Tool, Status und Dauer. Der Pfad mit de
 |---|---|
 | `MCP_SECRET` | `openssl rand -hex 32` (nur `[0-9a-f]`, also URL-sicher) |
 | `MCP_ALLOWED_CIDRS` | `160.79.104.0/21` (Standard), für das LAN z. B. `160.79.104.0/21,192.168.178.0/24` |
-| `TRUSTED_PROXIES` | Adresse, von der Pangolin/Newt beim Container ankommt, z. B. `172.18.0.5` oder das Docker-Netz `172.18.0.0/16` |
+| `TRUSTED_PROXIES` | genau die Adresse des Newt-/Pangolin-Containers als /32, z. B. `172.18.0.5/32` (nicht das ganze Docker-Netz, siehe unten) |
 
 ## Pangolin einrichten
 
@@ -56,8 +56,14 @@ Jeder Zugriff wird geloggt: IP, Methode, Tool, Status und Dauer. Der Pfad mit de
    durch. Die App schützt sich mit Secret, IP-Filter und Origin-Prüfung selbst.
 3. Stelle `TRUSTED_PROXIES` ein: Starte die App zunächst ohne die Variable und rufe den Endpunkt einmal über die Domain
    auf. Im Log steht dann `mcp: IP nicht erlaubt` mit `remote=<Adresse>` (das ist der Newt-/Traefik-Hop) und
-   `x_forwarded_for=[…]`. Trage die `remote`-Adresse (bzw. ihr Docker-Netz) in `TRUSTED_PROXIES` ein. Danach muss
-   `ip=` die echte Client-Adresse zeigen.
+   `x_forwarded_for=[…]`. Alternativ: `docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}} {{end}}' newt`
+   (Containername anpassen). Trage **nur diese eine Adresse als /32** in `TRUSTED_PROXIES` ein, z. B. `172.18.0.5/32`.
+   Danach muss `ip=` die echte Client-Adresse zeigen.
+
+   Warum nicht das ganze Docker-Netz (`172.18.0.0/16`)? Jeder Container in diesem Netz dürfte dann
+   `X-Forwarded-For` setzen und sich als Anthropic ausgeben – ein kompromittierter Nachbar-Container käme so am
+   IP-Filter vorbei. Damit die Adresse nach einem Neustart gleich bleibt, gib dem Newt-Container in seinem
+   Compose-File eine feste Adresse (`networks: <netz>: ipv4_address: 172.18.0.5`) oder prüfe sie nach Updates erneut.
 4. Prüfe die Header: Traefik in Pangolin setzt `X-Forwarded-For` und `X-Real-Ip`. Steht in `x_forwarded_for` nichts,
    reicht `X-Real-IP`.
 

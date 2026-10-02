@@ -9,7 +9,11 @@ services:
       TZ: Europe/Berlin
       MCP_SECRET: ${MCP_SECRET:-}
       # MCP_ALLOWED_CIDRS: 160.79.104.0/21
-      # TRUSTED_PROXIES: 172.18.0.0/16   # Adresse(n) von Pangolin/Newt
+      # Nur die Adresse des Newt-/Pangolin-Containers als /32, nicht das ganze
+      # Docker-Netz – sonst könnte jeder Container im Netz X-Forwarded-For
+      # fälschen. Adresse: Logzeile „mcp: IP nicht erlaubt … remote=…“ oder
+      # docker inspect (siehe docs/MCP.md).
+      # TRUSTED_PROXIES: 172.18.0.5/32
     volumes:
       - teilen-data:/data
 

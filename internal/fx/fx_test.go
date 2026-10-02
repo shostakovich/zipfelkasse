@@ -67,7 +67,11 @@ func (f *fakeECB) RoundTrip(req *http.Request) (*http.Response, error) {
 	err, status, block := f.err, f.status, f.block
 	f.mu.Unlock()
 	if block != nil {
-		<-block
+		select {
+		case <-block:
+		case <-req.Context().Done():
+			return nil, req.Context().Err()
+		}
 	}
 	if err != nil {
 		return nil, err
@@ -579,10 +583,13 @@ func TestSettingsPage(t *testing.T) {
 		t.Errorf("IDR = %v", r.Rate)
 	}
 	// Tausenderpunkt wie bei Beträgen: „17.000“ = 17000, auch englisch „17,000.5“.
-	for in, want := range map[string]float64{"17.000": 17000, "17,000.5": 17000.5} {
-		rec = do(mux, "POST", "/einstellungen/kurse", url.Values{"waehrung": {"VND"}, "datum": {"2026-09-03"}, "kurs": {in}})
-		if r, _ := st.LookupFXRate(ctx, "VND", domain.FXSourceManual, day("2026-10-01"), time.Time{}); rec.Code != http.StatusSeeOther || r.Rate != want {
-			t.Errorf("VND %q: %d, %v", in, rec.Code, r.Rate)
+	for _, tt := range []struct {
+		in   string
+		want float64
+	}{{"17.000", 17000}, {"17,000.5", 17000.5}} {
+		rec = do(mux, "POST", "/einstellungen/kurse", url.Values{"waehrung": {"VND"}, "datum": {"2026-09-03"}, "kurs": {tt.in}})
+		if r, _ := st.LookupFXRate(ctx, "VND", domain.FXSourceManual, day("2026-10-01"), time.Time{}); rec.Code != http.StatusSeeOther || r.Rate != tt.want {
+			t.Errorf("VND %q: %d, %v", tt.in, rec.Code, r.Rate)
 		}
 	}
 
@@ -644,4 +651,41 @@ func lastActivity(t *testing.T, st *store.Store) string {
 		return ""
 	}
 	return acts[0].Details.Text
+}
+
+// Run kehrt erst zurück, wenn kein EZB-Abruf mehr läuft – main schließt
+// danach den Store.
+func TestRunWaitsForDownloads(t *testing.T) {
+	st := newTestStore(t)
+	s, f := newTestService(t, st)
+	block := make(chan struct{})
+	t.Cleanup(func() { close(block) })
+	f.mu.Lock()
+	f.block = block
+	f.mu.Unlock()
+	ctx, cancel := context.WithCancel(context.Background())
+	runDone := make(chan struct{})
+	go func() { s.Run(ctx); close(runDone) }()
+	deadline := time.Now().Add(2 * time.Second)
+	for f.total() == 0 { // Cache leer: Run lädt sofort
+		if time.Now().After(deadline) {
+			t.Fatal("Run lädt nicht")
+		}
+		time.Sleep(time.Millisecond)
+	}
+	cancel()
+	select {
+	case <-runDone:
+	case <-time.After(2 * time.Second):
+		t.Fatal("Run hängt")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for file, l := range s.loads {
+		select {
+		case <-l.done:
+		default:
+			t.Errorf("Abruf %s läuft nach Run weiter", file)
+		}
+	}
 }
