@@ -357,7 +357,7 @@ func readExpenseForm(r *http.Request, id int64, people []store.Participant, exis
 // toInput validates the form and builds the store input from it. Errors are
 // domain.ValidationError with a German message. If the rate is missing for a
 // foreign currency, it is fetched via d.FX and copied into the form.
-func (h handlers) toInput(r *http.Request, f *expenseForm) (store.ExpenseInput, error) {
+func (h handlers) toInput(r *http.Request, f *expenseForm, existing *store.Expense) (store.ExpenseInput, error) {
 	in := store.ExpenseInput{
 		Title: f.Title, CategoryID: f.Category, PaidBy: f.PaidBy, Notes: f.Notes,
 		IsReimbursement: f.IsReimbursement, SplitMode: f.SplitMode,
@@ -388,21 +388,8 @@ func (h handlers) toInput(r *http.Request, f *expenseForm) (store.ExpenseInput, 
 			return in, invalidf("Der Betrag muss größer als 0 sein.")
 		}
 		in.OriginalCurrency = cur
-		if f.Rate != "" {
-			if in.FXRate, err = domain.ParseRate(f.Rate); err != nil {
-				return in, err
-			}
-			in.FXSource = domain.FXSourceManual
-			if f.RateSource == domain.FXSourceECB {
-				in.FXSource = domain.FXSourceECB
-			}
-		} else {
-			rate, err := h.lookupRate(r, cur, date)
-			if err != nil {
-				return in, err
-			}
-			in.FXRate, in.FXSource = rate.Rate, rate.Source
-			f.Rate, f.RateSource = rateInput(rate.Rate), rate.Source
+		if in.FXRate, in.FXSource, err = h.formRate(r, f, cur, date, existing); err != nil {
+			return in, err
 		}
 		in.AmountCents = domain.ToEURCents(in.OriginalAmountMinor, cur, in.FXRate)
 		if in.AmountCents <= 0 {
@@ -491,6 +478,40 @@ func (h handlers) toInput(r *http.Request, f *expenseForm) (store.ExpenseInput, 
 		}
 	}
 	return in, nil
+}
+
+// formRate returns rate and source for a foreign currency expense:
+//   - no rate in the form: the rate of cur on date via d.FX (copied into the
+//     form);
+//   - a rate marked as ECB (hidden field kurs_quelle, set by expense-form.js):
+//     it is checked against the ECB rate of cur on date, since without JS a
+//     rate fetched for another currency or date stays in the field. A
+//     differing rate is replaced by the looked-up one (copied into the form);
+//     if none is available, the form asks for a manual rate. Saving an
+//     expense with unchanged currency, date and rate keeps its rate without
+//     a lookup, so that a later published rate does not change it;
+//   - any other rate counts as entered by hand.
+func (h handlers) formRate(r *http.Request, f *expenseForm, cur string, date time.Time, existing *store.Expense) (float64, string, error) {
+	if f.Rate != "" {
+		rate, err := domain.ParseRate(f.Rate)
+		if err != nil {
+			return 0, "", err
+		}
+		if f.RateSource != domain.FXSourceECB {
+			return rate, domain.FXSourceManual, nil
+		}
+		if existing != nil && existing.FXSource == domain.FXSourceECB && existing.OriginalCurrency == cur &&
+			existing.Date.Equal(date) && existing.FXRate == rate {
+			return rate, domain.FXSourceECB, nil
+		}
+	}
+	looked, err := h.lookupRate(r, cur, date)
+	if err != nil {
+		f.Rate, f.RateSource = "", ""
+		return 0, "", err
+	}
+	f.Rate, f.RateSource = rateInput(looked.Rate), looked.Source
+	return looked.Rate, looked.Source, nil
 }
 
 // lookupRate fetches the rate via d.FX (may be nil in tests).
@@ -638,7 +659,7 @@ func (h handlers) saveExpense(w http.ResponseWriter, r *http.Request, existing *
 		id = existing.ID
 	}
 	f := readExpenseForm(r, id, people, existing)
-	in, err := h.toInput(r, &f)
+	in, err := h.toInput(r, &f, existing)
 	if err == nil {
 		if existing == nil {
 			_, err = h.d.Store.CreateExpense(ctx, me(r).ID, in)

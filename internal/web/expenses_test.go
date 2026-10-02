@@ -694,3 +694,74 @@ func TestExpenseUpdateRecurringCollision(t *testing.T) {
 		t.Errorf("collision: %d %q", status, errorOf(body))
 	}
 }
+
+// A rate marked as ECB in the form is checked against the ECB rate of the
+// currency and date: without JS, a rate left over from another currency (or
+// date) would otherwise be saved and shown as an ECB rate.
+func TestExpenseStaleECBRate(t *testing.T) {
+	g := newGroup(t, fakeFX{"USD": 1.08, "GBP": 0.85})
+	ctx := context.Background()
+
+	// USD form with the ECB rate, then switched to GBP without JS.
+	v := g.form()
+	v.Set("waehrung", "GBP")
+	v.Set("betrag", "17,00")
+	v.Set("kurs", "1,08")
+	v.Set("kurs_quelle", domain.FXSourceECB)
+	e := g.create(v)
+	if e.OriginalCurrency != "GBP" || e.FXRate != 0.85 || e.FXSource != domain.FXSourceECB || e.AmountCents != 2000 {
+		t.Errorf("stale ECB rate: %+v", e.ExpenseInput)
+	}
+
+	// The matching ECB rate is kept.
+	v.Set("kurs", "0,85")
+	if e := g.create(v); e.FXRate != 0.85 || e.FXSource != domain.FXSourceECB {
+		t.Errorf("matching ECB rate: %+v", e.ExpenseInput)
+	}
+
+	// Without a source, a rate counts as manual and is kept.
+	v.Set("kurs", "1,08")
+	v.Set("kurs_quelle", "")
+	e = g.create(v)
+	if e.FXRate != 1.08 || e.FXSource != domain.FXSourceManual {
+		t.Errorf("manual rate: %+v", e.ExpenseInput)
+	}
+
+	// Editing an expense switched to a currency without an ECB rate: message,
+	// and the stale rate is not offered again.
+	path := "/ausgaben/" + id(e.ID)
+	v.Set("waehrung", "")
+	v.Set("waehrung_andere", "THB")
+	v.Set("kurs", "0,85")
+	v.Set("kurs_quelle", domain.FXSourceECB)
+	status, _, body := g.post(path, v)
+	if status != http.StatusUnprocessableEntity || !strings.Contains(errorOf(body), "Kurs bitte von Hand eintragen") ||
+		!strings.Contains(body, `name="kurs" value=""`) {
+		t.Errorf("no ECB rate: %d %q", status, errorOf(body))
+	}
+	if got, _ := g.d.Store.GetExpense(ctx, e.ID); got.OriginalCurrency != "GBP" {
+		t.Errorf("saved despite error: %+v", got.ExpenseInput)
+	}
+}
+
+// Saving an ECB expense unchanged keeps its rate, even if the ECB rate known
+// today differs (e.g. the rate of the day was published only later).
+func TestExpenseKeepsSavedECBRate(t *testing.T) {
+	fx := fakeFX{"USD": 1.08}
+	g := newGroup(t, fx)
+	v := g.form()
+	v.Set("waehrung", "USD")
+	v.Set("betrag", "10,80")
+	e := g.create(v)
+	fx["USD"] = 1.2
+	v.Set("titel", "Einkauf USA")
+	v.Set("kurs", "1,08")
+	v.Set("kurs_quelle", domain.FXSourceECB)
+	if status, _, body := g.post("/ausgaben/"+id(e.ID), v); status != http.StatusSeeOther {
+		t.Fatalf("save: %d %q", status, errorOf(body))
+	}
+	got, _ := g.d.Store.GetExpense(context.Background(), e.ID)
+	if got.FXRate != 1.08 || got.AmountCents != 1000 || got.FXSource != domain.FXSourceECB || got.Title != "Einkauf USA" {
+		t.Errorf("rate changed: %+v", got.ExpenseInput)
+	}
+}
