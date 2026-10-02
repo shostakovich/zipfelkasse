@@ -2,9 +2,22 @@
 <section class="card">
   <div class="card-header">
     <h1 class="card-title">Aktivität</h1>
+    <p class="card-description">Wer hat wann was angelegt, geändert oder gelöscht.</p>
   </div>
   <div class="card-content">
-    <p class="muted">Hier erscheint bald das Aktivitätsprotokoll.</p>
+    {{- range .Data.Groups}}
+    <div class="activity-group">
+      <h2 class="list-group-label">{{.Label}}</h2>
+      {{- range .Items}}
+      {{template "activity-item" (dict "A" . "Link" true)}}
+      {{- end}}
+    </div>
+    {{- else}}
+    <p class="small">Noch keine Aktivität.</p>
+    {{- end}}
+    {{- with .Data.More}}
+    <div class="list-more"><a class="btn btn-outline" href="{{.}}">Ältere anzeigen</a></div>
+    {{- end}}
   </div>
 </section>
 {{end}}

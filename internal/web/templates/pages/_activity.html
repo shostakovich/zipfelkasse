@@ -1,0 +1,35 @@
+{{/* Ein Eintrag im Aktivitätsprotokoll. Aufruf:
+     {{template "activity-item" (dict "A" $item "Link" true)}} */}}
+{{define "activity-item"}}
+{{- $a := .A}}
+{{- if and .Link $a.ExpenseID}}
+<a class="activity-item" href="/ausgaben/{{$a.ExpenseID}}">
+{{- else}}
+<div class="activity-item">
+{{- end}}
+  <div class="activity-main">
+    <div>
+      {{- if $a.Verb -}}
+      <strong>{{template "activity-actor" $a}}</strong> hat <em>„{{$a.Details.Title}}“</em> {{$a.Verb}}{{if and $a.Details.AmountCents (ne $a.Action "expense_updated")}} <span class="amount muted">({{eur $a.Details.AmountCents}})</span>{{end}}.
+      {{- else -}}
+      <strong>{{template "activity-actor" $a}}</strong>: {{with $a.Details.Text}}{{.}}{{else}}{{$a.Action}}{{end}}
+      {{- end -}}
+    </div>
+    {{- with $a.Details.Changes}}
+    <ul class="changes">
+      {{- range .}}
+      <li>{{.Field}}: <del>{{with .Old}}{{.}}{{else}}–{{end}}</del> → <ins>{{with .New}}{{.}}{{else}}–{{end}}</ins></li>
+      {{- end}}
+    </ul>
+    {{- end}}
+    <div class="activity-time"><time datetime="{{$a.At.Format "2006-01-02T15:04:05Z07:00"}}">{{dateTime $a.At}}</time></div>
+  </div>
+{{- if and .Link $a.ExpenseID}}
+  <span class="expense-chevron">{{icon "chevron-right"}}</span>
+</a>
+{{- else}}
+</div>
+{{- end}}
+{{end}}
+
+{{define "activity-actor"}}{{if .ActorID}}{{.ActorName}}{{else}}Automatisch{{end}}{{end}}

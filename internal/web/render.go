@@ -129,6 +129,13 @@ func (r *Renderer) Funcs() template.FuncMap {
 			return ""
 		},
 		"static": r.staticURL, // "app.css" → "/static/app.css?v=…"
+		"icon": func(name string) template.HTML { // Icon aus static/icons.svg, z. B. {{icon "plus"}}
+			return template.HTML(`<svg class="icon" aria-hidden="true"><use href="` +
+				template.HTMLEscapeString(r.staticURL("icons.svg")+"#"+name) + `"></use></svg>`)
+		},
+		"categoryIcon": categoryIcon, // Kategoriename → Icon-Name für {{icon …}}
+		"minorInput":   minorInput,   // (minor, "USD") → "12,34" (für <input>)
+		"rateInput":    rateInput,    // Kurs 1.0876 → "1,0876" (für <input>)
 		"dict": func(kv ...any) (map[string]any, error) { // für Partials mit mehreren Werten
 			if len(kv)%2 != 0 {
 				return nil, fmt.Errorf("dict: ungerade Anzahl Argumente")
