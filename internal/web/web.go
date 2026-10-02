@@ -5,7 +5,7 @@ import (
 	"io/fs"
 	"net/http"
 	"strconv"
-	"time"
+	"strings"
 
 	"teilen/internal/domain"
 	"teilen/internal/store"
@@ -20,16 +20,38 @@ func Register(mux *http.ServeMux, d Deps) {
 	static, _ := fs.Sub(staticFS, "static")
 	mux.Handle("GET /static/", cacheStatic(http.StripPrefix("/static/", http.FileServerFS(static))))
 	mux.HandleFunc("GET /healthz", h.healthz)
+	mux.HandleFunc("GET /manifest.webmanifest", h.manifest)
+	mux.HandleFunc("GET /sw.js", h.serviceWorker)
+	mux.HandleFunc("GET /favicon.ico", h.favicon)
 
 	mux.HandleFunc("GET /wer", h.whoPage)
 	mux.HandleFunc("POST /wer", h.whoSelect)
 	mux.HandleFunc("POST /wer/neu", h.whoCreate)
 
-	// Platzhalter – werden von Agent A ausgebaut.
 	mux.HandleFunc("GET /{$}", h.home)
-	mux.HandleFunc("GET /salden", h.placeholder("balances.html", "Salden", NavBalances))
-	mux.HandleFunc("GET /aktivitaet", h.placeholder("activity.html", "Aktivität", NavActivity))
-	mux.HandleFunc("GET /einstellungen", h.placeholder("settings.html", "Einstellungen", NavSettings))
+	mux.HandleFunc("GET /ausgaben/neu", h.expenseNew)
+	mux.HandleFunc("POST /ausgaben/neu", h.expenseCreate)
+	mux.HandleFunc("GET /ausgaben/{id}", h.expenseShow)
+	mux.HandleFunc("POST /ausgaben/{id}", h.expenseUpdate)
+	mux.HandleFunc("POST /ausgaben/{id}/loeschen", h.expenseDelete)
+
+	mux.HandleFunc("GET /salden", h.balances)
+	mux.HandleFunc("GET /aktivitaet", h.activity)
+
+	mux.HandleFunc("GET /einstellungen", h.settings)
+	mux.HandleFunc("POST /einstellungen", h.settingsSave)
+	mux.HandleFunc("GET /einstellungen/teilnehmer", h.participants)
+	mux.HandleFunc("POST /einstellungen/teilnehmer", h.participantCreate)
+	mux.HandleFunc("POST /einstellungen/teilnehmer/{id}", h.participantRename)
+	mux.HandleFunc("POST /einstellungen/teilnehmer/{id}/archivieren", h.participantArchive(true))
+	mux.HandleFunc("POST /einstellungen/teilnehmer/{id}/reaktivieren", h.participantArchive(false))
+	mux.HandleFunc("GET /einstellungen/kategorien", h.categories)
+	mux.HandleFunc("POST /einstellungen/kategorien", h.categoryCreate)
+	mux.HandleFunc("POST /einstellungen/kategorien/{id}", h.categoryRename)
+	mux.HandleFunc("POST /einstellungen/kategorien/{id}/archivieren", h.categoryArchive(true))
+	mux.HandleFunc("POST /einstellungen/kategorien/{id}/reaktivieren", h.categoryArchive(false))
+	mux.HandleFunc("POST /einstellungen/kategorien/{id}/hoch", h.categoryMove(true))
+	mux.HandleFunc("POST /einstellungen/kategorien/{id}/runter", h.categoryMove(false))
 }
 
 type handlers struct{ d Deps }
@@ -104,31 +126,44 @@ func (h handlers) whoCreate(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, ret, http.StatusSeeOther)
 }
 
-type homeData struct {
-	Balance int64
-	Today   time.Time
-}
-
-func (h handlers) home(w http.ResponseWriter, r *http.Request) {
-	me, _ := Me(r.Context())
-	balances, err := h.d.Store.Balances(r.Context())
-	if err != nil {
-		h.serverError(w, r, err)
-		return
-	}
-	h.d.Render.Page(w, r, http.StatusOK, "home.html", Page{
-		Title: "Ausgaben", Nav: NavExpenses,
-		Data: homeData{Balance: balances[me.ID], Today: h.d.Today()},
-	})
-}
-
-func (h handlers) placeholder(tmpl, title, nav string) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		h.d.Render.Page(w, r, http.StatusOK, tmpl, Page{Title: title, Nav: nav})
-	}
-}
-
 func (h handlers) serverError(w http.ResponseWriter, r *http.Request, err error) {
 	h.d.Log.Error("request", "method", r.Method, "path", r.URL.Path, "err", err)
 	h.d.Render.Error(w, r, http.StatusInternalServerError, "Da ist etwas schiefgegangen.")
+}
+
+func (h handlers) notFound(w http.ResponseWriter, r *http.Request, msg string) {
+	h.d.Render.Error(w, r, http.StatusNotFound, msg)
+}
+
+// validationMsg liefert die Meldung eines domain.ValidationError.
+func validationMsg(err error) (string, bool) {
+	var ve domain.ValidationError
+	if errors.As(err, &ve) {
+		return ve.Msg, true
+	}
+	return "", false
+}
+
+// pathID liest den Pfadparameter {id}; ungültig → 0.
+func pathID(r *http.Request) int64 {
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil || id <= 0 {
+		return 0
+	}
+	return id
+}
+
+// formID liest eine ID aus einem Formular- oder Query-Wert; ungültig → 0.
+func formID(v string) int64 {
+	id, err := strconv.ParseInt(strings.TrimSpace(v), 10, 64)
+	if err != nil || id <= 0 {
+		return 0
+	}
+	return id
+}
+
+// me liefert die aktuelle Person (hinter der Middleware immer gesetzt).
+func me(r *http.Request) store.Participant {
+	p, _ := Me(r.Context())
+	return p
 }

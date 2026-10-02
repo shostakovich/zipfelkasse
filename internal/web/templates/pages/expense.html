@@ -1,0 +1,196 @@
+{{define "content"}}
+{{- $f := .Data.Form}}
+{{- $e := .Data.Expense}}
+{{- $deleted := and $e $e.Deleted}}
+{{- $cur := $f.CurrencyCode}}
+<div class="stack">
+<form class="expense-form stack" id="expense-form" method="post"
+  action="{{if $f.ID}}/ausgaben/{{$f.ID}}{{else}}/ausgaben/neu{{end}}">
+<fieldset class="stack"{{if $deleted}} disabled{{end}}>
+  <section class="card">
+    <div class="card-header">
+      <h1 class="card-title">
+        {{- if $deleted}}Gelöschte Ausgabe{{else if $f.ID}}Ausgabe bearbeiten{{else}}Ausgabe hinzufügen{{end -}}
+      </h1>
+      {{- with $e}}
+      <p class="card-description">
+        Angelegt am {{dateTime .CreatedAt}}{{if not (.UpdatedAt.Equal .CreatedAt)}} · geändert am {{dateTime .UpdatedAt}}{{end}}
+        {{- if .RecurringID}} · <a class="badge badge-muted" href="/einstellungen/wiederkehrend">{{icon "repeat"}} Wiederkehrend</a>{{end}}
+      </p>
+      {{- end}}
+    </div>
+    <div class="card-content">
+      {{- if $deleted}}
+      <p class="alert alert-destructive">Diese Ausgabe wurde am {{dateTime $e.DeletedAt}} gelöscht und zählt nicht mehr zu den Salden.</p>
+      {{- end}}
+      <div class="form-grid">
+        <div class="field">
+          <label for="titel">Titel</label>
+          <input id="titel" name="titel" value="{{$f.Title}}" required maxlength="200" placeholder="z. B. Einkauf Wochenmarkt" autocomplete="off" enterkeyhint="next">
+        </div>
+        <div class="field">
+          <label for="datum">Datum</label>
+          <input id="datum" name="datum" type="date" value="{{$f.Date}}" required>
+        </div>
+        <div class="field">
+          <label for="kategorie">Kategorie</label>
+          <select id="kategorie" name="kategorie">
+            <option value="">Keine Kategorie</option>
+            {{- range .Data.Categories}}
+            <option value="{{.ID}}"{{if eq .ID $f.Category}} selected{{end}}>{{.Name}}{{if .Archived}} (archiviert){{end}}</option>
+            {{- end}}
+          </select>
+        </div>
+        <div class="field">
+          <label for="bezahlt_von"><span class="not-reimbursement">Bezahlt von</span><span class="only-reimbursement">Zurückgezahlt von</span></label>
+          <select id="bezahlt_von" name="bezahlt_von" required>
+            {{- range .Data.Payers}}
+            <option value="{{.ID}}"{{if eq .ID $f.PaidBy}} selected{{end}}>{{.Name}}{{if .Archived}} (archiviert){{end}}</option>
+            {{- end}}
+          </select>
+        </div>
+        <div class="field">
+          <label for="waehrung">Währung</label>
+          <select id="waehrung" name="waehrung">
+            {{- range .Data.Currencies}}
+            <option value="{{.}}"{{if eq . $f.Currency}} selected{{end}}>{{.}}{{if eq . "EUR"}} – Euro{{end}}</option>
+            {{- end}}
+            <option value=""{{if eq $f.Currency ""}} selected{{end}}>Andere …</option>
+          </select>
+          <div class="currency-other field">
+            <label for="waehrung_andere" class="sr-only">Andere Währung (ISO-Code)</label>
+            <input id="waehrung_andere" name="waehrung_andere" value="{{$f.CurrencyOther}}" maxlength="3" placeholder="ISO-Code, z. B. THB" autocapitalize="characters" autocomplete="off" pattern="[A-Za-z]{3}">
+          </div>
+        </div>
+        <div class="field">
+          <label for="betrag">Betrag</label>
+          <div class="input-unit">
+            <input id="betrag" name="betrag" value="{{$f.Amount}}" required inputmode="decimal" placeholder="0,00" autocomplete="off">
+            <span class="unit" id="betrag-einheit">{{if eq $cur "EUR"}}€{{else}}{{$cur}}{{end}}</span>
+          </div>
+        </div>
+
+        <div class="fx-only fx-box span-2">
+          <div class="field">
+            <label for="kurs">Wechselkurs</label>
+            <div class="input-unit">
+              <span class="unit">1 € =</span>
+              <input id="kurs" name="kurs" value="{{$f.Rate}}" inputmode="decimal" placeholder="automatisch" autocomplete="off">
+              <span class="unit" id="kurs-einheit">{{if ne $cur "EUR"}}{{$cur}}{{end}}</span>
+            </div>
+            <input type="hidden" id="kurs_quelle" name="kurs_quelle" value="{{$f.RateSource}}">
+            <p class="help" id="kurs-hinweis" aria-live="polite">
+              {{- if eq $f.RateSource "manuell"}}Von Hand eingetragener Kurs.
+              {{- else if eq $f.RateSource "ezb"}}Referenzkurs der EZB.
+              {{- else}}Leer lassen: Der EZB-Kurs vom Ausgabedatum wird beim Speichern eingesetzt. Für den echten Kartenkurs einfach überschreiben.{{end -}}
+            </p>
+            <button class="btn btn-link btn-sm" type="button" id="kurs-laden" hidden>{{icon "refresh"}} EZB-Kurs laden</button>
+          </div>
+          <div class="field fx-preview">
+            <span class="label">Umgerechnet in Euro</span>
+            <p><strong id="eur-vorschau">{{if $f.EURCents}}{{eur $f.EURCents}}{{else}}–{{end}}</strong></p>
+            <p class="help">Gespeichert und aufgeteilt wird der Euro-Betrag.</p>
+          </div>
+        </div>
+
+        <div class="field span-2">
+          <label class="check">
+            <input type="checkbox" id="rueckzahlung" name="rueckzahlung" value="1"{{if $f.IsReimbursement}} checked{{end}}>
+            Das ist eine Rückzahlung
+          </label>
+        </div>
+        <div class="field span-2">
+          <label for="notiz">Notiz</label>
+          <textarea id="notiz" name="notiz" rows="2" maxlength="2000">{{$f.Notes}}</textarea>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="card" id="aufteilung-karte">
+    <div class="card-header">
+      <div class="split-head">
+        <h2 class="card-title"><span class="not-reimbursement">Für wen?</span><span class="only-reimbursement">An wen?</span></h2>
+        <button class="btn btn-link btn-sm not-reimbursement" type="button" id="alle-auswaehlen" hidden>Alle auswählen</button>
+      </div>
+      <p class="card-description">
+        <span class="not-reimbursement">Wähle, für wen bezahlt wurde.</span>
+        <span class="only-reimbursement">Wähle genau eine Person, die das Geld bekommen hat.</span>
+      </p>
+    </div>
+    <div class="card-content">
+      <div class="split-rows" id="split-rows" data-currency="{{$cur}}">
+        {{- range $f.Rows}}
+        <div class="split-row" data-id="{{.ID}}">
+          <label class="check">
+            <input type="checkbox" name="teil" value="{{.ID}}"{{if .Checked}} checked{{end}}>
+            <span>{{.Name}}{{if .Archived}} <span class="muted">(archiviert)</span>{{end}}</span>
+            <span class="split-share" data-share>{{if and .Checked .Cents}}{{eur .Cents}}{{end}}</span>
+          </label>
+          <div class="split-weight">
+            <label class="sr-only" for="wert_{{.ID}}">Wert für {{.Name}}</label>
+            <input id="wert_{{.ID}}" name="wert_{{.ID}}" value="{{.Value}}" inputmode="decimal" autocomplete="off">
+            <span class="unit" data-unit>
+              {{- if eq $f.SplitMode "shares"}}Anteile{{else if eq $f.SplitMode "percent"}}%{{else if eq $cur "EUR"}}€{{else}}{{$cur}}{{end -}}
+            </span>
+          </div>
+        </div>
+        {{- end}}
+      </div>
+      <p class="split-sum not-reimbursement" id="split-summe" aria-live="polite"></p>
+
+      <details class="disclosure not-reimbursement"{{if ne $f.SplitMode "equal"}} open{{end}}>
+        <summary>Weitere Aufteilungsoptionen …</summary>
+        <div class="field">
+          <label for="aufteilung">Aufteilung</label>
+          <select id="aufteilung" name="aufteilung">
+            {{- range .Data.SplitModes}}
+            <option value="{{.}}"{{if eq . $f.SplitMode}} selected{{end}}>{{.Label}}</option>
+            {{- end}}
+          </select>
+          <p class="help">Nach Anteilen: z. B. 2 : 1. Nach Prozent: zusammen 100 %. Nach Beträgen: zusammen der Gesamtbetrag{{if ne $cur "EUR"}} in {{$cur}}{{end}}.</p>
+        </div>
+      </details>
+    </div>
+  </section>
+
+  {{- if not $deleted}}
+  <div class="actions">
+    <button class="btn btn-primary" type="submit">{{icon "save"}} {{if $f.ID}}Speichern{{else}}Anlegen{{end}}</button>
+    {{- if $f.ID}}
+    <button class="btn btn-destructive" type="submit" formaction="/ausgaben/{{$f.ID}}/loeschen" formnovalidate
+      data-confirm="Diese Ausgabe wirklich löschen? Sie verschwindet aus Liste und Salden; im Aktivitätsprotokoll bleibt sie sichtbar.">{{icon "trash"}} Löschen</button>
+    {{- end}}
+    <a class="btn btn-ghost" href="/">Abbrechen</a>
+  </div>
+  {{- end}}
+</fieldset>
+</form>
+
+{{- with $e}}
+<section class="card">
+  <div class="card-header">
+    <h2 class="card-title">Verlauf</h2>
+    {{- if not $deleted}}
+    <p class="card-description">
+      {{- if .RecurringID}}
+      Diese Ausgabe wird automatisch wiederholt. <a href="/einstellungen/wiederkehrend">Wiederkehrende Ausgaben verwalten</a>
+      {{- else}}
+      <a href="/einstellungen/wiederkehrend/neu?ausgabe={{.ID}}">{{icon "repeat"}} Als wiederkehrend einrichten</a>
+      {{- end}}
+    </p>
+    {{- end}}
+  </div>
+  <div class="card-content">
+    {{- range $.Data.History}}
+    {{template "activity-item" (dict "A" . "Link" false)}}
+    {{- else}}
+    <p class="muted small">Noch keine Einträge.</p>
+    {{- end}}
+  </div>
+</section>
+{{- end}}
+</div>
+{{end}}
+
+{{define "scripts"}}<script src="{{static "expense-form.js"}}" defer></script>{{end}}

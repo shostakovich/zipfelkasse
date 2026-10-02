@@ -1,0 +1,66 @@
+{{define "content"}}
+<div class="stack">
+  <section class="card">
+    <div class="card-header">
+      <h1 class="card-title">Teilnehmer</h1>
+      <p class="card-description">Personen umbenennen oder archivieren. Archivierte Personen stehen bei neuen Ausgaben nicht mehr zur Wahl; ihre alten Ausgaben bleiben erhalten.</p>
+    </div>
+    <div class="card-content">
+      <ul class="rows">
+        {{- range .Data.Active}}
+        <li id="person-{{.ID}}">
+          <form class="inline-form" method="post" action="/einstellungen/teilnehmer/{{.ID}}">
+            <label class="sr-only" for="name-{{.ID}}">Name</label>
+            <input id="name-{{.ID}}" name="name" value="{{.Name}}" required maxlength="60">
+            <button class="btn btn-outline btn-icon" type="submit" title="Umbenennen" aria-label="{{.Name}} umbenennen">{{icon "save"}}</button>
+          </form>
+          <form method="post" action="/einstellungen/teilnehmer/{{.ID}}/archivieren">
+            <button class="btn btn-ghost btn-icon" type="submit" title="Archivieren" aria-label="{{.Name}} archivieren"
+              data-confirm="{{.Name}} archivieren?">{{icon "archive"}}</button>
+          </form>
+          <p class="row-meta">
+            {{.Expenses}} {{if eq .Expenses 1}}Ausgabe{{else}}Ausgaben{{end}} · Saldo <span class="amount {{signClass .Balance}}">{{eur .Balance}}</span>
+            {{- if and $.Me (eq $.Me.ID .ID)}} · <strong>das bist du</strong>{{end}}
+          </p>
+        </li>
+        {{- end}}
+      </ul>
+    </div>
+  </section>
+
+  <section class="card">
+    <div class="card-header">
+      <h2 class="card-title">Person hinzufügen</h2>
+    </div>
+    <div class="card-content">
+      <form method="post" action="/einstellungen/teilnehmer" class="inline-form">
+        <label class="sr-only" for="neu-name">Name</label>
+        <input id="neu-name" name="name" value="{{.Data.Name}}" required maxlength="60" placeholder="Name" autocomplete="off">
+        <button class="btn btn-primary" type="submit">{{icon "plus"}} Hinzufügen</button>
+      </form>
+    </div>
+  </section>
+
+  {{- with .Data.Archived}}
+  <section class="card">
+    <div class="card-header">
+      <h2 class="card-title">Archiviert</h2>
+    </div>
+    <div class="card-content">
+      <ul class="rows">
+        {{- range .}}
+        <li id="person-{{.ID}}">
+          <span class="grow">{{.Name}}</span>
+          <form method="post" action="/einstellungen/teilnehmer/{{.ID}}/reaktivieren">
+            <button class="btn btn-outline btn-sm" type="submit">{{icon "undo"}} Zurückholen</button>
+          </form>
+          <p class="row-meta">{{.Expenses}} {{if eq .Expenses 1}}Ausgabe{{else}}Ausgaben{{end}}</p>
+        </li>
+        {{- end}}
+      </ul>
+    </div>
+  </section>
+  {{- end}}
+  <p class="small"><a href="/einstellungen">← Zurück zu den Einstellungen</a></p>
+</div>
+{{end}}

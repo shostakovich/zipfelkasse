@@ -6,7 +6,14 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <title>{{with .Title}}{{.}} · {{end}}{{.GroupName}}</title>
   <meta name="color-scheme" content="light dark">
+  <meta name="theme-color" content="#fcfdfe" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#0c0a09" media="(prefers-color-scheme: dark)">
+  <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="icon" href="{{static "icons/favicon-32.png"}}" type="image/png" sizes="32x32">
+  <link rel="apple-touch-icon" href="{{static "icons/apple-touch-icon.png"}}">
+  <meta name="apple-mobile-web-app-title" content="{{.GroupName}}">
   <link rel="stylesheet" href="{{static "app.css"}}">
+  <script src="{{static "app.js"}}" defer></script>
   {{- block "head" .}}{{end}}
 </head>
 <body>
@@ -17,17 +24,17 @@
       <p class="whoami">Du bist <strong>{{.Name}}</strong> · <a href="/wer">wechseln</a></p>
       {{- end}}
     </div>
+    {{- if .Me}}
+    <div class="container">
+      <nav class="tabs" aria-label="Hauptnavigation">
+        <a href="/"{{if eq .Nav "ausgaben"}} aria-current="page"{{end}}>{{icon "receipt"}}<span>Ausgaben</span></a>
+        <a href="/salden"{{if eq .Nav "salden"}} aria-current="page"{{end}}>{{icon "scale"}}<span>Salden</span></a>
+        <a href="/aktivitaet"{{if eq .Nav "aktivitaet"}} aria-current="page"{{end}}>{{icon "activity"}}<span>Aktivität</span></a>
+        <a href="/einstellungen"{{if eq .Nav "einstellungen"}} aria-current="page"{{end}}>{{icon "settings"}}<span>Einstellungen</span></a>
+      </nav>
+    </div>
+    {{- end}}
   </header>
-  {{- if .Me}}
-  <div class="container">
-  <nav class="tabs" aria-label="Hauptnavigation">
-    <a href="/"{{if eq .Nav "ausgaben"}} aria-current="page"{{end}}>Ausgaben</a>
-    <a href="/salden"{{if eq .Nav "salden"}} aria-current="page"{{end}}>Salden</a>
-    <a href="/aktivitaet"{{if eq .Nav "aktivitaet"}} aria-current="page"{{end}}>Aktivität</a>
-    <a href="/einstellungen"{{if eq .Nav "einstellungen"}} aria-current="page"{{end}}>Einstellungen</a>
-  </nav>
-  </div>
-  {{- end}}
   <main class="container main">
     {{- with .Flash}}
     <p class="alert alert-success" role="status">{{.}}</p>

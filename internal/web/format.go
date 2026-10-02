@@ -1,0 +1,206 @@
+package web
+
+import (
+	"math"
+	"math/big"
+	"strconv"
+	"strings"
+	"time"
+
+	"teilen/internal/domain"
+)
+
+// categoryIcon ordnet einem Kategorienamen ein Icon aus static/icons.svg zu.
+// Kategorien sind frei benennbar, daher wird nach Stichwörtern gesucht.
+func categoryIcon(name string) string {
+	n := strings.ToLower(name)
+	for _, m := range categoryIcons {
+		for _, kw := range m.keywords {
+			if strings.Contains(n, kw) {
+				return m.icon
+			}
+		}
+	}
+	return "tag"
+}
+
+var categoryIcons = []struct {
+	icon     string
+	keywords []string
+}{
+	{"cart", []string{"lebensmittel", "einkauf", "supermarkt", "drogerie"}},
+	{"utensils", []string{"restaurant", "essen", "café", "cafe", "gastro", "lieferdienst"}},
+	{"key", []string{"miete", "wohnung"}},
+	{"zap", []string{"nebenkosten", "strom", "wasser", "heizung", "energie"}},
+	{"home", []string{"haushalt", "möbel", "garten", "reparatur"}},
+	{"car", []string{"transport", "auto", "bahn", "tank", "taxi", "parken", "fahrt", "öpnv"}},
+	{"plane", []string{"reise", "urlaub", "hotel", "flug"}},
+	{"ticket", []string{"freizeit", "kino", "konzert", "sport", "ausflug", "hobby", "unterhaltung"}},
+	{"heart", []string{"gesundheit", "apotheke", "arzt", "medizin"}},
+	{"gift", []string{"geschenk", "spende"}},
+	{"shirt", []string{"kleidung", "mode", "schuhe"}},
+	{"baby", []string{"kind", "baby", "kita"}},
+	{"paw", []string{"haustier", "tier"}},
+	{"graduation", []string{"bildung", "schule", "kurs", "buch", "bücher"}},
+	{"phone", []string{"handy", "internet", "telefon", "abo", "streaming"}},
+	{"shield", []string{"versicherung"}},
+	{"receipt", []string{"sonstig", "allgemein"}},
+}
+
+// minorInput formatiert einen Betrag in der kleinsten Einheit der Währung für
+// ein Eingabefeld: (123456, "USD") → "1234,56", (500, "JPY") → "500".
+func minorInput(minor int64, currency string) string {
+	dec := domain.CurrencyDecimals(currency)
+	if dec == 2 {
+		return domain.FormatCentsInput(minor)
+	}
+	neg := minor < 0
+	if neg {
+		minor = -minor
+	}
+	s := strconv.FormatInt(minor, 10)
+	if dec > 0 {
+		if len(s) <= dec {
+			s = strings.Repeat("0", dec-len(s)+1) + s
+		}
+		s = s[:len(s)-dec] + "," + s[len(s)-dec:]
+	}
+	if neg {
+		s = "-" + s
+	}
+	return s
+}
+
+// rateInput formatiert einen Wechselkurs für ein Eingabefeld (Komma als
+// Dezimaltrenner, ohne überflüssige Nullen). 0 → "".
+func rateInput(rate float64) string {
+	if rate <= 0 {
+		return ""
+	}
+	return strings.Replace(strconv.FormatFloat(rate, 'f', -1, 64), ".", ",", 1)
+}
+
+// parseRate liest einen Wechselkurs wie „1,0876“ oder „1.0876“.
+func parseRate(s string) (float64, error) {
+	s = strings.ReplaceAll(strings.TrimSpace(s), " ", "")
+	if strings.Count(s, ",") == 1 && !strings.Contains(s, ".") {
+		s = strings.Replace(s, ",", ".", 1)
+	}
+	v, err := strconv.ParseFloat(s, 64)
+	if err != nil || v <= 0 || math.IsInf(v, 0) || math.IsNaN(v) {
+		return 0, domain.ValidationError{Msg: "Ungültiger Wechselkurs „" + s + "“."}
+	}
+	return v, nil
+}
+
+// allocate verteilt total proportional zu weights (größter Rest, bei
+// Gleichstand der kleinere Index; Summe der Gewichte > 0). Wird für
+// „Nach Beträgen“ in Fremdwährung gebraucht: Die Beträge je Person stehen in
+// der Fremdwährung, gespeichert werden Euro-Cent, die exakt aufgehen müssen.
+// Rechnet mit big.Int, damit große Beträge nicht überlaufen.
+func allocate(total int64, weights []int64) []int64 {
+	sum := new(big.Int)
+	for _, w := range weights {
+		sum.Add(sum, big.NewInt(w))
+	}
+	out := make([]int64, len(weights))
+	if sum.Sign() <= 0 {
+		return out
+	}
+	rems := make([]*big.Int, len(weights))
+	var allocated int64
+	for i, w := range weights {
+		q, r := new(big.Int).QuoRem(new(big.Int).Mul(big.NewInt(total), big.NewInt(w)), sum, new(big.Int))
+		out[i], rems[i] = q.Int64(), r
+		allocated += out[i]
+	}
+	for allocated < total {
+		best := -1
+		for i, r := range rems {
+			if r.Sign() > 0 && (best < 0 || r.Cmp(rems[best]) > 0) {
+				best = i
+			}
+		}
+		if best < 0 {
+			break
+		}
+		out[best]++
+		rems[best] = new(big.Int)
+		allocated++
+	}
+	return out
+}
+
+// Zeiträume der Ausgabenliste wie bei Spliit (Woche beginnt Montag).
+const (
+	periodUpcoming = iota
+	periodThisWeek
+	periodEarlierThisMonth
+	periodLastMonth
+	periodEarlierThisYear
+	periodLastYear
+	periodOlder
+)
+
+var periodLabels = []string{
+	"Bevorstehend", "Diese Woche", "Früher in diesem Monat", "Letzter Monat",
+	"Früher in diesem Jahr", "Letztes Jahr", "Älter",
+}
+
+// expensePeriod ordnet ein Ausgabedatum relativ zu today (beides
+// Kalenderdaten, 00:00 UTC) einem Zeitraum zu.
+func expensePeriod(d, today time.Time) int {
+	lastMonth := today.AddDate(0, 0, -today.Day()+1).AddDate(0, -1, 0)
+	switch {
+	case d.After(today):
+		return periodUpcoming
+	case !d.Before(weekStart(today)):
+		return periodThisWeek
+	case d.Year() == today.Year() && d.Month() == today.Month():
+		return periodEarlierThisMonth
+	case d.Year() == lastMonth.Year() && d.Month() == lastMonth.Month():
+		return periodLastMonth
+	case d.Year() == today.Year():
+		return periodEarlierThisYear
+	case d.Year() == today.Year()-1:
+		return periodLastYear
+	}
+	return periodOlder
+}
+
+// weekStart liefert den Montag der Woche von d.
+func weekStart(d time.Time) time.Time {
+	return d.AddDate(0, 0, -((int(d.Weekday()) + 6) % 7))
+}
+
+// Zeiträume der Aktivitätsliste wie bei Spliit.
+var activityPeriodLabels = []string{
+	"Heute", "Gestern", "Früher in dieser Woche", "Letzte Woche", "Früher in diesem Monat",
+	"Letzter Monat", "Früher in diesem Jahr", "Letztes Jahr", "Älter",
+}
+
+// activityPeriod ordnet ein Kalenderdatum relativ zu today einem Eintrag aus
+// activityPeriodLabels zu.
+func activityPeriod(d, today time.Time) int {
+	lastMonth := today.AddDate(0, 0, -today.Day()+1).AddDate(0, -1, 0)
+	ws := weekStart(today)
+	switch {
+	case !d.Before(today):
+		return 0
+	case d.Equal(today.AddDate(0, 0, -1)):
+		return 1
+	case !d.Before(ws):
+		return 2
+	case !d.Before(ws.AddDate(0, 0, -7)):
+		return 3
+	case d.Year() == today.Year() && d.Month() == today.Month():
+		return 4
+	case d.Year() == lastMonth.Year() && d.Month() == lastMonth.Month():
+		return 5
+	case d.Year() == today.Year():
+		return 6
+	case d.Year() == today.Year()-1:
+		return 7
+	}
+	return 8
+}
