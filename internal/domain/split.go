@@ -4,6 +4,8 @@ import (
 	"cmp"
 	"math/bits"
 	"slices"
+	"strconv"
+	"strings"
 )
 
 // SplitMode determines how an expense is divided among the participants and
@@ -46,6 +48,38 @@ func (m SplitMode) Label() string {
 		return "Nach Beträgen"
 	}
 	return string(m)
+}
+
+// ParseWeight parses a person's value for mode as Part.Weight: shares as an
+// integer, percent as basis points, amount in the smallest unit of currency;
+// 0 for equal.
+func ParseWeight(mode SplitMode, currency, v string) (int64, error) {
+	switch mode {
+	case SplitShares:
+		w, err := strconv.ParseInt(strings.TrimSpace(v), 10, 64)
+		if err != nil {
+			return 0, invalid("Anteile müssen ganze Zahlen sein („%s“).", v)
+		}
+		return w, nil
+	case SplitPercent:
+		return ParseBasisPoints(v)
+	case SplitAmount:
+		return ParseMinor(v, WeightDecimals(mode, currency))
+	}
+	return 0, nil
+}
+
+// WeightDecimals is the number of decimal places a value for mode has before
+// it becomes Part.Weight (see ParseWeight): 0 for shares and equal, 2 for
+// percent (basis points), the currency's decimals for amount.
+func WeightDecimals(mode SplitMode, currency string) int {
+	switch mode {
+	case SplitPercent:
+		return 2
+	case SplitAmount:
+		return CurrencyDecimals(currency)
+	}
+	return 0
 }
 
 // Part is an input to Split: who takes part, with which weight.
