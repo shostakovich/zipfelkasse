@@ -292,6 +292,33 @@ func TestCreateExpenseValidation(t *testing.T) {
 	}
 }
 
+// Archiving checks the balance in the same transaction: a person with an
+// open balance cannot be archived (deleted expenses do not count).
+func TestArchiveParticipantWithBalance(t *testing.T) {
+	f := newFixture(t)
+	ctx := context.Background()
+	id := f.mustCreate(t, f.equal("Einkauf", 1000, "2026-08-01", f.anna, f.anna, f.ben))
+	err := f.s.SetParticipantArchived(ctx, f.ben, true)
+	if !isValidation(err) || !strings.Contains(err.Error(), "Ben hat noch einen Saldo von -5,00 €") {
+		t.Errorf("Ben with balance: %v", err)
+	}
+	if p, _ := f.s.GetParticipant(ctx, f.ben); p.Archived() {
+		t.Error("archived despite balance")
+	}
+	if err := f.s.SetParticipantArchived(ctx, f.cleo, true); err != nil {
+		t.Errorf("Cleo without balance: %v", err)
+	}
+	if err := f.s.SetParticipantArchived(ctx, 999, true); !errors.Is(err, ErrNotFound) {
+		t.Errorf("unknown: %v", err)
+	}
+	if err := f.s.DeleteExpense(ctx, f.anna, id); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.s.SetParticipantArchived(ctx, f.ben, true); err != nil {
+		t.Errorf("Ben after delete: %v", err)
+	}
+}
+
 // Notes up to 2000 characters as in the form; line breaks arrive as CR LF but
 // count as one character there.
 func TestNotesLength(t *testing.T) {

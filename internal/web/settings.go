@@ -6,7 +6,6 @@ import (
 	"net/http"
 	"strconv"
 
-	"github.com/shostakovich/zipfelkasse/internal/domain"
 	"github.com/shostakovich/zipfelkasse/internal/store"
 )
 
@@ -131,27 +130,23 @@ func (h handlers) participantRename(w http.ResponseWriter, r *http.Request) {
 }
 
 // participantArchive archives a person or brings them back. A person with an
-// open balance cannot be archived; otherwise they would disappear from forms
-// while money is still owed.
+// open balance cannot be archived (the store checks this).
 func (h handlers) participantArchive(archive bool) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		p, ok := h.loadParticipant(w, r)
 		if !ok {
 			return
 		}
-		if archive {
-			balances, err := h.d.Store.Balances(r.Context())
-			if err != nil {
-				h.serverError(w, r, err)
-				return
-			}
-			if b := balances[p.ID]; b != 0 {
-				h.renderParticipants(w, r, http.StatusUnprocessableEntity, "",
-					fmt.Sprintf("%s hat noch einen Saldo von %s. Bitte erst ausgleichen, dann archivieren.", p.Name, domain.FormatCents(b)))
-				return
-			}
+		err := h.d.Store.SetParticipantArchived(r.Context(), p.ID, archive)
+		if msg, ok := validationMsg(err); ok {
+			h.renderParticipants(w, r, http.StatusUnprocessableEntity, "", msg)
+			return
 		}
-		if err := h.d.Store.SetParticipantArchived(r.Context(), p.ID, archive); err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			h.notFound(w, r, "Person nicht gefunden.")
+			return
+		}
+		if err != nil {
 			h.serverError(w, r, err)
 			return
 		}

@@ -5,6 +5,8 @@ import (
 	"database/sql"
 	"errors"
 	"time"
+
+	"github.com/shostakovich/zipfelkasse/internal/domain"
 )
 
 // Participant is a person in the group. People are never deleted, only
@@ -92,14 +94,36 @@ func (s *Store) RenameParticipant(ctx context.Context, id int64, name string) er
 	return checkAffected(res, err)
 }
 
-// SetParticipantArchived archives or restores a person.
+// SetParticipantArchived archives or restores a person. A person with an open
+// balance cannot be archived (domain.ValidationError); otherwise they would
+// disappear from forms while money is still owed. Check and archiving run in
+// one transaction, so that no expense can come in between.
 func (s *Store) SetParticipantArchived(ctx context.Context, id int64, archived bool) error {
-	var v any
-	if archived {
-		v = s.nowString()
+	if !archived {
+		res, err := s.db.ExecContext(ctx, "UPDATE participants SET archived_at = NULL WHERE id = ?", id)
+		return checkAffected(res, err)
 	}
-	res, err := s.db.ExecContext(ctx, "UPDATE participants SET archived_at = ? WHERE id = ?", v, id)
-	return checkAffected(res, err)
+	return s.inTx(ctx, func(tx *sql.Tx) error {
+		p, err := scanParticipant(tx.QueryRowContext(ctx, "SELECT "+participantCols+" FROM participants WHERE id = ?", id))
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrNotFound
+		}
+		if err != nil {
+			return err
+		}
+		var balance int64
+		if err := tx.QueryRowContext(ctx, `SELECT
+			(SELECT coalesce(sum(amount_cents), 0) FROM expenses WHERE paid_by = ?1 AND deleted_at IS NULL) -
+			(SELECT coalesce(sum(x.amount_cents), 0) FROM expense_shares x JOIN expenses e ON e.id = x.expense_id
+				WHERE x.participant_id = ?1 AND e.deleted_at IS NULL)`, id).Scan(&balance); err != nil {
+			return err
+		}
+		if balance != 0 {
+			return invalid("%s hat noch einen Saldo von %s. Bitte erst ausgleichen, dann archivieren.", p.Name, domain.FormatCents(balance))
+		}
+		res, err := tx.ExecContext(ctx, "UPDATE participants SET archived_at = ? WHERE id = ?", s.nowString(), id)
+		return checkAffected(res, err)
+	})
 }
 
 func checkAffected(res sql.Result, err error) error {
