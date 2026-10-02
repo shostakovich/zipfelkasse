@@ -49,7 +49,7 @@ func isPublic(p string) bool {
 	case "/wer", "/wer/neu", "/healthz", "/manifest.webmanifest", "/sw.js", "/favicon.ico":
 		return true
 	}
-	return strings.HasPrefix(p, "/static/") || strings.HasPrefix(p, "/mcp/")
+	return strings.HasPrefix(p, "/static/")
 }
 
 // identity reads the cookie, puts the person into the context and sends
@@ -102,9 +102,10 @@ func isUnsafeRune(r rune) bool {
 	return r == '\\' || unicode.IsControl(r)
 }
 
-// securityHeaders sets standard headers. CSP: scripts only from /static (no
-// inline scripts!), inline styles are allowed.
-func securityHeaders(next http.Handler) http.Handler {
+// SecurityHeaders sets standard headers. CSP: scripts only from /static (no
+// inline scripts!), inline styles are allowed. Part of Wrap; exported for
+// handlers that main mounts outside Wrap.
+func SecurityHeaders(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		h := w.Header()
 		h.Set("X-Content-Type-Options", "nosniff")
@@ -116,20 +117,19 @@ func securityHeaders(next http.Handler) http.Handler {
 }
 
 // Wrap wraps the shared middlewares (security headers, body limit, CSRF
-// protection, identity) around the complete mux. main calls it exactly once.
+// protection, identity) around the mux of the browser app. main calls it
+// exactly once.
 func Wrap(d Deps, h http.Handler) http.Handler {
-	return securityHeaders(limitBody(d, crossOrigin(d, identity(d.Store, h))))
+	return SecurityHeaders(limitBody(d, crossOrigin(d, identity(d.Store, h))))
 }
 
-// maxBodyBytes limits request bodies (forms are a few KB). The same as the
-// MCP limit (mcp.maxBody).
+// maxBodyBytes limits request bodies (forms are a few KB).
 const maxBodyBytes = 1 << 20
 
 // limitBody rejects request bodies larger than maxBodyBytes with 413. Form
 // bodies without Content-Length are parsed here already, so that an oversized
 // one also yields 413 instead of an empty form (r.FormValue ignores parse
-// errors). /mcp/ only gets the reader limit: it reports too large messages
-// itself as JSON-RPC errors.
+// errors).
 func limitBody(d Deps, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Body == nil || r.Body == http.NoBody {
@@ -137,10 +137,6 @@ func limitBody(d Deps, next http.Handler) http.Handler {
 			return
 		}
 		r.Body = http.MaxBytesReader(w, r.Body, maxBodyBytes)
-		if strings.HasPrefix(r.URL.Path, "/mcp/") {
-			next.ServeHTTP(w, r)
-			return
-		}
 		tooLarge := r.ContentLength > maxBodyBytes
 		if r.ContentLength < 0 {
 			if err := r.ParseForm(); err != nil {
@@ -153,7 +149,7 @@ func limitBody(d Deps, next http.Handler) http.Handler {
 			return
 		}
 		if d.Log != nil {
-			d.Log.Warn("request body too large", "method", r.Method, "path", logPath(r.URL.Path), "content_length", r.ContentLength)
+			d.Log.Warn("request body too large", "method", r.Method, "path", r.URL.Path, "content_length", r.ContentLength)
 		}
 		w.Header().Set("Connection", "close")
 		if strings.HasPrefix(r.URL.Path, "/api/") {
@@ -164,25 +160,16 @@ func limitBody(d Deps, next http.Handler) http.Handler {
 	})
 }
 
-// logPath returns the request path for the log: the path of the MCP
-// endpoint contains its secret (/mcp/<secret>) and is never logged.
-func logPath(p string) string {
-	if strings.HasPrefix(p, "/mcp/") {
-		return "/mcp/***"
-	}
-	return p
-}
-
 // crossOrigin rejects POSTs and the like that a browser sends from a foreign
 // site (Sec-Fetch-Site or Origin ≠ Host). Requests without these headers
-// (curl, MCP clients) pass, since they carry no victim's cookie.
+// (curl) pass, since they carry no victim's cookie.
 func crossOrigin(d Deps, next http.Handler) http.Handler {
 	cop := http.NewCrossOriginProtection()
 	cop.SetDenyHandler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if d.Log != nil {
-			d.Log.Warn("cross-origin request rejected", "method", r.Method, "path", logPath(r.URL.Path), "origin", r.Header.Get("Origin"))
+			d.Log.Warn("cross-origin request rejected", "method", r.Method, "path", r.URL.Path, "origin", r.Header.Get("Origin"))
 		}
-		if strings.HasPrefix(r.URL.Path, "/api/") || strings.HasPrefix(r.URL.Path, "/mcp/") {
+		if strings.HasPrefix(r.URL.Path, "/api/") {
 			WriteJSON(w, http.StatusForbidden, map[string]string{"error": "Anfrage von einer fremden Seite abgelehnt."})
 			return
 		}

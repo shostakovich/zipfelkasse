@@ -161,7 +161,7 @@ func (h handlers) participantArchive(archive bool) http.HandlerFunc {
 }
 
 func (h handlers) loadParticipant(w http.ResponseWriter, r *http.Request) (store.Participant, bool) {
-	p, err := h.d.Store.GetParticipant(r.Context(), pathID(r))
+	p, err := h.d.Store.GetParticipant(r.Context(), PathID(r))
 	if errors.Is(err, store.ErrNotFound) {
 		h.notFound(w, r, "Person nicht gefunden.")
 		return p, false
@@ -301,7 +301,7 @@ func (h handlers) categoryMove(up bool) http.HandlerFunc {
 }
 
 func (h handlers) loadCategory(w http.ResponseWriter, r *http.Request) (store.Category, bool) {
-	c, err := h.d.Store.GetCategory(r.Context(), pathID(r))
+	c, err := h.d.Store.GetCategory(r.Context(), PathID(r))
 	if errors.Is(err, store.ErrNotFound) {
 		h.notFound(w, r, "Kategorie nicht gefunden.")
 		return c, false

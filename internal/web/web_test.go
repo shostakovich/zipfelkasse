@@ -254,7 +254,7 @@ func TestCrossOriginProtection(t *testing.T) {
 	if res := post(map[string]string{"Sec-Fetch-Site": "same-origin", "Origin": "http://example.com"}); res.StatusCode != http.StatusSeeOther {
 		t.Errorf("same-origin POST: %d", res.StatusCode)
 	}
-	// Without browser headers (curl, MCP clients) → let through.
+	// Without browser headers (curl) → let through.
 	if res := post(nil); res.StatusCode != http.StatusSeeOther {
 		t.Errorf("POST without browser headers: %d", res.StatusCode)
 	}
@@ -283,40 +283,9 @@ func TestSafeReturn(t *testing.T) {
 	}
 }
 
-// Logged paths never contain the MCP secret (/mcp/<secret>).
-func TestLogsHideMCPSecret(t *testing.T) {
-	st, err := store.Open(":memory:")
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { st.Close() })
-	var logs strings.Builder
-	log := slog.New(slog.NewTextHandler(&logs, nil))
-	r, err := NewRenderer(st, time.UTC, log)
-	if err != nil {
-		t.Fatal(err)
-	}
-	d := Deps{Store: st, Render: r, Log: log}
-	srv := testServer{h: Wrap(d, http.NewServeMux())}
-	req := httptest.NewRequest("POST", "/mcp/geheim123", strings.NewReader("{}"))
-	req.Header.Set("Sec-Fetch-Site", "cross-site")
-	req.Header.Set("Origin", "https://evil.example")
-	if res := srv.do(req); res.StatusCode != http.StatusForbidden {
-		t.Fatalf("cross-site MCP request: %d", res.StatusCode)
-	}
-	if strings.Contains(logs.String(), "geheim123") || !strings.Contains(logs.String(), "/mcp/***") {
-		t.Errorf("log: %s", logs.String())
-	}
-	for in, want := range map[string]string{"/mcp/abc": "/mcp/***", "/mcp/": "/mcp/***", "/ausgaben/1": "/ausgaben/1", "/mcpx": "/mcpx"} {
-		if got := logPath(in); got != want {
-			t.Errorf("logPath(%q) = %q, want %q", in, got, want)
-		}
-	}
-}
-
 // Request bodies are limited to maxBodyBytes: too large ones get a 413 with
 // an error page (JSON under /api/), whether the length is known up front or
-// not. /mcp/ applies its own limit with JSON-RPC errors.
+// not.
 func TestBodyLimit(t *testing.T) {
 	srv, d := newTestServer(t)
 	anna, _ := d.Store.CreateParticipant(context.Background(), "Anna")
@@ -343,9 +312,6 @@ func TestBodyLimit(t *testing.T) {
 			!strings.Contains(body, "zu groß") {
 			t.Errorf("api chunked=%v: %d %.200s", chunked, res.StatusCode, body)
 		}
-	}
-	if res, _ := post("/mcp/geheim", false); res.StatusCode == http.StatusRequestEntityTooLarge {
-		t.Error("/mcp/ rejected by the web limit instead of its own")
 	}
 	if ps, _ := d.Store.ListParticipants(context.Background(), true); len(ps) != 1 {
 		t.Errorf("participants: %d", len(ps))

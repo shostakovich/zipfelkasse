@@ -73,11 +73,14 @@ func TestAppWiring(t *testing.T) {
 	}
 }
 
-// TestMCPThroughWrap: the CSRF protection in web.Wrap lets MCP clients (POST
-// without browser headers) through.
-func TestMCPThroughWrap(t *testing.T) {
+// TestMCPBesideWrap pins how newApp composes the routes: /mcp/ bypasses
+// identity and CSRF protection of web.Wrap (MCP checks access itself), keeps
+// the security headers, applies its own body limit, and the secret never
+// shows up in the log.
+func TestMCPBesideWrap(t *testing.T) {
+	const secret = "geheim-a1b2c3"
 	cfg, err := config.FromEnv(func(k string) string {
-		return map[string]string{"MCP_SECRET": "geheim", "MCP_ALLOWED_CIDRS": "192.0.2.0/24"}[k]
+		return map[string]string{"MCP_SECRET": secret, "MCP_ALLOWED_CIDRS": "192.0.2.0/24"}[k]
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -87,18 +90,55 @@ func TestMCPThroughWrap(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer st.Close()
-	a, err := newApp(cfg, st, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	var logs strings.Builder
+	a, err := newApp(cfg, st, slog.New(slog.NewTextHandler(&logs, nil)))
 	if err != nil {
 		t.Fatal(err)
 	}
-	body := `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"test","version":"1"}}}`
-	req := httptest.NewRequest("POST", "/mcp/geheim", strings.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Accept", "application/json, text/event-stream")
-	rec := httptest.NewRecorder()
-	a.handler.ServeHTTP(rec, req)
+	send := func(path, body string, h map[string]string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest("POST", path, strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Accept", "application/json, text/event-stream")
+		for k, v := range h {
+			req.Header.Set(k, v)
+		}
+		rec := httptest.NewRecorder()
+		a.handler.ServeHTTP(rec, req)
+		return rec
+	}
+	initialize := `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"test","version":"1"}}}`
+
+	// Without identity cookie: MCP answers, no redirect to /wer.
+	rec := send("/mcp/"+secret, initialize, nil)
 	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"serverInfo"`) {
 		t.Errorf("MCP initialize: %d %s", rec.Code, rec.Body.String())
+	}
+	if rec.Header().Get("X-Content-Type-Options") != "nosniff" || rec.Header().Get("Content-Security-Policy") == "" {
+		t.Errorf("MCP without security headers: %v", rec.Header())
+	}
+	// web's CSRF protection would reject Sec-Fetch-Site: cross-site.
+	if rec := send("/mcp/"+secret, initialize, map[string]string{"Sec-Fetch-Site": "cross-site"}); rec.Code != http.StatusOK {
+		t.Errorf("cross-site MCP request: %d %s", rec.Code, rec.Body.String())
+	}
+	// An Origin header is rejected by MCP itself (JSON-RPC error), not by web.
+	rec = send("/mcp/"+secret, initialize, map[string]string{"Sec-Fetch-Site": "cross-site", "Origin": "https://evil.example"})
+	if rec.Code != http.StatusForbidden || !strings.Contains(rec.Body.String(), `"jsonrpc"`) {
+		t.Errorf("MCP request with Origin: %d %s", rec.Code, rec.Body.String())
+	}
+	// Too large messages get MCP's JSON-RPC error, not web's 413 page.
+	big := `{"jsonrpc":"2.0","id":1,"method":"ping","params":{"x":"` + strings.Repeat("a", 1<<20) + `"}}`
+	rec = send("/mcp/"+secret, big, nil)
+	if rec.Code != http.StatusRequestEntityTooLarge || !strings.Contains(rec.Body.String(), `"jsonrpc"`) {
+		t.Errorf("too large MCP message: %d %.200s", rec.Code, rec.Body.String())
+	}
+	// Wrong secret and other paths below /mcp/ are 404 and never reach web.
+	for _, path := range []string{"/mcp/falsch", "/mcp/", "/mcp/" + secret + "/x"} {
+		if rec := send(path, "{}", map[string]string{"Origin": "https://evil.example"}); rec.Code != http.StatusNotFound {
+			t.Errorf("POST %s: %d", path, rec.Code)
+		}
+	}
+	if strings.Contains(logs.String(), secret) {
+		t.Errorf("secret in log: %s", logs.String())
 	}
 }
 
