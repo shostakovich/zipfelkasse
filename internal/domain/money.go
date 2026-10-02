@@ -95,6 +95,11 @@ func parseFixed(s string, decimals int) (int64, error) {
 	if !ok {
 		return 0, invalid("Ungültiger Betrag „%s“.", s)
 	}
+	// Superfluous zeros are fine: "1200,00" is 1200 yen (e.g. after
+	// switching the currency of an amount from EUR to JPY).
+	for len(frac) > decimals && frac[len(frac)-1] == '0' {
+		frac = frac[:len(frac)-1]
+	}
 	if len(frac) > decimals {
 		if decimals == 0 {
 			return 0, invalid("Dieser Betrag darf keine Nachkommastellen haben.")

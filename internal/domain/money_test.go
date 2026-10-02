@@ -112,6 +112,12 @@ func TestParseMinorDecimals(t *testing.T) {
 		{"1.5", 3, 1500, false},
 		{"0.500", 0, 0, true}, // 0.5 yen, not 500 yen
 		{"0.123", 3, 123, false},
+		// superfluous zeros are fine, e.g. after switching from EUR to JPY
+		{"1200,00", 0, 1200, false},
+		{"1.200,00", 0, 1200, false},
+		{"1200,50", 0, 0, true},
+		{"12,340", 2, 1234, false},
+		{"12,345", 2, 0, true},
 	}
 	for _, tt := range tests {
 		got, err := ParseMinor(tt.in, tt.decimals)

@@ -76,7 +76,10 @@
   // the result is a BigInt in the minor unit, or null.
   function parseMinor(s, dec) {
     var n = splitNumber(String(s || "").replace(/[\s €%]/g, ""), dec < 3);
-    if (!n || n.frac.length > dec) return null;
+    if (!n) return null;
+    // superfluous zeros are fine: "1200,00" is 1200 yen
+    while (n.frac.length > dec && n.frac.charAt(n.frac.length - 1) === "0") n.frac = n.frac.slice(0, -1);
+    if (n.frac.length > dec) return null;
     var v = BigInt(n.int + n.frac + "0".repeat(dec - n.frac.length));
     return n.neg ? -v : v;
   }
