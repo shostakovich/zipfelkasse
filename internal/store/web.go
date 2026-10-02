@@ -20,32 +20,20 @@ func (s *Store) SetGroupName(ctx context.Context, name string) error {
 
 // MoveCategory moves an active category one position up (up) or down in
 // the display order, among the active categories. Afterwards the positions
-// of the active categories are renumbered (10, 20, …), so new categories end
-// up at the end. Nothing happens at the edges. Unknown or archived categories
-// yield ErrNotFound.
+// of the active categories are renumbered (10, 20, …); CreateCategory still
+// sorts new categories in before "Sonstiges", wherever it is. Nothing happens
+// at the edges. Unknown or archived categories yield ErrNotFound.
 func (s *Store) MoveCategory(ctx context.Context, id int64, up bool) error {
 	return s.inTx(ctx, func(tx *sql.Tx) error {
-		rows, err := tx.QueryContext(ctx,
-			"SELECT id FROM categories WHERE archived_at IS NULL ORDER BY position, name COLLATE NOCASE, id")
+		active, err := activeCategories(ctx, tx)
 		if err != nil {
 			return err
 		}
-		var ids []int64
-		for rows.Next() {
-			var v int64
-			if err := rows.Scan(&v); err != nil {
-				rows.Close()
-				return err
-			}
-			ids = append(ids, v)
-		}
-		rows.Close()
-		if err := rows.Err(); err != nil {
-			return err
-		}
+		ids := make([]int64, len(active))
 		idx := -1
-		for i, v := range ids {
-			if v == id {
+		for i, c := range active {
+			ids[i] = c.ID
+			if c.ID == id {
 				idx = i
 			}
 		}
@@ -60,12 +48,7 @@ func (s *Store) MoveCategory(ctx context.Context, id int64, up bool) error {
 			return nil
 		}
 		ids[idx], ids[other] = ids[other], ids[idx]
-		for i, v := range ids {
-			if _, err := tx.ExecContext(ctx, "UPDATE categories SET position = ? WHERE id = ?", (i+1)*10, v); err != nil {
-				return err
-			}
-		}
-		return nil
+		return renumberCategories(ctx, tx, ids)
 	})
 }
 

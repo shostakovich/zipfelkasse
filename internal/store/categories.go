@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"strings"
 	"time"
 )
 
@@ -61,21 +62,84 @@ func (s *Store) GetCategory(ctx context.Context, id int64) (Category, error) {
 	return c, err
 }
 
-// CreateCategory creates a category (sorted before "Sonstiges").
+// otherCategory is the catch-all category: new categories are sorted in
+// before it, wherever it has been moved to.
+const otherCategory = "Sonstiges"
+
+// CreateCategory creates a category directly before the active category
+// "Sonstiges" (case-insensitive), or at the end without one. The positions of
+// the active categories are then renumbered (10, 20, …), as in MoveCategory.
 func (s *Store) CreateCategory(ctx context.Context, name string) (int64, error) {
 	name, err := cleanName(name, "die Kategorie")
 	if err != nil {
 		return 0, err
 	}
-	res, err := s.db.ExecContext(ctx, `INSERT INTO categories (name, position)
-		VALUES (?, (SELECT coalesce(max(position), 0) + 10 FROM categories WHERE position < 1000))`, name)
-	if isUniqueViolation(err) {
-		return 0, invalid("Die Kategorie „%s“ gibt es schon.", name)
-	}
+	var id int64
+	err = s.inTx(ctx, func(tx *sql.Tx) error {
+		active, err := activeCategories(ctx, tx)
+		if err != nil {
+			return err
+		}
+		res, err := tx.ExecContext(ctx, "INSERT INTO categories (name, position) VALUES (?, 0)", name)
+		if isUniqueViolation(err) {
+			return invalid("Die Kategorie „%s“ gibt es schon.", name)
+		}
+		if err != nil {
+			return err
+		}
+		if id, err = res.LastInsertId(); err != nil {
+			return err
+		}
+		at := len(active)
+		for i, c := range active {
+			if strings.EqualFold(c.Name, otherCategory) {
+				at = i
+				break
+			}
+		}
+		ids := make([]int64, 0, len(active)+1)
+		for _, c := range active[:at] {
+			ids = append(ids, c.ID)
+		}
+		ids = append(ids, id)
+		for _, c := range active[at:] {
+			ids = append(ids, c.ID)
+		}
+		return renumberCategories(ctx, tx, ids)
+	})
 	if err != nil {
 		return 0, err
 	}
-	return res.LastInsertId()
+	return id, nil
+}
+
+// activeCategories returns the active categories in display order.
+func activeCategories(ctx context.Context, tx *sql.Tx) ([]Category, error) {
+	rows, err := tx.QueryContext(ctx, "SELECT "+categoryCols+" FROM categories WHERE archived_at IS NULL ORDER BY position, name COLLATE NOCASE, id")
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Category
+	for rows.Next() {
+		c, err := scanCategory(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, c)
+	}
+	return out, rows.Err()
+}
+
+// renumberCategories sets the positions of the categories ids to 10, 20, …
+// in this order.
+func renumberCategories(ctx context.Context, tx *sql.Tx, ids []int64) error {
+	for i, id := range ids {
+		if _, err := tx.ExecContext(ctx, "UPDATE categories SET position = ? WHERE id = ?", (i+1)*10, id); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // RenameCategory renames a category.
