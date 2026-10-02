@@ -996,6 +996,36 @@ func TestSyncPlanNotAccessible(t *testing.T) {
 	}
 }
 
+// A DELETE rejected by YNAB is retried only in the full sync, not in every run
+// after a change (each attempt costs a request of the hourly limit).
+func TestSyncFailedDeleteRetriedOnlyInFullSync(t *testing.T) {
+	e := newEnv(t)
+	e.connect("2026-09-01")
+	id := e.create(e.input("Kino", 2400, "2026-09-20", e.anna, e.anna, e.ben))
+	e.mustSync(false)
+	del := "DELETE " + pathTxns + "/" + e.fake.live()[0].ID
+	e.st.DeleteExpense(e.ctx, e.anna, id)
+	e.fake.takeRequests()
+	e.fake.fail(400)
+	if res := e.mustSync(false); res.Failed != 1 {
+		t.Errorf("res = %+v", res)
+	}
+	e.expectRequests(del)
+	if r := e.syncRows()[id]; r.TxnID == "" || r.LastError == "" {
+		t.Errorf("row = %+v", r)
+	}
+	// The next change does not repeat it.
+	e.create(e.input("Pizza", 3000, "2026-09-21", e.anna, e.anna, e.ben))
+	if res := e.mustSync(false); res.Created != 1 || res.Failed+res.Deleted != 0 {
+		t.Errorf("res = %+v", res)
+	}
+	e.expectRequests(post)
+	if res := e.mustSync(true); res.Deleted != 1 {
+		t.Errorf("full: %+v", res)
+	}
+	e.expectRequests(del)
+}
+
 // "Jetzt synchronisieren" does not wait for YNAB.
 func TestSyncNowDoesNotBlock(t *testing.T) {
 	e := newEnv(t)

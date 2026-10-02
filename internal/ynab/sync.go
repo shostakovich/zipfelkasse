@@ -30,6 +30,8 @@ import (
 //   - "error:" + fingerprint: transferring this state failed; it is retried
 //     only on change, in the hourly full sync or via "Jetzt
 //     synchronisieren"
+//   - "error:delete": deleting the transaction (expense gone) failed; it is
+//     retried only in the full sync (like above)
 //   - "pending": creation is in progress or its outcome is unknown (timeout,
 //     5xx). The next run looks for the transaction in the account via the memo
 //     marker "zipfelkasse #ID" instead of blindly creating it again (which
@@ -51,6 +53,7 @@ const (
 	pendingHash      = "pending"
 	retargetHash     = store.YNABHashRetarget
 	errorHashPrefix  = "error:"
+	deleteFailedHash = errorHashPrefix + "delete"
 	hashVersion      = "v1"
 	chunkSize        = 100 // transactions per POST/PATCH
 	maxDeletesPerRun = 40  // each DELETE costs one request
@@ -312,11 +315,13 @@ func (s *Service) syncParticipant(ctx context.Context, cfg store.YNABConfig, ful
 		if _, ok := wants[id]; ok {
 			continue
 		}
-		// Gone (deleted or share 0): always delete, even if the last
-		// attempt (e.g. a PATCH) failed.
-		if r.TxnID == "" {
+		// Gone (deleted or share 0): delete, even if the last attempt (e.g.
+		// a PATCH) failed. Only a failed DELETE waits for the full sync.
+		switch {
+		case r.TxnID == "":
 			forget = append(forget, id)
-		} else {
+		case !full && r.Hash == deleteFailedHash:
+		default:
 			deletes = append(deletes, r)
 		}
 	}
@@ -641,7 +646,7 @@ func (s *Service) remove(ctx context.Context, c *client, cfg store.YNABConfig, r
 			return err
 		default:
 			res.Failed++
-			r.LastError = redact(err.Error(), cfg.Token)
+			r.Hash, r.LastError = deleteFailedHash, redact(err.Error(), cfg.Token)
 			if err := s.d.Store.PutYNABSync(ctx, r); err != nil {
 				return err
 			}
