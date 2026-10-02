@@ -34,6 +34,11 @@ import (
 //     5xx). The next run looks for the transaction in the account via the memo
 //     marker "zipfelkasse #ID" instead of blindly creating it again (which
 //     could create duplicates).
+//   - "retarget" (store.YNABHashRetarget, without transaction ID): plan or
+//     account changed. Like "pending", the next run looks for the
+//     transaction in the new account via the memo marker (it is there already
+//     after switching back) – but only for expenses that belong there; the
+//     rows of the others are simply dropped.
 //   - "": unknown, or create/update
 //
 // Transactions deliberately get no import_id: YNAB tries to merge imported
@@ -44,6 +49,7 @@ import (
 // longer be right. The "pending" mechanism prevents duplicates instead.
 const (
 	pendingHash      = "pending"
+	retargetHash     = store.YNABHashRetarget
 	errorHashPrefix  = "error:"
 	hashVersion      = "v1"
 	chunkSize        = 100 // transactions per POST/PATCH
@@ -274,7 +280,8 @@ func (s *Service) syncParticipant(ctx context.Context, cfg store.YNABConfig, ful
 	var pending []int64
 	for _, r := range list {
 		rows[r.ExpenseID] = r
-		if r.TxnID == "" && r.Hash == pendingHash {
+		_, wanted := wants[r.ExpenseID]
+		if r.TxnID == "" && (r.Hash == pendingHash || r.Hash == retargetHash && wanted) {
 			pending = append(pending, r.ExpenseID)
 		}
 	}
@@ -334,8 +341,9 @@ func (s *Service) syncParticipant(ctx context.Context, cfg store.YNABConfig, ful
 	return res, nil
 }
 
-// resolvePending resolves creations with an unknown outcome via the memo
-// marker of the transactions in the account (one request).
+// resolvePending resolves creations with an unknown outcome and rows after a
+// change of the target (retargetHash) via the memo marker of the
+// transactions in the account (one request).
 func (s *Service) resolvePending(ctx context.Context, c *client, cfg store.YNABConfig, rows map[int64]store.YNABSync, pending []int64) error {
 	txns, err := c.accountTransactions(ctx, cfg.PlanID, cfg.AccountID, cfg.StartDate)
 	if err != nil {

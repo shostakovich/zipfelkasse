@@ -741,11 +741,71 @@ func TestSettingsChangeAccountResetsSync(t *testing.T) {
 	if err := e.st.SetYNABTarget(e.ctx, e.anna, testPlan, "acc-giro", day("2026-09-01")); err != nil {
 		t.Fatal(err)
 	}
-	if len(e.syncRows()) != 0 {
-		t.Error("changing the account does not reset the sync")
+	for _, r := range e.syncRows() {
+		if r.TxnID != "" {
+			t.Errorf("changing the account keeps the old transaction: %+v", r)
+		}
 	}
+	e.fake.takeRequests()
 	if res := e.mustSync(false); res.Created != 1 {
 		t.Errorf("res = %+v", res)
+	}
+	// Looked for in the new account first (it could be there already).
+	e.expectRequests("GET /v1/plans/plan-1/accounts/acc-giro/transactions", post)
+}
+
+// Switching to another account and back must not create the transactions in
+// the first account a second time: they are found again via the memo marker.
+func TestSyncTargetChangeBackNoDuplicates(t *testing.T) {
+	e := newEnv(t)
+	e.connect("2026-09-01")
+	a := e.create(e.input("A", 1000, "2026-09-20", e.anna, e.anna, e.ben))
+	b := e.create(e.input("B", 2000, "2026-09-21", e.anna, e.anna, e.ben))
+	gone := e.create(e.input("Weg", 3000, "2026-09-22", e.anna, e.anna, e.ben))
+	e.mustSync(false)
+	inA := e.syncRows()
+
+	if err := e.st.SetYNABTarget(e.ctx, e.anna, testPlan, "acc-giro", day("2026-09-01")); err != nil {
+		t.Fatal(err)
+	}
+	if res := e.mustSync(false); res.Created != 3 {
+		t.Errorf("account B: %+v", res)
+	}
+	// While syncing to B: one expense changes, one is deleted.
+	e.st.UpdateExpense(e.ctx, e.anna, a, e.input("A2", 1000, "2026-09-20", e.anna, e.anna, e.ben))
+	e.st.DeleteExpense(e.ctx, e.anna, gone)
+	e.mustSync(false)
+
+	if err := e.st.SetYNABTarget(e.ctx, e.anna, testPlan, testAccount, day("2026-09-01")); err != nil {
+		t.Fatal(err)
+	}
+	e.fake.takeRequests()
+	res := e.mustSync(false)
+	if res.Created != 0 || res.Updated != 2 || res.Deleted != 0 {
+		t.Errorf("back to A: %+v", res)
+	}
+	// No DELETE with transaction IDs of account B (they do not belong to A).
+	e.expectRequests("GET /v1/plans/plan-1/accounts/acc-geteilt/transactions", patch)
+	rows := e.syncRows()
+	if rows[a].TxnID != inA[a].TxnID || rows[b].TxnID != inA[b].TxnID {
+		t.Errorf("rows = %+v, in A before %+v", rows, inA)
+	}
+	if _, ok := rows[gone]; ok {
+		t.Errorf("row of the deleted expense kept: %+v", rows[gone])
+	}
+	var inAccountA []string
+	for _, tx := range e.fake.live() {
+		if tx.AccountID == testAccount {
+			inAccountA = append(inAccountA, str(tx.PayeeName))
+		}
+	}
+	// "Weg" was created in A before the switch and stays there (the app no
+	// longer knows its transaction); A and B are not duplicated.
+	if !slices.Equal(inAccountA, []string{"A2", "B", "Weg"}) {
+		t.Errorf("account A = %q", inAccountA)
+	}
+	if res := e.mustSync(false); res != (syncResult{}) {
+		t.Errorf("afterwards: %+v", res)
 	}
 }
 
