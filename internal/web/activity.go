@@ -9,18 +9,17 @@ import (
 	"github.com/shostakovich/zipfelkasse/internal/store"
 )
 
-// actionSettingsUpdated protokolliert Änderungen an Gruppenname, Personen und
-// Kategorien (Details.Text beschreibt die Änderung).
+// actionSettingsUpdated logs changes to the group name, people and categories
+// (Details.Text describes the change).
 const actionSettingsUpdated = store.ActionSettingsUpdated
 
-// activityPageSize ist die Zahl der Einträge pro Seite der Aktivitätsliste.
+// activityPageSize is the number of entries per page of the activity list.
 const activityPageSize = 50
 
-// activityItem ist ein Eintrag im Aktivitätsprotokoll, für die Anzeige
-// aufbereitet.
+// activityItem is an entry of the activity log, prepared for display.
 type activityItem struct {
 	store.Activity
-	Verb string // „angelegt“, „geändert“, „gelöscht“; "" = sonstige Aktion (Details.Text)
+	Verb string // "angelegt", "geändert", "gelöscht"; "" = other action (Details.Text)
 }
 
 func activityItems(acts []store.Activity) []activityItem {
@@ -46,7 +45,7 @@ type activityGroup struct {
 
 type activityData struct {
 	Groups []activityGroup
-	More   string // URL der nächsten Seite, "" = keine weiteren
+	More   string // URL of the next page, "" = no more
 }
 
 func (h handlers) activity(w http.ResponseWriter, r *http.Request) {
@@ -79,16 +78,15 @@ func (h handlers) activity(w http.ResponseWriter, r *http.Request) {
 	h.d.Render.Page(w, r, http.StatusOK, "activity.html", Page{Title: "Aktivität", Nav: NavActivity, Data: data})
 }
 
-// logSettings schreibt einen Eintrag „Einstellungen geändert“ (siehe
-// Deps.LogSettings).
+// logSettings writes a "settings changed" entry (see Deps.LogSettings).
 func (h handlers) logSettings(r *http.Request, text string) { h.d.LogSettings(r, text) }
 
-// LogSettings schreibt für die aktuelle Person (Me) einen Eintrag
-// „Einstellungen geändert“ (store.ActionSettingsUpdated) mit text. Fehler
-// werden nur geloggt – die eigentliche Änderung ist bereits gespeichert.
+// LogSettings writes a "settings changed" entry (store.ActionSettingsUpdated)
+// with text for the current person (Me). Errors are only logged, since the
+// actual change has already been saved.
 func (d Deps) LogSettings(r *http.Request, text string) {
 	p, _ := Me(r.Context())
 	if err := d.Store.AddActivity(r.Context(), p.ID, actionSettingsUpdated, 0, store.ActivityDetails{Text: text}); err != nil {
-		d.Log.Error("aktivität", "err", err)
+		d.Log.Error("activity", "err", err)
 	}
 }

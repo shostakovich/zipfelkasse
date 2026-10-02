@@ -9,8 +9,8 @@ import (
 	"github.com/shostakovich/zipfelkasse/internal/domain"
 )
 
-// categoryIcon ordnet einem Kategorienamen ein Icon aus static/icons.svg zu.
-// Kategorien sind frei benennbar, daher wird nach Stichwörtern gesucht.
+// categoryIcon maps a category name to an icon from static/icons.svg.
+// Categories can be named freely, so it searches for (German) keywords.
 func categoryIcon(name string) string {
 	n := strings.ToLower(name)
 	for _, m := range categoryIcons {
@@ -46,8 +46,8 @@ var categoryIcons = []struct {
 	{"receipt", []string{"sonstig", "allgemein"}},
 }
 
-// minorInput formatiert einen Betrag in der kleinsten Einheit der Währung für
-// ein Eingabefeld: (123456, "USD") → "1234,56", (500, "JPY") → "500".
+// minorInput formats an amount in the currency's minor unit for an input
+// field: (123456, "USD") → "1234,56", (500, "JPY") → "500".
 func minorInput(minor int64, currency string) string {
 	dec := domain.CurrencyDecimals(currency)
 	if dec == 2 {
@@ -70,8 +70,8 @@ func minorInput(minor int64, currency string) string {
 	return s
 }
 
-// rateInput formatiert einen Wechselkurs für ein Eingabefeld (Komma als
-// Dezimaltrenner, ohne überflüssige Nullen). 0 → "".
+// rateInput formats an exchange rate for an input field (comma as decimal
+// separator, without superfluous zeros). 0 → "".
 func rateInput(rate float64) string {
 	if rate <= 0 {
 		return ""
@@ -79,11 +79,11 @@ func rateInput(rate float64) string {
 	return strings.Replace(strconv.FormatFloat(rate, 'f', -1, 64), ".", ",", 1)
 }
 
-// allocate verteilt total proportional zu weights (größter Rest, bei
-// Gleichstand der kleinere Index; Summe der Gewichte > 0). Wird für
-// „Nach Beträgen“ in Fremdwährung gebraucht: Die Beträge je Person stehen in
-// der Fremdwährung, gespeichert werden Euro-Cent, die exakt aufgehen müssen.
-// Rechnet mit big.Int, damit große Beträge nicht überlaufen.
+// allocate distributes total proportionally to weights (largest remainder,
+// ties go to the smaller index; sum of weights > 0). Needed for "by amounts"
+// in a foreign currency: the amounts per person are in the foreign currency,
+// while euro cents are stored, which must add up exactly. Computes with
+// big.Int so that large amounts do not overflow.
 func allocate(total int64, weights []int64) []int64 {
 	sum := new(big.Int)
 	for _, w := range weights {
@@ -117,7 +117,7 @@ func allocate(total int64, weights []int64) []int64 {
 	return out
 }
 
-// Zeiträume der Ausgabenliste wie bei Spliit (Woche beginnt Montag).
+// Periods of the expense list as in Spliit (the week starts on Monday).
 const (
 	periodUpcoming = iota
 	periodThisWeek
@@ -133,8 +133,8 @@ var periodLabels = []string{
 	"Früher in diesem Jahr", "Letztes Jahr", "Älter",
 }
 
-// expensePeriod ordnet ein Ausgabedatum relativ zu today (beides
-// Kalenderdaten, 00:00 UTC) einem Zeitraum zu.
+// expensePeriod maps an expense date to a period relative to today (both
+// calendar dates, 00:00 UTC).
 func expensePeriod(d, today time.Time) int {
 	lastMonth := today.AddDate(0, 0, -today.Day()+1).AddDate(0, -1, 0)
 	switch {
@@ -154,19 +154,19 @@ func expensePeriod(d, today time.Time) int {
 	return periodOlder
 }
 
-// weekStart liefert den Montag der Woche von d.
+// weekStart returns the Monday of d's week.
 func weekStart(d time.Time) time.Time {
 	return d.AddDate(0, 0, -((int(d.Weekday()) + 6) % 7))
 }
 
-// Zeiträume der Aktivitätsliste wie bei Spliit.
+// Periods of the activity list as in Spliit.
 var activityPeriodLabels = []string{
 	"Heute", "Gestern", "Früher in dieser Woche", "Letzte Woche", "Früher in diesem Monat",
 	"Letzter Monat", "Früher in diesem Jahr", "Letztes Jahr", "Älter",
 }
 
-// activityPeriod ordnet ein Kalenderdatum relativ zu today einem Eintrag aus
-// activityPeriodLabels zu.
+// activityPeriod maps a calendar date relative to today to an entry of
+// activityPeriodLabels.
 func activityPeriod(d, today time.Time) int {
 	lastMonth := today.AddDate(0, 0, -today.Day()+1).AddDate(0, -1, 0)
 	ws := weekStart(today)

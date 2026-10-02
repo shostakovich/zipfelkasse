@@ -1,7 +1,7 @@
-// Zipfelkasse – minimaler Service Worker. Er ist nur da, damit die App
-// installierbar ist. Es wird bewusst nichts zwischengespeichert: Seiten
-// kommen immer frisch vom Server, damit nie veraltete Salden zu sehen sind.
-// Nur wenn der Server nicht erreichbar ist, erscheint ein Offline-Hinweis.
+// Zipfelkasse: minimal service worker. It only exists so that the app is
+// installable. Nothing is cached on purpose: pages always come fresh from the
+// server, so that outdated balances are never shown. Only when the server is
+// unreachable does an offline notice appear.
 
 self.addEventListener("install", function () {
   self.skipWaiting();
@@ -22,7 +22,7 @@ var OFFLINE_HTML =
   '<p><a href="">Erneut versuchen</a></p></div></body></html>';
 
 self.addEventListener("fetch", function (event) {
-  if (event.request.mode !== "navigate") return; // alles andere geht normal ans Netz
+  if (event.request.mode !== "navigate") return; // everything else goes to the network as usual
   event.respondWith(
     fetch(event.request).catch(function () {
       return new Response(OFFLINE_HTML, {

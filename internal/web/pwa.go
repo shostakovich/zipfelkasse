@@ -7,7 +7,7 @@ import (
 	"net/http"
 )
 
-// themeColor ist die Primärfarbe (Spliit-Grün, --primary im hellen Modus).
+// themeColor is the primary color (Spliit green, --primary in light mode).
 const themeColor = "#047756"
 
 type manifestIcon struct {
@@ -17,8 +17,8 @@ type manifestIcon struct {
 	Purpose string `json:"purpose,omitempty"`
 }
 
-// manifest liefert das Web-App-Manifest (öffentlich, damit die Installation
-// auch vor der Personenauswahl klappt). Der Name ist der Gruppenname.
+// manifest serves the web app manifest (public, so that installing works
+// even before a person is selected). The name is the group name.
 func (h handlers) manifest(w http.ResponseWriter, r *http.Request) {
 	name := h.d.Store.GroupName(r.Context())
 	m := map[string]any{
@@ -48,8 +48,8 @@ func (h handlers) manifest(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(m)
 }
 
-// serviceWorker liefert /sw.js aus static/ (Scope „/“ braucht die Datei an
-// der Wurzel). Kein Caching, damit Änderungen sofort greifen.
+// serviceWorker serves /sw.js from static/ (scope "/" needs the file at the
+// root). No caching, so that changes take effect immediately.
 func (h handlers) serviceWorker(w http.ResponseWriter, r *http.Request) {
 	b, err := staticFS.ReadFile("static/sw.js")
 	if err != nil {

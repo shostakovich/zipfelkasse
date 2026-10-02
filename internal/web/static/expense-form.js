@@ -1,14 +1,14 @@
-// Zipfelkasse – Ausgabenformular: Live-Vorschau der Aufteilung (Cent-genau wie
-// domain.Split: Methode des größten Rests, bei Gleichstand rotiert der
-// Vorrang mit der Ausgaben-ID aus data-rotation),
-// Fremdwährung mit Kursabruf über /api/kurs und Umrechnung in Euro.
-// Das Formular funktioniert auch ohne dieses Skript; der Server prüft alles.
+// Zipfelkasse: expense form. Live preview of the split (exact to the cent like
+// domain.Split: largest remainder method; on ties, precedence rotates with the
+// expense ID from data-rotation), foreign currency with rate lookup via
+// /api/kurs and conversion to euros.
+// The form also works without this script; the server validates everything.
 (function () {
   "use strict";
 
   var form = document.getElementById("expense-form");
   if (!form || form.querySelector("fieldset[disabled]")) return;
-  // Ausgaben-ID (bei neuen Ausgaben die voraussichtliche), siehe domain.Split.
+  // expense ID (the expected one for new expenses), see domain.Split.
   var rotation = Number(form.getAttribute("data-rotation")) || 0;
 
   var $ = function (id) { return document.getElementById(id); };
@@ -27,7 +27,7 @@
     };
   }).sort(function (a, b) { return a.id - b.id; });
 
-  // --- Zahlen ---------------------------------------------------------------
+  // --- Numbers -------------------------------------------------------------
 
   var DECIMALS0 = ["JPY", "KRW", "ISK", "HUF", "CLP", "VND", "XAF", "XOF", "PYG", "UGX", "IDR"];
   var DECIMALS3 = ["KWD", "BHD", "OMR", "JOD", "TND", "LYD", "IQD"];
@@ -37,10 +37,10 @@
     return 2;
   }
 
-  // splitNumber zerlegt eine Zahl wie domain.splitNumber in Vorzeichen,
-  // Ganzzahl- und Nachkommaziffern ({neg, int, frac}) oder liefert null.
-  // dotThousands: ein einzelner Punkt vor genau drei Ziffern ist ein
-  // Tausenderpunkt („17.000“ = 17000).
+  // splitNumber splits a number like domain.splitNumber into sign, integer
+  // and fractional digits ({neg, int, frac}) or returns null.
+  // dotThousands: a single dot before exactly three digits is a thousands
+  // separator ("17.000" = 17000).
   function splitNumber(s, dotThousands) {
     if (!s) return null;
     var neg = false;
@@ -72,8 +72,8 @@
     return { neg: neg, int: intPart || "0", frac: frac };
   }
 
-  // parseMinor liest „12,34“, „12.34“, „1.234,56“ wie domain.ParseMinor;
-  // Ergebnis als BigInt in der kleinsten Einheit oder null.
+  // parseMinor reads "12,34", "12.34", "1.234,56" like domain.ParseMinor;
+  // the result is a BigInt in the minor unit, or null.
   function parseMinor(s, dec) {
     var n = splitNumber(String(s || "").replace(/[\s €%]/g, ""), dec < 3);
     if (!n || n.frac.length > dec) return null;
@@ -81,7 +81,7 @@
     return n.neg ? -v : v;
   }
 
-  // parseRate liest einen Kurs wie domain.ParseRate („1,0857“, „17.000“ = 17000).
+  // parseRate reads a rate like domain.ParseRate ("1,0857", "17.000" = 17000).
   function parseRate(s) {
     var n = splitNumber(String(s || "").replace(/\s/g, ""), true);
     if (!n || n.neg) return null;
@@ -92,7 +92,7 @@
   var eurFmt = new Intl.NumberFormat("de-DE", { style: "currency", currency: "EUR" });
   function formatCents(c) { return eurFmt.format(Number(c) / 100); }
 
-  // formatInput: BigInt-Betrag → Eingabeformat „1234,56“.
+  // formatInput: BigInt amount → input format "1234,56".
   function formatInput(v, dec) {
     var neg = v < 0n, s = (neg ? -v : v).toString();
     if (dec > 0) {
@@ -105,10 +105,10 @@
     return bp % 100n === 0n ? (bp / 100n).toString() : formatInput(bp, 2);
   }
 
-  // allocate verteilt total proportional zu weights (größter Rest). weights
-  // gehören zu Personen in aufsteigender ID. Bei Gleichstand rotiert der
-  // Vorrang unter den Gleichrangigen um rot (wie domain.Split mit der
-  // Ausgaben-ID); ohne rot bekommt ihn der kleinere Index (wie web.allocate).
+  // allocate distributes total proportionally to weights (largest remainder).
+  // weights belong to people in ascending ID order. On ties, precedence among
+  // the tied rotates by rot (like domain.Split with the expense ID); without
+  // rot, the smaller index gets it (like web.allocate).
   function allocate(total, weights, rot) {
     var sum = weights.reduce(function (a, b) { return a + b; }, 0n);
     if (sum <= 0n) return null;
@@ -134,7 +134,7 @@
     return out;
   }
 
-  // --- Zustand --------------------------------------------------------------
+  // --- State ---------------------------------------------------------------
 
   function currency() {
     var c = currencyEl.value || otherEl.value;
@@ -143,7 +143,7 @@
   }
   function mode() { return reimbEl.checked ? "equal" : modeEl.value; }
 
-  // eurTotal liefert den Gesamtbetrag in Euro-Cent (BigInt) oder null.
+  // eurTotal returns the total amount in euro cents (BigInt) or null.
   function eurTotal() {
     var cur = currency();
     if (cur === "EUR") return parseMinor(amountEl.value, 2);
@@ -162,7 +162,7 @@
     return cur === "EUR" ? "€" : cur;
   }
 
-  // --- Anzeige --------------------------------------------------------------
+  // --- Display -------------------------------------------------------------
 
   function setHidden(selector, hidden) {
     form.querySelectorAll(selector).forEach(function (el) { el.hidden = hidden; });
@@ -247,7 +247,7 @@
     updatePreview();
   }
 
-  // Beim Wechsel der Aufteilung sinnvolle Startwerte eintragen.
+  // Fill in sensible initial values when the split mode changes.
   function fillDefaults() {
     var m = mode(), active = rows.filter(function (r) { return r.check.checked; });
     rows.forEach(function (r) { if (!r.check.checked) r.input.value = ""; });
@@ -269,7 +269,7 @@
     active.forEach(function (r, i) { r.input.value = vals[i]; });
   }
 
-  // --- Wechselkurs ----------------------------------------------------------
+  // --- Exchange rate -------------------------------------------------------
 
   var rateRequest = 0;
   function isoToDE(s) {
@@ -309,7 +309,7 @@
       });
   }
 
-  // --- Ereignisse -------------------------------------------------------------
+  // --- Events ----------------------------------------------------------------
 
   currencyEl.addEventListener("change", function () {
     rateEl.value = "";
@@ -335,7 +335,7 @@
   reimbEl.addEventListener("change", function () {
     if (reimbEl.checked) {
       if (titleEl.value.trim() === "") titleEl.value = "Rückzahlung";
-      // Genau ein Empfänger: den ersten angekreuzten behalten, der nicht zahlt.
+      // Exactly one recipient: keep the first checked one who is not paying.
       var payer = Number($("bezahlt_von").value), kept = false;
       rows.forEach(function (r) {
         if (r.check.checked && !kept && r.id !== payer) { kept = true; return; }
