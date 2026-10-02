@@ -61,7 +61,12 @@ func TestSuggestCategories(t *testing.T) {
 	}
 	// Ambiguous words (1:1) and filler words do not count as single words.
 	for _, w := range []string{"dm", "und"} {
-		if got, ok := suggestCategories([]store.TitleCategory{{Title: "dm", CategoryID: home}, {Title: "DM", CategoryID: food}, {Title: "Brot und Butter", CategoryID: food}, {Title: "Brot und Käse", CategoryID: food}}).Words[w]; ok {
+		if got, ok := suggestCategories([]store.TitleCategory{
+			{Title: "dm", CategoryID: home},
+			{Title: "DM", CategoryID: food},
+			{Title: "Brot und Butter", CategoryID: food},
+			{Title: "Brot und Käse", CategoryID: food},
+		}).Words[w]; ok {
 			t.Errorf("Words[%q] = %v, want none", w, got)
 		}
 	}
