@@ -50,8 +50,11 @@ func TestOpenMigratesAndSeeds(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
 	v, err := s.SchemaVersion(ctx)
-	if err != nil || v != 1 {
-		t.Fatalf("SchemaVersion = %d, %v; want 1", v, err)
+	if err != nil || v != 2 {
+		t.Fatalf("SchemaVersion = %d, %v; want 2", v, err)
+	}
+	if acts, _ := s.ListActivity(ctx, ActivityFilter{}); len(acts) != 0 {
+		t.Errorf("leere Datenbank: Aktivität %+v", acts)
 	}
 	cats, err := s.ListCategories(ctx, false)
 	if err != nil {
@@ -222,7 +225,8 @@ func TestCreateGetExpense(t *testing.T) {
 	if e.OriginalCurrency != "EUR" || e.OriginalAmountMinor != 1000 || e.FXRate != 1 || e.IsForeign() {
 		t.Errorf("Währungsfelder = %+v", e)
 	}
-	if len(e.Shares) != 3 || e.ShareOf(f.anna) != 334 || e.ShareOf(f.ben) != 333 || e.ShareOf(f.cleo) != 333 {
+	// Ausgabe 1: Der Extra-Cent geht an Index 1 mod 3 der Gleichrangigen (Ben).
+	if len(e.Shares) != 3 || e.ShareOf(f.anna) != 333 || e.ShareOf(f.ben) != 334 || e.ShareOf(f.cleo) != 333 {
 		t.Errorf("Shares = %+v", e.Shares)
 	}
 	if len(e.Parts) != 3 || e.Parts[0].Weight != 1 {
@@ -515,6 +519,121 @@ func TestListExpensesFilter(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// Der Extra-Cent ungerader Beträge rotiert mit der Ausgaben-ID, auch nach
+// einer Änderung.
+func TestExpenseSharesRotateRemainder(t *testing.T) {
+	f := newFixture(t)
+	ctx := context.Background()
+	people := []int64{f.anna, f.ben}
+	extra := map[int64]int{}
+	for range 4 {
+		id, err := f.s.CreateExpense(ctx, f.anna, f.equal("Kaffee", 301, "2026-09-01", f.anna, f.ben, f.anna))
+		if err != nil {
+			t.Fatal(err)
+		}
+		e, _ := f.s.GetExpense(ctx, id)
+		want := people[id%2]
+		if e.ShareOf(want) != 151 {
+			t.Errorf("Ausgabe %d: Extra-Cent bei %v, want Person %d", id, e.Shares, want)
+		}
+		extra[want]++
+
+		in := e.ExpenseInput
+		in.AmountCents = 501
+		if err := f.s.UpdateExpense(ctx, f.anna, id, in); err != nil {
+			t.Fatal(err)
+		}
+		if e, _ = f.s.GetExpense(ctx, id); e.ShareOf(want) != 251 {
+			t.Errorf("Ausgabe %d nach Änderung: %v, want Extra-Cent bei %d", id, e.Shares, want)
+		}
+	}
+	if extra[f.anna] != 2 || extra[f.ben] != 2 {
+		t.Errorf("Extra-Cents ungleich verteilt: %v", extra)
+	}
+}
+
+// Migration 2 verteilt die Rest-Cents bestehender Ausgaben nach der neuen
+// Regel (domain.Split mit Ausgaben-ID), genau einmal.
+func TestMigrationResplitsShares(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "teilen.db")
+	s, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f := fixture{s: s, anna: mustParticipant(t, s, "Anna"), ben: mustParticipant(t, s, "Ben"), cleo: mustParticipant(t, s, "Cleo")}
+	ctx := context.Background()
+	var ids []int64
+	for range 4 {
+		ids = append(ids, f.mustCreate(t, f.equal("Kaffee", 301, "2026-09-01", f.anna, f.anna, f.ben)))
+	}
+	fixed := f.equal("Fest", 301, "2026-09-01", f.anna, f.anna, f.ben)
+	fixed.SplitMode, fixed.Parts = domain.SplitAmount, []domain.Part{{ParticipantID: f.anna, Weight: 151}, {ParticipantID: f.ben, Weight: 150}}
+	fixedID := f.mustCreate(t, fixed)
+	gone := f.mustCreate(t, f.equal("Gelöscht", 1000, "2026-09-01", f.anna, f.anna, f.ben, f.cleo))
+	if err := s.DeleteExpense(ctx, f.anna, gone); err != nil {
+		t.Fatal(err)
+	}
+	// Alter Stand: Extra-Cent an die kleinste ID (bei der gelöschten Ausgabe 6
+	// an Ben, neu gehört er Index 6 mod 3 = Anna), Schema-Version 1.
+	for _, q := range []string{
+		"UPDATE expense_shares SET amount_cents = 151 WHERE participant_id = 1 AND expense_id <= 4",
+		"UPDATE expense_shares SET amount_cents = 150 WHERE participant_id = 2 AND expense_id <= 4",
+		"UPDATE expense_shares SET amount_cents = CASE participant_id WHEN 2 THEN 334 ELSE 333 END WHERE expense_id = 6",
+		"PRAGMA user_version = 1",
+	} {
+		if _, err := s.db.ExecContext(ctx, q); err != nil {
+			t.Fatal(err)
+		}
+	}
+	before, _ := s.ListActivity(ctx, ActivityFilter{})
+	s.Close()
+
+	for round := range 2 {
+		if s, err = Open(path); err != nil {
+			t.Fatal(err)
+		}
+		if v, _ := s.SchemaVersion(ctx); v != 2 {
+			t.Errorf("Runde %d: SchemaVersion = %d", round, v)
+		}
+		for _, id := range ids {
+			e, _ := s.GetExpense(ctx, id)
+			if want := []int64{f.anna, f.ben}[id%2]; e.ShareOf(want) != 151 {
+				t.Errorf("Runde %d, Ausgabe %d: %v, Extra-Cent gehört %d", round, id, e.Shares, want)
+			}
+		}
+		if e, _ := s.GetExpense(ctx, fixedID); e.ShareOf(f.anna) != 151 || e.ShareOf(f.ben) != 150 {
+			t.Errorf("feste Beträge verändert: %v", e.Shares)
+		}
+		if e, _ := s.GetExpense(ctx, gone); e.ShareOf(f.cleo) != 333 || e.ShareOf(f.anna) != 334 || e.ShareOf(f.ben) != 333 {
+			t.Errorf("gelöschte Ausgabe 6: %v", e.Shares)
+		}
+		acts, _ := s.ListActivity(ctx, ActivityFilter{})
+		if len(acts) != len(before)+1 || acts[0].Action != ActionSharesRecalculated || acts[0].ActorID != 0 ||
+			!strings.Contains(acts[0].Details.Text, "3 Ausgaben") {
+			t.Errorf("Runde %d: Aktivität %+v", round, acts[0])
+		}
+		s.Close()
+	}
+}
+
+func TestNextExpenseID(t *testing.T) {
+	f := newFixture(t)
+	ctx := context.Background()
+	if n, err := f.s.NextExpenseID(ctx); err != nil || n != 1 {
+		t.Fatalf("leer: %d, %v", n, err)
+	}
+	id := f.mustCreate(t, f.equal("Kaffee", 300, "2026-09-01", f.anna, f.anna))
+	if err := f.s.DeleteExpense(ctx, f.anna, id); err != nil {
+		t.Fatal(err)
+	}
+	if n, _ := f.s.NextExpenseID(ctx); n != id+1 {
+		t.Errorf("NextExpenseID = %d, want %d", n, id+1)
+	}
+	if got := f.mustCreate(t, f.equal("Tee", 300, "2026-09-01", f.anna, f.anna)); got != id+1 {
+		t.Errorf("neue ID %d, erwartet %d", got, id+1)
 	}
 }
 

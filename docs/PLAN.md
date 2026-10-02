@@ -331,8 +331,8 @@ Der Store berechnet die Cent-Anteile selbst per `domain.Split`. `store.Expense` 
 „1.234,56 €“), `ParseMinor(s, decimals)`, `FormatMoney(minor, currency)`, `CurrencyDecimals(cur)`,
 `ToEURCents(minor, currency, rate)`, `FormatBasisPoints`, `ParseBasisPoints`, `MaxAmountCents`.
 Aufteilung: `SplitMode` (`equal|shares|percent|amount`, `.Valid()`, `.Label()`), `SplitModes`,
-`Split(mode, totalCents, []Part) ([]Share, error)` (größter Rest, Gleichstand → kleinere ID; Ergebnis nach ID
-sortiert). Salden: `Entry{PaidBy, AmountCents, Shares}`, `Balances([]Entry)`, `Settle(map) []Transfer{From, To,
+`Split(mode, totalCents, []Part, rotation) ([]Share, error)` (größter Rest; bei Gleichstand rotiert der Extra-Cent
+mit `rotation` = Ausgaben-ID reihum über die gleichrangigen Personen; Ergebnis nach ID sortiert). Salden: `Entry{PaidBy, AmountCents, Shares}`, `Balances([]Entry)`, `Settle(map) []Transfer{From, To,
 AmountCents}`. Daten: `DateLayout`, `DateOf`, `Today(loc)`, `ParseDate` („2026-10-02“ / „02.10.2026“),
 `FormatDate`. Wiederholung: `Frequency` (`weekly|monthly|yearly`, `.Valid()`, `.Label()`), `Frequencies`,
 `Occurrence(f, anchor, n)`, `NextDate(f, anchor, after)` (erster Termin strikt nach `after`, immer vom Anker

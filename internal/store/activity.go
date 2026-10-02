@@ -18,6 +18,9 @@ const (
 	// ActionSettingsUpdated: Einstellungen geändert (Personen, Kategorien,
 	// Kurse, Wiederholungen, YNAB …); Details.Text beschreibt die Änderung.
 	ActionSettingsUpdated = "settings_updated"
+	// ActionSharesRecalculated: Eine Migration hat Cent-Anteile bestehender
+	// Ausgaben neu berechnet (System, Details.Text).
+	ActionSharesRecalculated = "shares_recalculated"
 )
 
 // ActivityDetails ist der Inhalt von activity.details_json.

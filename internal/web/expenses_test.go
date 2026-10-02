@@ -134,8 +134,9 @@ func TestExpenseCreateSplitModes(t *testing.T) {
 		who    []string
 		want   map[string]int64
 	}{
+		// Ausgabe 1: Extra-Cent an Index 1 mod 3 (Ben), siehe domain.Split.
 		{"gleichmäßig", "equal", "10,00", nil, []string{"anna", "ben", "cleo"},
-			map[string]int64{"anna": 334, "ben": 333, "cleo": 333}},
+			map[string]int64{"anna": 333, "ben": 334, "cleo": 333}},
 		{"gleichmäßig zwei", "equal", "10,00", nil, []string{"ben", "cleo"},
 			map[string]int64{"ben": 500, "cleo": 500}},
 		{"Anteile", "shares", "40,00", map[string]string{"anna": "2", "ben": "1", "cleo": ""}, []string{"anna", "ben", "cleo"},
@@ -522,6 +523,19 @@ func TestHomeSearch(t *testing.T) {
 	_, body = g.get("/?q=kino")
 	if !strings.Contains(body, "für <strong>Ben</strong>") {
 		t.Error("„für Ben“ fehlt")
+	}
+}
+
+// Die JS-Vorschau verteilt Rest-Cents wie domain.Split nach der Ausgaben-ID;
+// bei neuen Ausgaben nach der voraussichtlich nächsten.
+func TestExpenseFormRotation(t *testing.T) {
+	g := newGroup(t, nil)
+	e := g.create(g.form())
+	if _, body := g.get("/ausgaben/" + id(e.ID)); !strings.Contains(body, `data-rotation="`+id(e.ID)+`"`) {
+		t.Errorf("Bearbeiten: data-rotation fehlt")
+	}
+	if _, body := g.get("/ausgaben/neu"); !strings.Contains(body, `data-rotation="`+id(e.ID+1)+`"`) {
+		t.Errorf("Neu: data-rotation=%d fehlt", e.ID+1)
 	}
 }
 

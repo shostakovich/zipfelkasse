@@ -86,27 +86,28 @@ type ExpenseFilter struct {
 	Limit, Offset int       // Limit 0 = alle
 }
 
-// normalize prüft die Eingabe und berechnet die Anteile.
-func normalize(in ExpenseInput) (ExpenseInput, []domain.Share, error) {
+// normalize prüft die Eingabe (auch die Aufteilung). Die Cent-Anteile
+// berechnet danach splitShares, wenn die Ausgaben-ID feststeht.
+func normalize(in ExpenseInput) (ExpenseInput, error) {
 	in.Title = strings.Join(strings.Fields(in.Title), " ")
 	in.Notes = strings.TrimSpace(in.Notes)
 	switch {
 	case in.Title == "":
-		return in, nil, invalid("Bitte einen Titel angeben.")
+		return in, invalid("Bitte einen Titel angeben.")
 	case len([]rune(in.Title)) > 200:
-		return in, nil, invalid("Der Titel ist zu lang (höchstens 200 Zeichen).")
+		return in, invalid("Der Titel ist zu lang (höchstens 200 Zeichen).")
 	case in.Date.IsZero():
-		return in, nil, invalid("Bitte ein Datum angeben.")
+		return in, invalid("Bitte ein Datum angeben.")
 	case in.PaidBy <= 0:
-		return in, nil, invalid("Bitte angeben, wer bezahlt hat.")
+		return in, invalid("Bitte angeben, wer bezahlt hat.")
 	}
 	in.Date = domain.DateOf(in.Date)
 	if in.IsReimbursement {
 		if len(in.Parts) != 1 {
-			return in, nil, invalid("Eine Rückzahlung geht an genau eine Person.")
+			return in, invalid("Eine Rückzahlung geht an genau eine Person.")
 		}
 		if in.Parts[0].ParticipantID == in.PaidBy {
-			return in, nil, invalid("Bei einer Rückzahlung müssen Zahler und Empfänger verschieden sein.")
+			return in, invalid("Bei einer Rückzahlung müssen Zahler und Empfänger verschieden sein.")
 		}
 		in.SplitMode = domain.SplitEqual
 	}
@@ -117,22 +118,28 @@ func normalize(in ExpenseInput) (ExpenseInput, []domain.Share, error) {
 		in.OriginalCurrency = cur
 		switch {
 		case len(cur) != 3:
-			return in, nil, invalid("Ungültige Währung „%s“.", cur)
+			return in, invalid("Ungültige Währung „%s“.", cur)
 		case in.OriginalAmountMinor <= 0:
-			return in, nil, invalid("Bitte den Betrag in %s angeben.", cur)
+			return in, invalid("Bitte den Betrag in %s angeben.", cur)
 		case in.FXRate <= 0:
-			return in, nil, invalid("Bitte einen Wechselkurs für %s angeben.", cur)
+			return in, invalid("Bitte einen Wechselkurs für %s angeben.", cur)
 		}
 	}
-	shares, err := domain.Split(in.SplitMode, in.AmountCents, in.Parts)
+	shares, err := domain.Split(in.SplitMode, in.AmountCents, in.Parts, 0)
 	if err != nil {
-		return in, nil, err
+		return in, err
 	}
 	in.Parts = make([]domain.Part, len(shares))
 	for i, sh := range shares {
 		in.Parts[i] = domain.Part{ParticipantID: sh.ParticipantID, Weight: sh.Weight}
 	}
-	return in, shares, nil
+	return in, nil
+}
+
+// splitShares berechnet die Cent-Anteile einer geprüften Eingabe (normalize).
+// Die Ausgaben-ID bestimmt, wer bei Gleichstand den Extra-Cent bekommt.
+func splitShares(in ExpenseInput, expenseID int64) ([]domain.Share, error) {
+	return domain.Split(in.SplitMode, in.AmountCents, in.Parts, expenseID)
 }
 
 // checkRefs prüft, ob Zahler, Beteiligte und Kategorie existieren.
@@ -177,7 +184,7 @@ func insertShares(ctx context.Context, tx *sql.Tx, expenseID int64, shares []dom
 // System) und ruft danach die Change-Hooks auf. Eingabefehler sind
 // domain.ValidationError.
 func (s *Store) CreateExpense(ctx context.Context, actorID int64, in ExpenseInput) (int64, error) {
-	in, shares, err := normalize(in)
+	in, err := normalize(in)
 	if err != nil {
 		return 0, err
 	}
@@ -203,6 +210,10 @@ func (s *Store) CreateExpense(ctx context.Context, actorID int64, in ExpenseInpu
 		if id, err = res.LastInsertId(); err != nil {
 			return err
 		}
+		shares, err := splitShares(in, id)
+		if err != nil {
+			return err
+		}
 		if err := insertShares(ctx, tx, id, shares); err != nil {
 			return err
 		}
@@ -219,7 +230,11 @@ func (s *Store) CreateExpense(ctx context.Context, actorID int64, in ExpenseInpu
 // UpdateExpense ändert eine (nicht gelöschte) Ausgabe. Der Activity-Eintrag
 // enthält die geänderten Felder; ohne Änderung wird nichts protokolliert.
 func (s *Store) UpdateExpense(ctx context.Context, actorID, id int64, in ExpenseInput) error {
-	in, shares, err := normalize(in)
+	in, err := normalize(in)
+	if err != nil {
+		return err
+	}
+	shares, err := splitShares(in, id)
 	if err != nil {
 		return err
 	}
@@ -341,6 +356,17 @@ func (s *Store) ListExpenses(ctx context.Context, f ExpenseFilter) ([]Expense, e
 		args = append(args, f.Limit, f.Offset)
 	}
 	return queryExpenses(ctx, s.db, q, args...)
+}
+
+// NextExpenseID ist die ID, die die nächste neue Ausgabe voraussichtlich
+// bekommt (SQLite vergibt max(id) + 1; gelöscht wird nur weich). Die
+// Formular-Vorschau braucht sie, um Rest-Cents wie domain.Split zu verteilen;
+// legt jemand gleichzeitig eine Ausgabe an, weicht die Vorschau höchstens um
+// einen Cent ab – gespeichert wird immer die Rechnung des Stores.
+func (s *Store) NextExpenseID(ctx context.Context) (int64, error) {
+	var n int64
+	err := s.db.QueryRowContext(ctx, "SELECT coalesce(max(id), 0) + 1 FROM expenses").Scan(&n)
+	return n, err
 }
 
 // BalanceEntries liefert alle nicht gelöschten Ausgaben in der Form, die

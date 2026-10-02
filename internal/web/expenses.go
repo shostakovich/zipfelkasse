@@ -212,6 +212,7 @@ type expensePage struct {
 	Currencies []string
 	SplitModes []domain.SplitMode
 	History    []activityItem
+	Rotation   int64 // Ausgaben-ID (bei neuen die voraussichtliche) für die Cent-Verteilung der Vorschau
 }
 
 // formFromExpense füllt das Formular aus einer gespeicherten Ausgabe.
@@ -539,7 +540,13 @@ func (h handlers) renderExpense(w http.ResponseWriter, r *http.Request, status i
 		h.serverError(w, r, err)
 		return
 	}
-	p := expensePage{Form: f, Expense: e, Currencies: commonCurrencies, SplitModes: domain.SplitModes}
+	p := expensePage{Form: f, Expense: e, Currencies: commonCurrencies, SplitModes: domain.SplitModes, Rotation: f.ID}
+	if p.Rotation == 0 {
+		if p.Rotation, err = h.d.Store.NextExpenseID(ctx); err != nil {
+			h.serverError(w, r, err)
+			return
+		}
+	}
 	for _, c := range cats {
 		if !c.Archived() || c.ID == f.Category {
 			p.Categories = append(p.Categories, c)

@@ -4,7 +4,7 @@
 {{- $deleted := and $e $e.Deleted}}
 {{- $cur := $f.CurrencyCode}}
 <div class="stack">
-<form class="expense-form stack" id="expense-form" method="post"
+<form class="expense-form stack" id="expense-form" method="post" data-rotation="{{.Data.Rotation}}"
   action="{{if $f.ID}}/ausgaben/{{$f.ID}}{{else}}/ausgaben/neu{{end}}">
 <fieldset class="stack"{{if $deleted}} disabled{{end}}>
   <section class="card">

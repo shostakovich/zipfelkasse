@@ -1,5 +1,6 @@
 // teilen – Ausgabenformular: Live-Vorschau der Aufteilung (Cent-genau wie
-// domain.Split: Methode des größten Rests, Gleichstand → kleinere ID),
+// domain.Split: Methode des größten Rests, bei Gleichstand rotiert der
+// Vorrang mit der Ausgaben-ID aus data-rotation),
 // Fremdwährung mit Kursabruf über /api/kurs und Umrechnung in Euro.
 // Das Formular funktioniert auch ohne dieses Skript; der Server prüft alles.
 (function () {
@@ -7,6 +8,8 @@
 
   var form = document.getElementById("expense-form");
   if (!form || form.querySelector("fieldset[disabled]")) return;
+  // Ausgaben-ID (bei neuen Ausgaben die voraussichtliche), siehe domain.Split.
+  var rotation = Number(form.getAttribute("data-rotation")) || 0;
 
   var $ = function (id) { return document.getElementById(id); };
   var amountEl = $("betrag"), currencyEl = $("waehrung"), otherEl = $("waehrung_andere");
@@ -102,9 +105,11 @@
     return bp % 100n === 0n ? (bp / 100n).toString() : formatInput(bp, 2);
   }
 
-  // allocate verteilt total proportional zu weights (größter Rest, bei
-  // Gleichstand der kleinere Index) – wie domain.Split bzw. web.allocate.
-  function allocate(total, weights) {
+  // allocate verteilt total proportional zu weights (größter Rest). weights
+  // gehören zu Personen in aufsteigender ID. Bei Gleichstand rotiert der
+  // Vorrang unter den Gleichrangigen um rot (wie domain.Split mit der
+  // Ausgaben-ID); ohne rot bekommt ihn der kleinere Index (wie web.allocate).
+  function allocate(total, weights, rot) {
     var sum = weights.reduce(function (a, b) { return a + b; }, 0n);
     if (sum <= 0n) return null;
     var out = [], rems = [], allocated = 0n;
@@ -115,6 +120,13 @@
     });
     var order = weights.map(function (_, i) { return i; });
     order.sort(function (a, b) { return rems[b] > rems[a] ? 1 : rems[b] < rems[a] ? -1 : a - b; });
+    for (var i = 0; rot && i < order.length;) {
+      var j = i + 1;
+      while (j < order.length && rems[order[j]] === rems[order[i]]) j++;
+      var n = j - i, r = ((rot % n) + n) % n, group = order.slice(i, j);
+      Array.prototype.splice.apply(order, [i, n].concat(group.slice(r), group.slice(0, r)));
+      i = j;
+    }
     for (var k = 0; allocated < total; k++) {
       out[order[k % order.length]] += 1n;
       allocated += 1n;
@@ -210,7 +222,7 @@
         return;
       }
       sumEl.textContent = "Summe 100 %.";
-      shares = allocate(total, weights);
+      shares = allocate(total, weights, rotation);
     } else if (m === "amount") {
       var target = cur === "EUR" ? total : parseMinor(amountEl.value, decimals(cur));
       var unit = cur === "EUR" ? " €" : " " + cur;
@@ -224,7 +236,7 @@
       sumEl.textContent = "Passt: " + formatInput(sum, dec) + unit + ".";
       shares = cur === "EUR" ? weights : allocate(total, weights);
     } else {
-      shares = allocate(total, weights);
+      shares = allocate(total, weights, rotation);
     }
     if (!shares) return;
     active.forEach(function (r, i) { r.share.textContent = formatCents(shares[i]); });

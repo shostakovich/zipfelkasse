@@ -60,9 +60,13 @@ type Share struct {
 
 // Split verteilt total (Cent, > 0) gemäß mode auf parts. Das Ergebnis ist
 // nach ParticipantID sortiert und summiert sich exakt zu total. Rundungsreste
-// werden nach der Methode des größten Rests verteilt; bei Gleichstand bekommt
-// die kleinere ParticipantID den Cent.
-func Split(mode SplitMode, total int64, parts []Part) ([]Share, error) {
+// werden nach der Methode des größten Rests verteilt. Bei Gleichstand rotiert
+// der Vorrang mit rotation (der Ausgaben-ID): Die gleichrangigen Personen
+// stehen nach ID sortiert im Kreis, der erste Cent geht an die mit Index
+// rotation mod Anzahl, der nächste an die folgende usw. So trägt bei vielen
+// ungerade geteilten Ausgaben nicht immer dieselbe Person den Extra-Cent.
+// Die JS-Vorschau (static/expense-form.js) rechnet genauso.
+func Split(mode SplitMode, total int64, parts []Part, rotation int64) ([]Share, error) {
 	if !mode.Valid() {
 		return nil, invalid("Unbekannte Aufteilungsart „%s“.", mode)
 	}
@@ -146,11 +150,29 @@ func Split(mode SplitMode, total int64, parts []Part) ([]Share, error) {
 	for i := range order {
 		order[i] = i
 	}
-	// Größter Rest zuerst; bei Gleichstand kleinere ID (ps ist nach ID sortiert).
+	// Größter Rest zuerst; Gleichrangige bleiben nach ID sortiert (ps ist es)
+	// und werden dann um rotation gedreht.
 	slices.SortStableFunc(order, func(a, b int) int { return cmp.Compare(rems[b], rems[a]) })
+	for i := 0; i < len(order); {
+		j := i + 1
+		for j < len(order) && rems[order[j]] == rems[order[i]] {
+			j++
+		}
+		n := int64(j - i)
+		rotate(order[i:j], int((rotation%n+n)%n))
+		i = j
+	}
+	// Der Rest ist kleiner als die Zahl der Personen: höchstens ein Cent je Person.
 	for k := 0; allocated < total; k++ {
-		out[order[k%len(order)]].AmountCents++
+		out[order[k]].AmountCents++
 		allocated++
 	}
 	return out, nil
+}
+
+// rotate dreht s um k Stellen nach links (s[k] steht danach vorn).
+func rotate(s []int, k int) {
+	slices.Reverse(s[:k])
+	slices.Reverse(s[k:])
+	slices.Reverse(s)
 }

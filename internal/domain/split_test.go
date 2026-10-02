@@ -38,7 +38,7 @@ func TestSplit(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := Split(tt.mode, tt.total, tt.parts)
+			got, err := Split(tt.mode, tt.total, tt.parts, 0)
 			if err != nil {
 				t.Fatalf("Split: %v", err)
 			}
@@ -59,8 +59,48 @@ func TestSplit(t *testing.T) {
 	}
 }
 
+// Bei Gleichstand im Rest rotiert der Extra-Cent mit dem Startwert
+// (Ausgaben-ID) reihum über die gleichrangigen Personen (nach ID sortiert).
+func TestSplitRotatesTies(t *testing.T) {
+	three := []Part{{3, 1}, {1, 1}, {2, 1}}
+	tests := []struct {
+		name     string
+		mode     SplitMode
+		total    int64
+		parts    []Part
+		rotation int64
+		want     map[int64]int64
+	}{
+		{"zwei Personen, gerade ID", SplitEqual, 1001, []Part{{1, 1}, {2, 1}}, 10, map[int64]int64{1: 501, 2: 500}},
+		{"zwei Personen, ungerade ID", SplitEqual, 1001, []Part{{1, 1}, {2, 1}}, 11, map[int64]int64{1: 500, 2: 501}},
+		{"drei, Start 0", SplitEqual, 1000, three, 0, map[int64]int64{1: 334, 2: 333, 3: 333}},
+		{"drei, Start 1", SplitEqual, 1000, three, 1, map[int64]int64{1: 333, 2: 334, 3: 333}},
+		{"drei, Start 2", SplitEqual, 1000, three, 2, map[int64]int64{1: 333, 2: 333, 3: 334}},
+		{"drei, Start 3 = 0", SplitEqual, 1000, three, 3, map[int64]int64{1: 334, 2: 333, 3: 333}},
+		{"zwei Cent, Start 1", SplitEqual, 1001, three, 1, map[int64]int64{1: 333, 2: 334, 3: 334}},
+		{"zwei Cent, Start 2 (reihum)", SplitEqual, 1001, three, 2, map[int64]int64{1: 334, 2: 333, 3: 334}},
+		{"negativer Startwert", SplitEqual, 1000, three, -1, map[int64]int64{1: 333, 2: 333, 3: 334}},
+		{"größter Rest geht vor", SplitShares, 5, []Part{{1, 2}, {2, 1}, {3, 1}}, 1, map[int64]int64{1: 3, 2: 1, 3: 1}},
+		{"nur die Gleichrangigen rotieren, Start 0", SplitShares, 6, []Part{{1, 2}, {2, 1}, {3, 1}}, 0, map[int64]int64{1: 3, 2: 2, 3: 1}},
+		{"nur die Gleichrangigen rotieren, Start 1", SplitShares, 6, []Part{{1, 2}, {2, 1}, {3, 1}}, 1, map[int64]int64{1: 3, 2: 1, 3: 2}},
+		{"Prozent 50/50", SplitPercent, 101, []Part{{1, 5000}, {2, 5000}}, 7, map[int64]int64{1: 50, 2: 51}},
+		{"Beträge unberührt", SplitAmount, 1000, []Part{{1, 250}, {2, 750}}, 1, map[int64]int64{1: 250, 2: 750}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := Split(tt.mode, tt.total, tt.parts, tt.rotation)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if m := amounts(got); !reflect.DeepEqual(m, tt.want) {
+				t.Errorf("got %v, want %v", m, tt.want)
+			}
+		})
+	}
+}
+
 func TestSplitEqualStoresWeightOne(t *testing.T) {
-	got, err := Split(SplitEqual, 100, []Part{{1, 0}, {2, 5}})
+	got, err := Split(SplitEqual, 100, []Part{{1, 0}, {2, 5}}, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -93,7 +133,7 @@ func TestSplitErrors(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			_, err := Split(tt.mode, tt.total, tt.parts)
+			_, err := Split(tt.mode, tt.total, tt.parts, 0)
 			if err == nil {
 				t.Fatal("erwarte Fehler")
 			}

@@ -91,8 +91,15 @@ func (s *Store) SchemaVersion(ctx context.Context) (int, error) {
 	return v, err
 }
 
-// migrate spielt alle migrations/NNN_*.sql ein, deren Nummer größer als
-// PRAGMA user_version ist, jede in einer eigenen Transaktion.
+// goMigrations sind Migrationen in Go für Datenkorrekturen, die SQL allein
+// nicht kann. Sie teilen sich den Nummernkreis mit migrations/*.sql.
+var goMigrations = map[int]func(s *Store, ctx context.Context, tx *sql.Tx) error{
+	2: (*Store).resplitShares,
+}
+
+// migrate spielt alle Migrationen (migrations/NNN_*.sql und goMigrations)
+// ein, deren Nummer größer als PRAGMA user_version ist, jede in einer eigenen
+// Transaktion.
 func (s *Store) migrate(ctx context.Context) error {
 	names, err := fs.Glob(migrationsFS, "migrations/*.sql")
 	if err != nil {
@@ -101,6 +108,7 @@ func (s *Store) migrate(ctx context.Context) error {
 	type migration struct {
 		n    int
 		name string
+		fn   func(s *Store, ctx context.Context, tx *sql.Tx) error
 	}
 	var ms []migration
 	for _, name := range names {
@@ -110,7 +118,10 @@ func (s *Store) migrate(ctx context.Context) error {
 		if !ok || err != nil || n <= 0 {
 			return fmt.Errorf("migration %s: dateiname muss mit NNN_ beginnen", base)
 		}
-		ms = append(ms, migration{n, name})
+		ms = append(ms, migration{n: n, name: name})
+	}
+	for n, fn := range goMigrations {
+		ms = append(ms, migration{n: n, name: fmt.Sprintf("%03d (Go)", n), fn: fn})
 	}
 	slices.SortFunc(ms, func(a, b migration) int { return a.n - b.n })
 
@@ -125,13 +136,19 @@ func (s *Store) migrate(ctx context.Context) error {
 		if m.n <= current {
 			continue
 		}
-		body, err := migrationsFS.ReadFile(m.name)
-		if err != nil {
-			return err
-		}
 		err = s.inTx(ctx, func(tx *sql.Tx) error {
-			if _, err := tx.ExecContext(ctx, string(body)); err != nil {
-				return err
+			if m.fn != nil {
+				if err := m.fn(s, ctx, tx); err != nil {
+					return err
+				}
+			} else {
+				body, err := migrationsFS.ReadFile(m.name)
+				if err != nil {
+					return err
+				}
+				if _, err := tx.ExecContext(ctx, string(body)); err != nil {
+					return err
+				}
 			}
 			_, err := tx.ExecContext(ctx, fmt.Sprintf("PRAGMA user_version = %d", m.n))
 			return err
