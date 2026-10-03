@@ -55,10 +55,6 @@ module Zipfelkasse::Domain
     def key : String
       to_s.underscore
     end
-
-    def self.from_key?(key : String) : self?
-      values.find { |member| member.key == key }
-    end
   end
 
   # Occurrences are always computed from the anchor (n=0): an anchor on

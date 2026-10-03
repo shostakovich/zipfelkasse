@@ -9,14 +9,6 @@ module Zipfelkasse
       Person
       CategoryMonth
 
-      def key : String
-        to_s.underscore
-      end
-
-      def self.from_key?(key : String) : self?
-        values.find { |member| member.key == key }
-      end
-
       # Groupings whose rows are periods only.
       def time? : Bool
         year? || month? || week?

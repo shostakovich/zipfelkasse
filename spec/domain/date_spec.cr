@@ -59,9 +59,6 @@ describe Domain do
 
   it "names the frequencies by their stored keys" do
     Domain::Frequency.values.map(&.key).should eq %w(weekly monthly yearly)
-    Domain::Frequency.from_key?("monthly").should eq Domain::Frequency::Monthly
-    Domain::Frequency.from_key?("Monthly").should be_nil
-    Domain::Frequency.from_key?("daily").should be_nil
   end
 
   describe ".parse_date" do

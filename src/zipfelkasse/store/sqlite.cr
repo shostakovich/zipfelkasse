@@ -116,13 +116,6 @@ module Zipfelkasse
       end
     end
 
-    module EnumText(T)
-      def self.from_rs(rs : DB::ResultSet) : T
-        key = rs.read(String)
-        T.from_key?(key) || raise ArgumentError.new("unknown #{T} #{key.inspect}")
-      end
-    end
-
     module JSONText(T)
       def self.from_rs(rs : DB::ResultSet) : T
         T.from_json(rs.read(String))

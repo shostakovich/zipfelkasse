@@ -12,10 +12,6 @@ module Zipfelkasse::Domain
     def key : String
       to_s.underscore
     end
-
-    def self.from_key?(key : String) : self?
-      values.find { |member| member.key == key }
-    end
   end
 
   # Caps shares so that total * weight cannot overflow.

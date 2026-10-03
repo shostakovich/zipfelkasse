@@ -13,10 +13,6 @@ module Zipfelkasse
       def key : String
         to_s.underscore
       end
-
-      def self.from_key?(key : String) : self?
-        values.find { |member| member.key == key }
-      end
     end
 
     # A changed property, already formatted for display (German field names,
@@ -57,8 +53,6 @@ module Zipfelkasse
 
       @[DB::Field(converter: Zipfelkasse::Store::TimeText)]
       @at : Time
-      @[DB::Field(converter: Zipfelkasse::Store::EnumText(Zipfelkasse::Store::Action))]
-      @action : Action
       @[DB::Field(key: "details_json", converter: Zipfelkasse::Store::ActivityDetails)]
       @details : ActivityDetails
     end

@@ -35,8 +35,6 @@ module Zipfelkasse
 
       @[DB::Field(key: "template_json", converter: Zipfelkasse::Store::JSONText(Zipfelkasse::Store::ExpenseInput))]
       @template : ExpenseInput
-      @[DB::Field(converter: Zipfelkasse::Store::EnumText(Zipfelkasse::Domain::Frequency))]
-      @frequency : Domain::Frequency
       @[DB::Field(converter: Zipfelkasse::Store::DateText)]
       @start_date : Time
       @[DB::Field(converter: Zipfelkasse::Store::DateText)]

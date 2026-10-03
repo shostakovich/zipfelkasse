@@ -134,7 +134,7 @@ module Zipfelkasse::Web
         amount: (body["betrag"]? || "").strip, rate: (body["kurs"]? || "").strip,
         rate_source: Domain::FXSource.from_key?(body["kurs_quelle"]? || ""), paid_by: paid_by,
         notes: body["notiz"]? || "", reimbursement: !body["rueckzahlung"]?.presence.nil?,
-        split_mode: Domain::SplitMode.from_key?(body["aufteilung"]? || "") || Domain::SplitMode::Equal, rows: rows)
+        split_mode: Domain::SplitMode.parse?(body["aufteilung"]? || "") || Domain::SplitMode::Equal, rows: rows)
     end
 
     def reimbursement? : Bool

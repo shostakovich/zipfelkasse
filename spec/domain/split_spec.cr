@@ -147,9 +147,6 @@ describe Domain do
 
   it "names the split modes by their stored keys" do
     Domain::SplitMode.values.map(&.key).should eq %w(equal shares percent amount)
-    Domain::SplitMode.from_key?("shares").should eq Domain::SplitMode::Shares
-    Domain::SplitMode.from_key?("Shares").should be_nil
-    Domain::SplitMode.from_key?("foo").should be_nil
   end
 
   describe ".parse_weight" do

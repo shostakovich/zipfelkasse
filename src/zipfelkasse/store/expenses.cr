@@ -9,14 +9,6 @@ module Zipfelkasse
       AmountDesc
       AmountAsc
 
-      def key : String
-        to_s.underscore
-      end
-
-      def self.from_key?(key : String) : self?
-        values.find { |member| member.key == key }
-      end
-
       def order_sql : String
         case self
         in .date_desc?   then "e.date DESC, e.id DESC"
@@ -91,8 +83,6 @@ module Zipfelkasse
       @date : Time
       @[DB::Field(key: "is_reimbursement")]
       @reimbursement : Bool
-      @[DB::Field(converter: Zipfelkasse::Store::EnumText(Zipfelkasse::Domain::SplitMode))]
-      @split_mode : Domain::SplitMode
       @[DB::Field(converter: Zipfelkasse::Store::FXSourceText)]
       @fx_source : Domain::FXSource?
       @[DB::Field(converter: Zipfelkasse::Store::TimeText)]

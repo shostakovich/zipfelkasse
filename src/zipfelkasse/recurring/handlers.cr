@@ -141,7 +141,7 @@ module Zipfelkasse::Recurring
 
     private def create(env : HTTP::Server::Context) : String
       expense = find_expense(env, env.form("ausgabe"))
-      frequency = Domain::Frequency.from_key?(env.form("haeufigkeit"))
+      frequency = Domain::Frequency.parse?(env.form("haeufigkeit"))
       id = begin
         @d.store.create_recurring_from_expense(env.me.id, expense.id, frequency || raise Domain::ValidationError.new("Bitte eine Häufigkeit wählen."))
       rescue ex : Domain::ValidationError
