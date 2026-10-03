@@ -15,7 +15,8 @@ describe "Web errors" do
     SPEC_LOG.to_s.should contain %(level=ERROR msg="Platte voll" err="Platte voll")
   end
 
-  it "answers with plain text when even the error page cannot be rendered" do
+  it "renders the error page with the default group name when the database is closed" do
+    store.set_group_name(nil, "WG Sonnenallee")
     server = TestServer.new(Config.new, household.store)
     cookies = {Web::IDENTITY_COOKIE => household.anna.to_s}
     store.close
@@ -23,7 +24,7 @@ describe "Web errors" do
     response = server.get("/salden", cookies)
 
     response.status_code.should eq 500
-    response.headers["Content-Type"].should start_with "text/plain"
-    response.body.should eq "Da ist etwas schiefgegangen.\n"
+    response.headers["Content-Type"].should start_with "text/html"
+    response.body.should contain "<title>Da ist etwas schiefgegangen. · Zipfelkasse</title>"
   end
 end

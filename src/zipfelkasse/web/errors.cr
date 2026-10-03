@@ -71,11 +71,18 @@ module Zipfelkasse::Web
       "#{HTTP::Status.new(status).description}\n"
     else
       message ||= text.page
-      render_page(env, store, status, Page.new(message), ErrorView.new(message))
+      render_page(env, store, status, Page.new(message), ErrorView.new(message), group_name_for_error(store))
     end
   rescue ex
     Log.error(exception: ex) { "error page failed" }
     env.response.content_type = "text/plain; charset=utf-8"
     "#{message || "Da ist etwas schiefgegangen."}\n"
+  end
+
+  # The database may be the error the page reports.
+  private def self.group_name_for_error(store : Store) : String
+    store.group_name
+  rescue DB::Error | SQLite3::Exception
+    Store::DEFAULT_GROUP_NAME
   end
 end

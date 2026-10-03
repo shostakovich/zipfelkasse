@@ -92,8 +92,9 @@ module Zipfelkasse::Web
     end
   end
 
-  def self.render_page(env : HTTP::Server::Context, store : Store, status : Int32, page : Page, content : View) : String
-    html = Layout.new(page, content, env.me?, store.group_name, env.take_flash).to_s
+  def self.render_page(env : HTTP::Server::Context, store : Store, status : Int32, page : Page, content : View,
+                       group_name : String = store.group_name) : String
+    html = Layout.new(page, content, env.me?, group_name, env.take_flash).to_s
     response = env.response
     response.status_code = status
     response.content_type = "text/html; charset=utf-8"
