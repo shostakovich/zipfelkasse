@@ -39,9 +39,9 @@ end
 private def last_activity(store : Zipfelkasse::Store) : String
   acts = store.list_activity(Zipfelkasse::Store::ActivityFilter.new(limit: 1))
   acts.size.should eq 1
-  acts[0].action.should eq Zipfelkasse::Store::ACTION_SETTINGS_UPDATED
-  acts[0].actor_id.should_not eq 0
-  acts[0].details.text
+  acts[0].action.should eq Zipfelkasse::Store::Action::SettingsUpdated
+  acts[0].actor_id.should_not be_nil
+  acts[0].details.text.to_s
 end
 
 private def wait_for(timeout = 2.seconds, &) : Nil
@@ -56,7 +56,7 @@ describe Zipfelkasse::FX::Service do
   it "returns 1 for EUR and rejects invalid currencies without loading" do
     with_service do |s, fake|
       r = s.rate(" eur ", date("2026-09-01"))
-      r.should eq Domain::FXRate.new("EUR", date("2026-09-01"), 1.0, Domain::FX_SOURCE_FIXED)
+      r.should eq Domain::FXRate.new("EUR", date("2026-09-01"), 1.0, Domain::FXSource::Fixed)
       ["", "US", "US1", "EURO"].each do |bad|
         store_validation_error { s.rate(bad, date("2026-09-01")) }
       end
@@ -67,7 +67,7 @@ describe Zipfelkasse::FX::Service do
   it "loads the daily file and then answers from the cache" do
     with_service do |s, fake|
       r = s.rate("usd", date("2026-10-01"))
-      r.should eq Domain::FXRate.new("USD", date("2026-10-01"), 1.1298, Domain::FX_SOURCE_ECB)
+      r.should eq Domain::FXRate.new("USD", date("2026-10-01"), 1.1298, Domain::FXSource::Ecb)
       fake.count(FX::FILE_DAILY).should eq 1
       fake.total.should eq 1
       fake.agents[0].should start_with("zipfelkasse/")
@@ -148,16 +148,16 @@ describe Zipfelkasse::FX::Service do
 
   it "prefers manual rates" do
     with_service do |s, fake, store|
-      store.set_manual_fx_rate(0_i64, "USD", date("2026-09-30"), 1.2)
-      store.set_manual_fx_rate(0_i64, "XYZ", date("2026-01-01"), 4.5)
+      store.set_manual_fx_rate(nil, "USD", date("2026-09-30"), 1.2)
+      store.set_manual_fx_rate(nil, "XYZ", date("2026-01-01"), 4.5)
       r = s.rate("USD", date("2026-10-01"))
-      r.should eq Domain::FXRate.new("USD", date("2026-09-30"), 1.2, Domain::FX_SOURCE_MANUAL)
+      r.should eq Domain::FXRate.new("USD", date("2026-09-30"), 1.2, Domain::FXSource::Manual)
       s.rate("XYZ", date("2026-06-01")).rate.should eq 4.5
       fake.total.should eq 0
       # Before the manual rate, the ECB rate applies.
       r = s.rate("USD", date("2026-09-29"))
       r.rate.should eq 1.1251
-      r.source.should eq Domain::FX_SOURCE_ECB
+      r.source.should eq Domain::FXSource::Ecb
     end
   end
 
@@ -347,16 +347,16 @@ describe "FX handlers" do
       res = srv.post_form("/einstellungen/kurse", {"waehrung" => "thb", "datum" => "2026-09-01", "kurs" => "38,02"}, me)
       res.status_code.should eq 303
       res.headers["Location"].should eq "/einstellungen/kurse"
-      store.lookup_fx_rate("THB", Domain::FX_SOURCE_MANUAL, date("2026-10-01")).rate.should eq 38.02
+      store.lookup_fx_rate?("THB", Domain::FXSource::Manual, date("2026-10-01")).not_nil!.rate.should eq 38.02
       res = srv.post_form("/einstellungen/kurse", {"waehrung" => "IDR", "datum" => "02.09.2026", "kurs" => "20.274,71"}, me)
       res.status_code.should eq 303
-      store.lookup_fx_rate("IDR", Domain::FX_SOURCE_MANUAL, date("2026-10-01")).rate.should eq 20274.71
+      store.lookup_fx_rate?("IDR", Domain::FXSource::Manual, date("2026-10-01")).not_nil!.rate.should eq 20274.71
       # Thousands separators as for amounts: "17.000" = 17000, also English
       # "17,000.5"; after a leading zero the dot is a decimal point.
       {"0.856" => 0.856, "17.000" => 17000.0, "17,000.5" => 17000.5}.each do |input, want|
         res = srv.post_form("/einstellungen/kurse", {"waehrung" => "VND", "datum" => "2026-09-03", "kurs" => input}, me)
         res.status_code.should eq 303
-        store.lookup_fx_rate("VND", Domain::FX_SOURCE_MANUAL, date("2026-10-01")).rate.should eq want
+        store.lookup_fx_rate?("VND", Domain::FXSource::Manual, date("2026-10-01")).not_nil!.rate.should eq want
       end
 
       [

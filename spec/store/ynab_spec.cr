@@ -8,11 +8,11 @@ private def target(plan : String, account : String, start : String) : Store::YNA
 end
 
 private def ynab_activity(s : Store) : Array(Store::Activity)
-  s.list_activity.select(&.details.text.starts_with?("YNAB"))
+  s.list_activity.select { |a| a.details.text.try(&.starts_with?("YNAB")) }
 end
 
 private def settings_texts(s : Store) : Array(String)
-  ynab_activity(s).map(&.details.text)
+  ynab_activity(s).map(&.details.text.to_s)
 end
 
 describe "Store YNAB" do
@@ -31,7 +31,7 @@ describe "Store YNAB" do
       # Ben has a token, Cleo is archived, Anna disconnects later.
       s.set_ynab_token(f.ben, "tok-b")
       s.set_ynab_token(f.cleo, "tok-c")
-      s.set_participant_archived(0_i64, f.cleo, true)
+      s.set_participant_archived(nil, f.cleo, true)
       s.list_ynab_configs.map(&.participant_id).should eq [f.anna, f.ben]
       s.set_ynab_token(f.anna, "")
       c = s.get_ynab_config(f.anna)
@@ -61,7 +61,7 @@ describe "Store YNAB" do
         "YNAB-Token ersetzt (Plan und Konto zurückgesetzt)",
         "YNAB-Verbindung getrennt",
       ]
-      ynab_activity(s).map { |a| {a.actor_id, a.action} }.uniq.should eq [{f.anna, Store::ACTION_SETTINGS_UPDATED}]
+      ynab_activity(s).map { |a| {a.actor_id, a.action} }.uniq.should eq [{f.anna, Store::Action::SettingsUpdated}]
     end
   end
 

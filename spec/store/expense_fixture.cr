@@ -26,6 +26,17 @@ struct ExpenseFixture
   end
 end
 
+# An expense as the store returns it, built from an input.
+def build_expense(id : Int64, input : Zipfelkasse::Store::ExpenseInput, shares = [] of Zipfelkasse::Domain::Share,
+                  category_name : String? = nil, paid_by_name : String = "", at : Time = Time.utc(2026, 1, 1)) : Zipfelkasse::Store::Expense
+  Zipfelkasse::Store::Expense.new(id: id, title: input.title, date: input.date.not_nil!, category_id: input.category_id,
+    paid_by: input.paid_by.not_nil!, notes: input.notes, reimbursement: input.reimbursement?, split_mode: input.split_mode,
+    amount_cents: input.amount_cents, original_amount_minor: input.original_amount_minor,
+    original_currency: input.original_currency, fx_rate: input.fx_rate || 1.0, fx_source: input.fx_source,
+    recurring_id: input.recurring_id, created_at: at, updated_at: at, deleted_at: nil, category_name: category_name,
+    paid_by_name: paid_by_name, shares: shares)
+end
+
 def with_expense_fixture(&)
   f = ExpenseFixture.new
   begin

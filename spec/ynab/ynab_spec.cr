@@ -204,7 +204,7 @@ describe "YNAB sync" do
       e.must_sync(false).created.should eq 5
       e.expect_requests(POST)
       # Renaming the payer changes all memos: a single PATCH.
-      e.st.rename_participant(0_i64, e.anna, "Änna")
+      e.st.rename_participant(nil, e.anna, "Änna")
       e.must_sync(false).updated.should eq 5
       e.expect_requests(PATCH)
       e.fake.live.each { |tx| tx.memo.not_nil!.should contain("bezahlt von Änna") }
@@ -281,7 +281,7 @@ describe "YNAB sync" do
     with_env do |e|
       e.connect("2026-09-01")
       input = e.input("Diner in NYC", Domain.to_eur_cents(9000, "USD", 1.125), "2026-09-20", e.cleo, e.anna, e.cleo)
-      input.original_currency, input.original_amount_minor, input.fx_rate, input.fx_source = "USD", 9000_i64, 1.125, Domain::FX_SOURCE_ECB
+      input.original_currency, input.original_amount_minor, input.fx_rate, input.fx_source = "USD", 9000_i64, 1.125, Domain::FXSource::Ecb
       id = e.create(input)
       e.must_sync(false)
       tx = e.fake.live[0]
@@ -490,14 +490,14 @@ describe "YNAB sync" do
   end
 
   it "builds postings" do
-    e = Store::Expense.new(7_i64, Store::ExpenseInput.new(title: "x" * 250, date: date("2026-09-01"), amount_cents: 1000,
-      original_currency: "EUR"), paid_by_name: "Anna",
-      shares: [Domain::Share.new(1_i64, amount_cents: 500_i64), Domain::Share.new(2_i64, amount_cents: 500_i64)])
+    input = Store::ExpenseInput.new(title: "x" * 250, date: date("2026-09-01"), paid_by: 1_i64, amount_cents: 1000)
+    shares = [Domain::Share.new(1_i64, amount_cents: 500_i64), Domain::Share.new(2_i64, amount_cents: 500_i64)]
+    e = build_expense(7_i64, input, shares, nil, "Anna")
     p = YNAB.posting_for(e, 1_i64).not_nil!
     {p.amount_cents, p.payee.size, p.memo}.should eq({500, YNAB::MAX_PAYEE_LEN, "Gesamt 10,00 € · bezahlt von Anna · zipfelkasse #7"})
     YNAB.posting_for(e, 3_i64).should be_nil
-    e.input.reimbursement = true
-    YNAB.posting_for(e, 1_i64).should be_nil
+    input.reimbursement = true
+    YNAB.posting_for(build_expense(7_i64, input, shares, nil, "Anna"), 1_i64).should be_nil
     YNAB.marker_id("bla · zipfelkasse #123").should eq 123
     YNAB.marker_id("zipfelkasse #12 und mehr").should be_nil
     YNAB.marker_id("zipfelkasse #12\n").should eq 12
@@ -873,8 +873,8 @@ describe "YNAB settings page" do
         e.post(path, form).status_code.should eq 303
         acts = e.st.list_activity(Store::ActivityFilter.new(limit: 1))
         acts.size.should eq 1
-        {acts[0].action, acts[0].actor_id}.should eq({Store::ACTION_SETTINGS_UPDATED, e.anna})
-        acts[0].details.text.should_not contain(YNABSpec::TOKEN)
+        {acts[0].action, acts[0].actor_id}.should eq({Store::Action::SettingsUpdated, e.anna})
+        acts[0].details.text.to_s.should_not contain(YNABSpec::TOKEN)
         acts[0].details.text.should eq want
       end
     end

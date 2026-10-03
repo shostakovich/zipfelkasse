@@ -6,9 +6,9 @@
   <div class="activity-main">
     <div>
       <%- unless a.verb.empty? -%>
-      <strong><%= a.actor %></strong> hat <em>„<%= a.details.title %>“</em> <%= a.verb %><% if a.show_amount %> <span class="amount muted">(<%= eur a.details.amount_cents %>)</span><% end %>.
+      <strong><%= a.actor %></strong> hat <em>„<%= a.details.title %>“</em> <%= a.verb %><% if a.show_amount %> <span class="amount muted">(<%= eur a.amount_cents %>)</span><% end %>.
       <%- else -%>
-      <strong><%= a.actor %></strong>: <% if a.details.text.empty? %><%= a.action %><% else %><%= a.details.text %><% end %>
+      <strong><%= a.actor %></strong>: <%= a.details.text || a.action.key %>
       <%- end -%>
     </div>
     <%- unless a.details.changes.empty? %>

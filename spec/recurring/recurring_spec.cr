@@ -21,7 +21,7 @@ private class FakeFX
       raise e
     end
     r = @rates[currency]? || raise Domain::ValidationError.new("Für #{currency} gibt es keinen EZB-Kurs.")
-    Domain::FXRate.new(currency, date, r, Domain::FX_SOURCE_ECB)
+    Domain::FXRate.new(currency, date, r, Domain::FXSource::Ecb)
   end
 end
 
@@ -38,8 +38,8 @@ private class Env
     @srv = TestServer.new(config)
     @srv.d.fx = @fx
     @svc = Recurring::Service.new(@srv.d)
-    @anna = st.create_participant(0_i64, "Anna")
-    @ben = st.create_participant(0_i64, "Ben")
+    @anna = st.create_participant(nil, "Anna")
+    @ben = st.create_participant(nil, "Ben")
   end
 
   def st : Store
@@ -47,7 +47,7 @@ private class Env
   end
 
   def expense(title : String, d : String, amount : Int64) : Store::ExpenseInput
-    Store::ExpenseInput.new(title: title, date: date(d), paid_by: anna, split_mode: Domain::SPLIT_EQUAL,
+    Store::ExpenseInput.new(title: title, date: date(d), paid_by: anna, split_mode: Domain::SplitMode::Equal,
       amount_cents: amount, parts: [Domain::Part.new(anna), Domain::Part.new(ben)])
   end
 
@@ -111,7 +111,7 @@ end
 describe Zipfelkasse::Recurring do
   it "clamps monthly occurrences to the month end" do
     with_env do |e|
-      rid, _ = e.rule(e.expense("Miete", "2026-01-31", 100000), Domain::FREQ_MONTHLY)
+      rid, _ = e.rule(e.expense("Miete", "2026-01-31", 100000), Domain::Frequency::Monthly)
       e.materialize("2026-02-27", 0)
       e.materialize("2026-05-15", 3) # three missed occurrences at once
       e.dates(rid).should eq "2026-01-31 2026-02-28 2026-03-31 2026-04-30"
@@ -122,13 +122,13 @@ describe Zipfelkasse::Recurring do
         {x.title, x.amount_cents, x.shares.size, x.paid_by}.should eq({"Miete", 100000, 2, e.anna})
       end
       act = e.last_activity
-      {act.action, act.actor_id}.should eq({Store::ACTION_EXPENSE_CREATED, 0}) # created by the system
+      {act.action, act.actor_id}.should eq({Store::Action::ExpenseCreated, nil}) # created by the system
     end
   end
 
   it "handles leap years" do
     with_env do |e|
-      yearly, _ = e.rule(e.expense("Versicherung", "2024-02-29", 12000), Domain::FREQ_YEARLY)
+      yearly, _ = e.rule(e.expense("Versicherung", "2024-02-29", 12000), Domain::Frequency::Yearly)
       e.materialize("2028-03-01", 4)
       e.dates(yearly).should eq "2024-02-29 2025-02-28 2026-02-28 2027-02-28 2028-02-29"
     end
@@ -136,7 +136,7 @@ describe Zipfelkasse::Recurring do
 
   it "catches up weekly occurrences" do
     with_env do |e|
-      rid, _ = e.rule(e.expense("Putzen", "2026-09-01", 4000), Domain::FREQ_WEEKLY)
+      rid, _ = e.rule(e.expense("Putzen", "2026-09-01", 4000), Domain::Frequency::Weekly)
       e.materialize("2026-10-02", 4)
       e.dates(rid).should eq "2026-09-01 2026-09-08 2026-09-15 2026-09-22 2026-09-29"
       e.next(rid).should eq "2026-10-06"
@@ -145,11 +145,11 @@ describe Zipfelkasse::Recurring do
 
   it "creates no duplicates after a crash or restart" do
     with_env do |e|
-      rid, _ = e.rule(e.expense("Strom", "2026-01-15", 5000), Domain::FREQ_MONTHLY)
+      rid, _ = e.rule(e.expense("Strom", "2026-01-15", 5000), Domain::Frequency::Monthly)
       # A crash: the instance for Feb 15 exists, but next_date was not advanced.
       input = e.expense("Strom", "2026-02-15", 5000)
       input.recurring_id = rid
-      e.st.create_expense(0_i64, input)
+      e.st.create_expense(nil, input)
       e.materialize("2026-03-20", 1) # only Mar 15 is new
       e.dates(rid).should eq "2026-01-15 2026-02-15 2026-03-15"
       # Restart: a new service on the same database.
@@ -163,11 +163,11 @@ describe Zipfelkasse::Recurring do
 
   it "does not catch up paused occurrences" do
     with_env do |e|
-      rid, _ = e.rule(e.expense("Kino", "2026-01-10", 2000), Domain::FREQ_MONTHLY)
-      e.st.set_recurring_active(0_i64, rid, false, date("2026-01-20"))
+      rid, _ = e.rule(e.expense("Kino", "2026-01-10", 2000), Domain::Frequency::Monthly)
+      e.st.set_recurring_active(nil, rid, false, date("2026-01-20"))
       e.materialize("2026-05-01", 0)
       # Resumed on May 1: April and earlier are not caught up.
-      e.st.set_recurring_active(0_i64, rid, true, date("2026-05-01"))
+      e.st.set_recurring_active(nil, rid, true, date("2026-05-01"))
       e.materialize("2026-05-01", 0)
       e.materialize("2026-05-10", 1)
       e.dates(rid).should eq "2026-01-10 2026-05-10"
@@ -177,14 +177,14 @@ describe Zipfelkasse::Recurring do
   it "uses the rate of the occurrence date for a foreign currency" do
     with_env do |e|
       input = e.expense("Cloud", "2026-01-05", 9091)
-      input.original_currency, input.original_amount_minor, input.fx_rate, input.fx_source = "USD", 10000_i64, 1.1, Domain::FX_SOURCE_ECB
-      rid, _ = e.rule(input, Domain::FREQ_MONTHLY)
+      input.original_currency, input.original_amount_minor, input.fx_rate, input.fx_source = "USD", 10000_i64, 1.1, Domain::FXSource::Ecb
+      rid, _ = e.rule(input, Domain::Frequency::Monthly)
 
       e.fx.rates["USD"] = 1.25
       e.materialize("2026-02-05", 1)
       got = e.instances(rid)[1]
       {got.amount_cents, got.fx_rate, got.original_amount_minor, got.original_currency, got.fx_source}
-        .should eq({8000, 1.25, 10000, "USD", Domain::FX_SOURCE_ECB})
+        .should eq({8000, 1.25, 10000, "USD", Domain::FXSource::Ecb})
       e.fx.calls.should eq [date("2026-02-05")]
 
       # ECB not reachable: nothing is created and next_date stays, so the
@@ -212,24 +212,24 @@ describe Zipfelkasse::Recurring do
   it "does not carry over a manual template rate" do
     with_env do |e|
       input = e.expense("Cloud", "2026-01-05", 0)
-      input.original_currency, input.original_amount_minor, input.fx_rate, input.fx_source = "USD", 10000_i64, 1.3, Domain::FX_SOURCE_MANUAL
-      rid, _ = e.rule(input, Domain::FREQ_MONTHLY)
+      input.original_currency, input.original_amount_minor, input.fx_rate, input.fx_source = "USD", 10000_i64, 1.3, Domain::FXSource::Manual
+      rid, _ = e.rule(input, Domain::Frequency::Monthly)
       got = e.instances(rid)[0]
       {got.amount_cents, got.fx_rate}.should eq({7692, 1.3})
       e.fx.rates["USD"] = 1.25
       e.materialize("2026-02-05", 1)
       got = e.instances(rid)[1]
-      {got.amount_cents, got.fx_rate, got.fx_source}.should eq({8000, 1.25, Domain::FX_SOURCE_ECB})
+      {got.amount_cents, got.fx_rate, got.fx_source}.should eq({8000, 1.25, Domain::FXSource::Ecb})
     end
   end
 
   it "keeps fixed amounts in the foreign currency and converts the shares" do
     with_env do |e|
       input = e.expense("Hotel", "2026-01-05", 0)
-      input.original_currency, input.original_amount_minor, input.fx_rate, input.fx_source = "USD", 10000_i64, 1.1, Domain::FX_SOURCE_ECB
-      input.split_mode = Domain::SPLIT_AMOUNT
+      input.original_currency, input.original_amount_minor, input.fx_rate, input.fx_source = "USD", 10000_i64, 1.1, Domain::FXSource::Ecb
+      input.split_mode = Domain::SplitMode::Amount
       input.parts = [Domain::Part.new(e.anna, 6000), Domain::Part.new(e.ben, 4000)]
-      rid, _ = e.rule(input, Domain::FREQ_MONTHLY)
+      rid, _ = e.rule(input, Domain::Frequency::Monthly)
       e.fx.rates["USD"] = 1.25
       e.materialize("2026-02-05", 1)
       got = e.instances(rid)[1]
@@ -285,22 +285,22 @@ describe Zipfelkasse::Recurring do
       }.each do |action, text|
         e.post("#{base}/#{action}").status_code.should eq 303
         act = e.last_activity
-        {act.action, act.actor_id, act.details.text}.should eq({Store::ACTION_SETTINGS_UPDATED, e.ben, text})
+        {act.action, act.actor_id, act.details.text}.should eq({Store::Action::SettingsUpdated, e.ben, text})
         e.post("/einstellungen/wiederkehrend/999/#{action}").status_code.should eq 404
       end
       e.post("#{base}/loeschen").status_code.should eq 303
       e.post("#{base}/loeschen").status_code.should eq 404
       e.st.list_expenses.size.should eq 2
       act = e.last_activity
-      {act.action, act.actor_id}.should eq({Store::ACTION_RECURRING_DELETED, e.ben})
+      {act.action, act.actor_id}.should eq({Store::Action::RecurringDeleted, e.ben})
     end
   end
 
   it "creates at most 400 occurrences per rule and run" do
     with_env do |e|
-      rid, _ = e.rule(e.expense("Putzen", "2000-01-03", 100), Domain::FREQ_WEEKLY)
+      rid, _ = e.rule(e.expense("Putzen", "2000-01-03", 100), Domain::Frequency::Weekly)
       e.materialize("2026-10-02", 400)
-      e.next(rid).should eq Store.format_date(Domain.occurrence(Domain::FREQ_WEEKLY, date("2000-01-03"), 401))
+      e.next(rid).should eq Store.format_date(Domain.occurrence(Domain::Frequency::Weekly, date("2000-01-03"), 401))
       e.materialize("2026-10-02", 400)
       e.instances(rid).size.should eq 801
     end
@@ -309,8 +309,8 @@ describe Zipfelkasse::Recurring do
   it "runs at a fixed interval from the start, not an interval after each run" do
     with_env do |e|
       input = e.expense("Cloud", "2026-08-20", 9091)
-      input.original_currency, input.original_amount_minor, input.fx_rate, input.fx_source = "USD", 10000_i64, 1.1, Domain::FX_SOURCE_ECB
-      e.rule(input, Domain::FREQ_MONTHLY)
+      input.original_currency, input.original_amount_minor, input.fx_rate, input.fx_source = "USD", 10000_i64, 1.1, Domain::FXSource::Ecb
+      e.rule(input, Domain::Frequency::Monthly)
       # Every run takes 150 ms and fails, so the occurrence stays due.
       starts = [] of Time::Instant
       e.fx.on_rate = -> { starts << Time.instant; sleep 150.milliseconds }
@@ -335,20 +335,20 @@ describe Zipfelkasse::Recurring do
   # The run works on a snapshot of the rule and must not override the change.
   describe "a rule changed during its catch-up" do
     {
-      {"paused", ->(e : Env, rid : Int64) { e.st.set_recurring_active(0_i64, rid, false, date("2026-05-10")) },
+      {"paused", ->(e : Env, rid : Int64) { e.st.set_recurring_active(nil, rid, false, date("2026-05-10")) },
        "2026-01-05 2026-02-05", "2026-03-05"},
       {"deleted", ->(e : Env, rid : Int64) { e.st.delete_recurring(e.anna, rid) }, "", ""},
       {"paused and resumed", ->(e : Env, rid : Int64) {
-        e.st.set_recurring_active(0_i64, rid, false, date("2026-05-10"))
-        e.st.set_recurring_active(0_i64, rid, true, date("2026-05-10"))
+        e.st.set_recurring_active(nil, rid, false, date("2026-05-10"))
+        e.st.set_recurring_active(nil, rid, true, date("2026-05-10"))
       }, "2026-01-05 2026-02-05 2026-03-05", "2026-06-05"},
     }.each do |name, change, dates, next_date|
       it "stops without an error when #{name}" do
         with_env do |e|
           e.fx.rates["USD"] = 1.25
           input = e.expense("Cloud", "2026-01-05", 9091)
-          input.original_currency, input.original_amount_minor, input.fx_rate, input.fx_source = "USD", 10000_i64, 1.1, Domain::FX_SOURCE_ECB
-          rid, _ = e.rule(input, Domain::FREQ_MONTHLY)
+          input.original_currency, input.original_amount_minor, input.fx_rate, input.fx_source = "USD", 10000_i64, 1.1, Domain::FXSource::Ecb
+          rid, _ = e.rule(input, Domain::Frequency::Monthly)
           # While building the occurrence of Mar 5.
           e.fx.on_rate = -> { change.call(e, rid) if e.fx.calls.size == 2; nil }
           n = e.svc.materialize(date("2026-05-10"))
@@ -366,14 +366,14 @@ describe Zipfelkasse::Recurring do
 
   it "counts only the rule's own expenses in the flash" do
     with_env do |e|
-      other, _ = e.rule(e.expense("Strom", "2026-08-02", 5000), Domain::FREQ_MONTHLY) # Sep 2 is due
+      other, _ = e.rule(e.expense("Strom", "2026-08-02", 5000), Domain::Frequency::Monthly) # Sep 2 is due
       eid = e.st.create_expense(e.anna, e.expense("Miete", "2026-08-31", 100000))
       res = e.post("/einstellungen/wiederkehrend/neu", {"ausgabe" => eid.to_s, "haeufigkeit" => "monthly"})
       flash(res).should eq "„Miete“ wiederholt sich jetzt monatlich. 1 Ausgabe nachgetragen."
       e.dates(other).should eq "2026-08-02"
 
-      e.st.set_recurring_active(0_i64, other, false, date("2026-08-03"))
-      weekly, _ = e.rule(e.expense("Putzen", "2026-09-25", 4000), Domain::FREQ_WEEKLY) # Oct 2 is due
+      e.st.set_recurring_active(nil, other, false, date("2026-08-03"))
+      weekly, _ = e.rule(e.expense("Putzen", "2026-09-25", 4000), Domain::Frequency::Weekly) # Oct 2 is due
       # Resumed on Oct 2: the occurrence of that day is created.
       res = e.post("/einstellungen/wiederkehrend/#{other}/fortsetzen")
       flash(res).should eq "Fortgesetzt. 1 Ausgabe angelegt."
@@ -409,7 +409,7 @@ describe Zipfelkasse::Recurring do
 
   it "skips occurrences for which an equal expense exists" do
     with_env do |e|
-      rid, _ = e.rule(e.expense("Miete", "2026-01-31", 100000), Domain::FREQ_MONTHLY)
+      rid, _ = e.rule(e.expense("Miete", "2026-01-31", 100000), Domain::Frequency::Monthly)
       other_payer = e.expense("Miete", "2026-03-31", 100000)
       other_payer.paid_by = e.ben
       by_hand = [
@@ -431,8 +431,8 @@ describe Zipfelkasse::Recurring do
     with_env do |e|
       e.fx.rates["USD"] = 1.25
       input = e.expense("Cloud", "2026-01-05", 9091)
-      input.original_currency, input.original_amount_minor, input.fx_rate, input.fx_source = "USD", 10000_i64, 1.1, Domain::FX_SOURCE_ECB
-      rid, _ = e.rule(input, Domain::FREQ_MONTHLY)
+      input.original_currency, input.original_amount_minor, input.fx_rate, input.fx_source = "USD", 10000_i64, 1.1, Domain::FXSource::Ecb
+      rid, _ = e.rule(input, Domain::Frequency::Monthly)
       dup = input
       dup.date, dup.amount_cents, dup.fx_rate = date("2026-02-05"), 9000_i64, 1.111
       e.st.create_expense(e.anna, dup)
@@ -444,7 +444,7 @@ describe Zipfelkasse::Recurring do
 
   it "does not enter the occurrences of a deleted rule again when it is recreated" do
     with_env do |e|
-      rid, eid = e.rule(e.expense("Miete", "2026-01-31", 100000), Domain::FREQ_MONTHLY)
+      rid, eid = e.rule(e.expense("Miete", "2026-01-31", 100000), Domain::Frequency::Monthly)
       e.materialize("2026-05-15", 3)
       e.st.delete_recurring(e.anna, rid)
       body = e.get("/einstellungen/wiederkehrend/neu?ausgabe=#{eid}").body

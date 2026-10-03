@@ -8,7 +8,7 @@ describe "activity page" do
       v["titel"] = "Einkauf groß"
       g.post("/ausgaben/#{e.id}", v)
       g.post("/ausgaben/#{e.id}/loeschen")
-      g.store.create_category(0_i64, "Regel") # system entry
+      g.store.create_category(nil, "Regel") # system entry
 
       status, body = g.get("/aktivitaet")
       status.should eq 200

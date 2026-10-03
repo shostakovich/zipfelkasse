@@ -5,24 +5,26 @@ module Zipfelkasse::Web
   # than expense changes (shown with details.text); show_amount is set for
   # created and deleted expenses (amount changes are listed in the changes).
   record ActivityItem, activity : Store::Activity, verb : String, show_amount : Bool do
-    delegate id, actor_id, action, expense_id, details, to: @activity
-
-    def at : Time
-      @activity.at || Domain::UNSET_TIME
-    end
+    delegate id, at, action, expense_id, details, to: @activity
 
     def actor : String
-      actor_id != 0 ? @activity.actor_name : "Automatisch"
+      @activity.actor_name || "Automatisch"
+    end
+
+    def amount_cents : Int64
+      details.amount_cents || 0_i64
     end
   end
 
   def self.activity_items(acts : Array(Store::Activity)) : Array(ActivityItem)
     acts.map do |a|
+      has_amount = !a.details.amount_cents.nil?
       verb, show_amount = case a.action
-                          when Store::ACTION_EXPENSE_CREATED then {"angelegt", a.details.amount_cents != 0}
-                          when Store::ACTION_EXPENSE_UPDATED then {"geändert", false}
-                          when Store::ACTION_EXPENSE_DELETED then {"gelöscht", a.details.amount_cents != 0}
-                          else                                    {"", false}
+                          in .expense_created? then {"angelegt", has_amount}
+                          in .expense_updated? then {"geändert", false}
+                          in .expense_deleted? then {"gelöscht", has_amount}
+                          in .settings_updated?, .recurring_created?, .recurring_deleted?
+                            {"", false}
                           end
       ActivityItem.new(a, verb, show_amount)
     end
@@ -34,7 +36,7 @@ module Zipfelkasse::Web
     end
 
     def activity(r : Request) : Nil
-      before = Web.form_id(r.query("vor"))
+      before = Web.form_id?(r.query("vor"))
       acts = @d.store.list_activity(Store::ActivityFilter.new(before_id: before, limit: ACTIVITY_PAGE_SIZE + 1))
       more = ""
       if acts.size > ACTIVITY_PAGE_SIZE
@@ -51,7 +53,7 @@ module Zipfelkasse::Web
 
     # The activity-item partial; link makes the entry a link to its expense.
     private def activity_item(__io__ : IO, a : ActivityItem, link : Bool) : Nil
-      link &&= a.expense_id != 0
+      link &&= !a.expense_id.nil?
       Web.template __io__, "web/_activity.ecr"
     end
   end

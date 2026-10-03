@@ -41,8 +41,8 @@ module Zipfelkasse::Web
       SafeHTML.new(%(<svg class="icon" aria-hidden="true"><use href="#{::HTML.escape(Static.url("icons.svg") + "#" + name)}"></use></svg>))
     end
 
-    def category_icon(name : String) : String
-      Web.category_icon(name)
+    def category_icon(name : String?) : String
+      Web.category_icon(name || "")
     end
   end
 

@@ -9,13 +9,11 @@ module Zipfelkasse::FX
 
   record ManualForm, currency : String = "", date : String = "", rate : String = ""
 
-  def self.source_label(source : String) : String
+  def self.source_label(source : Domain::FXSource) : String
     case source
-    when Domain::FX_SOURCE_ECB    then "EZB"
-    when Domain::FX_SOURCE_MANUAL then "manuell"
-    when Domain::FX_SOURCE_FIXED  then "fest"
-    when ""                       then "–"
-    else                               source
+    in .ecb?    then "EZB"
+    in .manual? then "manuell"
+    in .fixed?  then "fest"
     end
   end
 
@@ -62,7 +60,7 @@ module Zipfelkasse::FX
           j.field "date", Store.format_date(fx.date)
           # Shortest digits without exponent or ".0": 1 stays 1, not 1.0.
           j.field("rate") { j.raw Domain.format_rate(fx.rate).sub(',', '.') }
-          j.field "source", fx.source
+          j.field "source", fx.source.key
         end
       end
     end

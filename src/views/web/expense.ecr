@@ -11,7 +11,7 @@
       <%- if e %>
       <p class="card-description">
         Angelegt am <%= date_time e.created_at %><% if e.updated_at != e.created_at %> · geändert am <%= date_time e.updated_at %><% end %>
-        <%- if e.recurring_id != 0 %> · <a class="badge badge-muted" href="/einstellungen/wiederkehrend"><%= icon "repeat" %> Wiederkehrend</a><% end %>
+        <%- if e.recurring_id %> · <a class="badge badge-muted" href="/einstellungen/wiederkehrend"><%= icon "repeat" %> Wiederkehrend</a><% end %>
       </p>
       <%- end %>
     </div>
@@ -77,8 +77,8 @@
             </div>
             <input type="hidden" id="kurs_quelle" name="kurs_quelle" value="<%= f.rate_source %>">
             <p class="help" id="kurs-hinweis" aria-live="polite">
-              <%- if f.rate_source == Domain::FX_SOURCE_MANUAL %>Von Hand eingetragener Kurs.
-              <%- elsif f.rate_source == Domain::FX_SOURCE_ECB %>EZB-Kurs.
+              <%- if f.rate_source == Domain::FXSource::Manual.key %>Von Hand eingetragener Kurs.
+              <%- elsif f.rate_source == Domain::FXSource::Ecb.key %>EZB-Kurs.
               <%- else %>Leer lassen für den EZB-Kurs.<% end -%>
             </p>
             <button class="btn btn-link btn-sm" type="button" id="kurs-laden" hidden><%= icon "refresh" %> EZB-Kurs laden</button>
@@ -127,7 +127,7 @@
             <label class="sr-only" for="wert_<%= row.id %>">Wert für <%= row.name %></label>
             <input id="wert_<%= row.id %>" name="wert_<%= row.id %>" value="<%= row.value %>" inputmode="decimal" autocomplete="off">
             <span class="unit" data-unit>
-              <%- if f.split_mode == Domain::SPLIT_SHARES %>Anteile<% elsif f.split_mode == Domain::SPLIT_PERCENT %>%<% elsif cur == "EUR" %>€<% else %><%= cur %><% end -%>
+              <%- if f.split_mode.shares? %>Anteile<% elsif f.split_mode.percent? %>%<% elsif cur == "EUR" %>€<% else %><%= cur %><% end -%>
             </span>
           </div>
         </div>
@@ -135,13 +135,13 @@
       </div>
       <p class="split-sum not-reimbursement" id="split-summe" aria-live="polite"></p>
 
-      <details class="disclosure not-reimbursement"<% if f.split_mode != Domain::SPLIT_EQUAL %> open<% end %>>
+      <details class="disclosure not-reimbursement"<% unless f.split_mode.equal? %> open<% end %>>
         <summary>Weitere Aufteilungsoptionen …</summary>
         <div class="field">
           <label for="aufteilung">Aufteilung</label>
           <select id="aufteilung" name="aufteilung">
-            <%- Domain::SPLIT_MODES.each do |mode| %>
-            <option value="<%= mode %>"<% if mode == f.split_mode %> selected<% end %>><%= mode.label %></option>
+            <%- Domain::SplitMode.each do |mode| %>
+            <option value="<%= mode.key %>"<% if mode == f.split_mode %> selected<% end %>><%= Web.split_mode_label(mode) %></option>
             <%- end %>
           </select>
           <p class="help">Nach Anteilen: z. B. 2 : 1. Nach Prozent: zusammen 100 %. Nach Beträgen: zusammen der Gesamtbetrag<% if cur != "EUR" %> in <%= cur %><% end %>.</p>
@@ -169,7 +169,7 @@
     <h2 class="card-title">Verlauf</h2>
     <%- unless deleted %>
     <p class="card-description">
-      <%- if e.recurring_id != 0 %>
+      <%- if e.recurring_id %>
       Diese Ausgabe wird automatisch wiederholt. <a href="/einstellungen/wiederkehrend">Wiederkehrende Ausgaben verwalten</a>
       <%- else %>
       <a href="/einstellungen/wiederkehrend/neu?ausgabe=<%= e.id %>"><%= icon "repeat" %> Als wiederkehrend einrichten</a>

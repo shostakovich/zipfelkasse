@@ -263,7 +263,7 @@ module Zipfelkasse::YNAB
       es = @d.store.list_expenses(Store::ExpenseFilter.new(participant_id: cfg.participant_id))
       cats = @d.store.ynab_category_map(cfg.participant_id)
       sel.postings(es, cfg.participant_id).to_h do |p|
-        category = p.category_id != 0 ? cats[p.category_id]? || "" : ""
+        category = p.category_id.try { |id| cats[id]? } || ""
         {p.expense_id, Want.new(p, category)}
       end
     end

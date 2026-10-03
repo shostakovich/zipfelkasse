@@ -102,7 +102,6 @@ describe Zipfelkasse::Domain do
       {1000_i64, "JPY", 160.5}    => 623_i64,  # 1000 JPY / 160.5 = 6.2305 €
       {1234_i64, "EUR", 1.0}      => 1234_i64,
       {-10000_i64, "USD", 1.0823} => -9240_i64,
-      {100_i64, "USD", 0.0}       => 0_i64, # invalid rate
     }.each { |(minor, currency, rate), want| D.to_eur_cents(minor, currency, rate).should eq want }
   end
 
@@ -146,8 +145,7 @@ describe Zipfelkasse::Domain do
   end
 
   describe "edge cases" do
-    it "formats Int64::MIN and large groups" do
-      D.format_cents(Int64::MIN).should eq "-92.233.720.368.547.758,08 €"
+    it "formats large groups" do
       D.format_cents(Int64::MAX).should eq "92.233.720.368.547.758,07 €"
       D.format_money(-123456789, " usd ").should eq "-1.234.567,89 USD"
       D.format_rate(1e-7).should eq "0,0000001"
@@ -208,11 +206,12 @@ describe Zipfelkasse::Domain do
     end
 
     it "handles absurd rates and rounds half away from zero" do
-      D.to_eur_cents(MAX_CENTS, "USD", 1e-12).should eq Int64::MIN # out of Int64 range
+      validation_error { D.to_eur_cents(MAX_CENTS, "USD", 1e-12) }.should eq "Der Betrag ist zu groß."
       D.to_eur_cents(5, "EUR", 2.0).should eq 3
       D.to_eur_cents(-5, "EUR", 2.0).should eq -3
-      D.to_eur_cents(100, "USD", Float64::INFINITY).should eq 0
-      D.to_eur_cents(100, "USD", Float64::NAN).should eq 0
+      [Float64::INFINITY, Float64::NAN, 0.0, -1.0].each do |rate|
+        validation_error { D.to_eur_cents(100, "USD", rate) }.should eq "Der Wechselkurs muss größer als 0 sein."
+      end
     end
   end
 end

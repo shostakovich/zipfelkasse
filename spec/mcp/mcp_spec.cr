@@ -292,7 +292,7 @@ describe "MCP tools" do
 
   it "prefers a real category named None" do
     with_env do |e|
-      e.cats["None"] = e.store.create_category(0_i64, "None")
+      e.cats["None"] = e.store.create_category(nil, "None")
       e.expense("Tanken", 5000, "2026-09-01", "Anna", "", "Anna", "Ben")
       e.expense("Kram", 1000, "2026-09-02", "Anna", "None", "Anna", "Ben")
       d = e.ok("search_expenses", %({"category":"none"}))
@@ -321,7 +321,7 @@ describe "MCP tools" do
       e.expense("Pizza & Wein", 4000, "2026-09-10", "Cleo", "Restaurant", "Ben", "Cleo")
       e.expense("Edeka", 1000, "2026-09-01", "Ben", "Lebensmittel", "Anna", "Ben")
       e.store.create_expense(e.ids["Anna"], Zipfelkasse::Store::ExpenseInput.new(title: "Diner NYC", date: Zipfelkasse::Domain.parse_date("2026-09-20"),
-        paid_by: e.ids["Anna"], amount_cents: 2000, original_amount_minor: 2340, original_currency: "USD", fx_rate: 1.17, fx_source: "ezb",
+        paid_by: e.ids["Anna"], amount_cents: 2000, original_amount_minor: 2340, original_currency: "USD", fx_rate: 1.17, fx_source: Zipfelkasse::Domain::FXSource::Ecb,
         category_id: e.cats["Restaurant"], parts: [Zipfelkasse::Domain::Part.new(e.ids["Anna"]), Zipfelkasse::Domain::Part.new(e.ids["Ben"])]))
       e.reimbursement(500, "2026-09-20", "Ben", "Anna")
 
@@ -540,11 +540,11 @@ describe "MCP tools" do
       e.expense("Rewe", 3000, "2026-01-10", "Anna", "Lebensmittel", "Anna", "Ben")
       kino_id = e.expense("Kino", 2000, "2026-03-05", "Ben", "", "Anna", "Ben")
       kino = e.store.get_expense(kino_id)
-      input = kino.input
+      input = kino.to_input
       input.title = "Kino & Popcorn"
       input.amount_cents = 2500
       e.store.update_expense(e.ids["Cleo"], kino_id, input)
-      e.store.create_category(0_i64, "Kino")
+      e.store.create_category(nil, "Kino")
       entries = ->(args : String?) { e.ok("activity", args) }
 
       # Newest first: the category, the update, the two expenses, and the
@@ -578,7 +578,7 @@ describe "MCP tools" do
   it "gives activity times in the server time zone" do
     with_env(Time::Location.load("Europe/Berlin")) do |e|
       e.store.clock = -> { Time.utc(2030, 1, 1, 23, 30, 0) } # already 2 January in Berlin
-      e.store.create_category(0_i64, "Kino")
+      e.store.create_category(nil, "Kino")
       e.ok("activity", %({"limit":1}))["entries"][0]["at"].should eq "2030-01-02T00:30:00+01:00"
       e.ok("activity", %({"from":"2030-01-02","to":"2030-01-02"}))["entries"].as_a.size.should eq 1
       e.ok("activity", %({"from":"2030-01-01","to":"2030-01-01"}))["entries"].as_a.size.should eq 0
@@ -640,7 +640,7 @@ private class FakeFX
 
   def rate(currency : String, date : Time) : Zipfelkasse::Domain::FXRate
     raise "no rate" unless currency == "USD"
-    Zipfelkasse::Domain::FXRate.new(currency, date, 1.25, Zipfelkasse::Domain::FX_SOURCE_ECB)
+    Zipfelkasse::Domain::FXRate.new(currency, date, 1.25, Zipfelkasse::Domain::FXSource::Ecb)
   end
 end
 

@@ -41,7 +41,7 @@ module MCPSpec
       config.location = location
       @deps = Zipfelkasse::Web::Deps.new(config, @store, Zipfelkasse::Web::Renderer.new(@store))
       @server = Zipfelkasse::MCP::Server.new(@deps)
-      %w(Anna Ben Cleo).each { |n| @ids[n] = @store.create_participant(0_i64, n) }
+      %w(Anna Ben Cleo).each { |n| @ids[n] = @store.create_participant(nil, n) }
       @store.list_categories(include_archived: true).each { |c| @cats[c.name] = c.id }
     end
 
@@ -62,7 +62,7 @@ module MCPSpec
 
     def expense(title : String, cents : Int64, date : String, payer : String, category : String, *who : String) : Int64
       input = Zipfelkasse::Store::ExpenseInput.new(title: title, date: Zipfelkasse::Domain.parse_date(date), paid_by: @ids[payer],
-        amount_cents: cents, category_id: @cats[category]? || 0_i64, parts: who.map { |w| Zipfelkasse::Domain::Part.new(@ids[w]) }.to_a)
+        amount_cents: cents, category_id: @cats[category]?, parts: who.map { |w| Zipfelkasse::Domain::Part.new(@ids[w]) }.to_a)
       @store.create_expense(@ids[payer], input)
     end
 

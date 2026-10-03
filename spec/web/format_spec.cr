@@ -5,7 +5,7 @@ private alias Store = Zipfelkasse::Store
 private alias Share = Zipfelkasse::Domain::Share
 
 private def expense(id : Int64, d : Time, paid_by : Int64, amount : Int64, shares : Array(Share)) : Store::Expense
-  Store::Expense.new(id, Store::ExpenseInput.new(date: d, paid_by: paid_by, amount_cents: amount), shares)
+  build_expense(id, Store::ExpenseInput.new(date: d, paid_by: paid_by, amount_cents: amount), shares)
 end
 
 private def share(id : Int64, cents : Int64) : Share

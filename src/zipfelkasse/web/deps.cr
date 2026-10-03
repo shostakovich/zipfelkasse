@@ -176,8 +176,16 @@ module Zipfelkasse::Web
 
   # Invalid or <= 0 gives 0.
   def self.form_id(v : String, trim = true) : Int64
-    id = (trim ? v.strip : v).to_i64?(whitespace: false) || 0_i64
-    id > 0 ? id : 0_i64
+    form_id?(v, trim) || 0_i64
+  end
+
+  def self.nil_if_zero(id : Int64) : Int64?
+    id unless id == 0
+  end
+
+  def self.form_id?(v : String, trim = true) : Int64?
+    id = (trim ? v.strip : v).to_i64?(whitespace: false)
+    id if id && id > 0
   end
 
   # The request path for the log: the MCP secret in /mcp/<secret> is masked.

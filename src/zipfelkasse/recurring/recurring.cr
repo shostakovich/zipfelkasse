@@ -77,7 +77,6 @@ module Zipfelkasse::Recurring
     # A failed occurrence leaves next_date where it is, so the next run
     # retries it.
     private def catch_up(r : Store::Recurring, today : Time) : {Int32, Exception?}
-      return {0, Exception.new("unknown frequency #{r.frequency.value.inspect}")} unless r.frequency.valid?
       n = 0
       begin
         existing = @d.store.expense_dates_like(r.template, r.next_date, today)
@@ -109,7 +108,7 @@ module Zipfelkasse::Recurring
         Log.info(&.emit("recurring expense: an equal expense already exists, skipping the occurrence", rule: r.id, date: Store.format_date(d)))
         return false
       end
-      @d.store.create_expense(0_i64, instance(r, d))
+      @d.store.create_expense(nil, instance(r, d))
       true
     rescue Store::RecurringExists # e.g. after a crash before next_date advanced
       false
@@ -122,7 +121,6 @@ module Zipfelkasse::Recurring
     # rate is kept: waiting would block the rule forever.
     private def instance(r : Store::Recurring, date : Time) : Store::ExpenseInput
       input = r.template
-      input.parts = input.parts.dup
       input.date = date
       input.recurring_id = r.id
       cur = input.original_currency
@@ -136,7 +134,11 @@ module Zipfelkasse::Recurring
       rescue ex
         raise Exception.new("rate for #{cur} on #{Store.format_date(date)} not available, retrying in the next run: #{ex.message}", cause: ex)
       end
-      amount = Domain.to_eur_cents(input.original_amount_minor, cur, rate.rate)
+      amount = begin
+        Domain.to_eur_cents(input.original_amount_minor, cur, rate.rate)
+      rescue Domain::ValidationError
+        return input
+      end
       return input if amount <= 0 || amount > Domain::MAX_AMOUNT_CENTS
       # For SPLIT_AMOUNT the weights stay amounts in cur; the store
       # distributes the converted amount in proportion to them.
