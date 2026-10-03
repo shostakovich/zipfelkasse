@@ -35,121 +35,114 @@ module Zipfelkasse::MCP
     end
   end
 
-  # A JSON-RPC message; id and params are raw JSON, a missing id makes it a
-  # notification.
-  class Message
-    property jsonrpc = ""
-    property id : String? = nil
-    property method = ""
-    property params : String? = nil
-    property? answer = false # has result or error: a response from the client
-  end
+  # A JSON object decoded with JSON::Serializable; decode_error names the
+  # field of a wrongly typed value and the expected type.
+  module Decodable
+    macro included
+      include JSON::Serializable
 
-  class Params
-    property meta = {} of String => String # raw JSON values
-    property name = ""
-    property arguments : String? = nil
-    property protocol_version = ""
-  end
-
-  # Reads a JSON object; the block gets the field that matches the key
-  # case-insensitively (an exact match first, nil for none) and must consume
-  # the value.
-  def self.each_field(pull : JSON::PullParser, fields : Enumerable(String), & : String?, String ->) : Nil
-    pull.read_object do |key|
-      yield fields.find(&.==(key)) || fields.find { |f| f.compare(key, case_insensitive: true) == 0 }, key
+      def self.expected(field : String) : String
+        \{% begin %}
+          case field
+          \{% for ivar in @type.instance_vars %}
+            \{% ann = ivar.annotation(::JSON::Field) %}
+            \{% t = ivar.type.union_types.reject(&.nilable?).first %}
+            when \{{(ann && ann[:key]) || ivar.name.stringify}}
+              \{{t == String ? "a string" : t <= Int ? "an integer" : t <= Float ? "a number" : t == Bool ? "true or false" : t <= Array ? "a list of strings" : "an object"}}
+          \{% end %}
+          else "something else"
+          end
+        \{% end %}
+      end
     end
   end
 
-  # The JSON type as named in decoder messages.
-  def self.json_kind(kind : JSON::PullParser::Kind) : String
-    case kind
-    when .begin_object? then "object"
-    when .begin_array?  then "array"
-    when .string?       then "string"
-    when .bool?         then "bool"
-    else                     "number"
+  # whole names the object itself.
+  def self.decode_error(type : T.class, ex : JSON::SerializableError, whole : String) : String forall T
+    field = ex.attribute || return "#{whole} must be an object."
+    "#{field} must be #{T.expected(field)}."
+  end
+
+  # Raw JSON, for values that are passed on or echoed unchanged.
+  module RawJSON
+    def self.from_json(pull : JSON::PullParser) : String
+      pull.read_raw
     end
   end
 
-  def self.type_error(kind : JSON::PullParser::Kind, field : String, type : String) : String
-    "json: cannot unmarshal #{json_kind(kind)} into Go struct field #{field} of type #{type}"
+  # A JSON-RPC message; a missing id makes it a notification, "id":null does
+  # not.
+  struct Message
+    include Decodable
+
+    getter jsonrpc = ""
+    getter method = ""
+    @[JSON::Field(converter: Zipfelkasse::MCP::RawJSON, presence: true)]
+    @id : String? = nil
+    @[JSON::Field(ignore: true)]
+    @id_present = false
+    @[JSON::Field(converter: Zipfelkasse::MCP::RawJSON)]
+    getter params : String? = nil
+    @[JSON::Field(presence: true)]
+    @result : JSON::Any? = nil
+    @[JSON::Field(ignore: true)]
+    @result_present = false
+    @[JSON::Field(presence: true)]
+    @error : JSON::Any? = nil
+    @[JSON::Field(ignore: true)]
+    @error_present = false
+
+    def initialize
+    end
+
+    def id : String?
+      @id || ("null" if @id_present)
+    end
+
+    # A response from the client.
+    def answer? : Bool
+      @result_present || @error_present
+    end
   end
 
-  # A string or null (""); any other value records a type error.
-  private def self.read_string(pull : JSON::PullParser, errors : Array(String), field : String) : String
-    case pull.kind
-    when .string? then pull.read_string
-    when .null?   then pull.read_null || ""
-    else
-      errors << type_error(pull.kind, field, "string")
-      pull.skip
-      ""
+  struct Params
+    include Decodable
+
+    @[JSON::Field(key: "_meta")]
+    getter meta : Hash(String, JSON::Any)? = nil
+    getter name = ""
+    @[JSON::Field(converter: Zipfelkasse::MCP::RawJSON)]
+    getter arguments : String? = nil
+    @[JSON::Field(key: "protocolVersion")]
+    getter protocol_version = ""
+
+    def initialize
     end
   end
 
   # Raises an RPCError (parse error) for invalid JSON and wrongly typed
   # fields.
   def self.parse_message(body : String) : Message
-    m = Message.new
-    errors = [] of String
     pull = JSON::PullParser.new(body)
-    case pull.kind
-    when .null?
-      pull.read_null
-    when .begin_object?
-      each_field(pull, {"jsonrpc", "id", "method", "params", "result", "error"}) do |field|
-        case field
-        when "jsonrpc" then m.jsonrpc = read_string(pull, errors, "message.jsonrpc")
-        when "method"  then m.method = read_string(pull, errors, "message.method")
-        when "id"      then m.id = pull.read_raw
-        when "params"  then m.params = pull.read_raw
-        when "result", "error"
-          pull.skip
-          m.answer = true
-        else
-          pull.skip
-        end
-      end
-    else
-      errors << "json: cannot unmarshal #{json_kind(pull.kind)} into Go value of type mcp.message"
-      pull.skip
-    end
-    raise JSON::ParseException.new("invalid character after top-level value", 0, 0) unless pull.kind.eof?
-    raise RPCError.new(CODE_PARSE_ERROR, "Invalid JSON: #{errors.first}") unless errors.empty?
+    m = pull.kind.null? ? (pull.read_null; Message.new) : Message.new(pull)
+    raise JSON::ParseException.new("Unexpected data after the message", *pull.location) unless pull.kind.eof?
     m
+  rescue ex : JSON::SerializableError
+    message = begin
+      JSON.parse(body) # a syntax error inside a field is not a wrong type
+      decode_error(Message, ex, "the message")
+    rescue syntax : JSON::ParseException
+      syntax.message
+    end
+    raise RPCError.new(CODE_PARSE_ERROR, "Invalid JSON: #{message}")
   rescue ex : JSON::ParseException
     raise RPCError.new(CODE_PARSE_ERROR, "Invalid JSON: #{ex.message}")
   end
 
   def self.parse_params(raw : String) : Params
-    p = Params.new
-    errors = [] of String
-    pull = JSON::PullParser.new(raw)
-    unless pull.kind.begin_object?
-      raise RPCError.new(CODE_INVALID_PARAMS, "Invalid params: json: cannot unmarshal #{json_kind(pull.kind)} into Go value of type mcp.params")
-    end
-    each_field(pull, {"_meta", "name", "arguments", "protocolVersion"}) do |field|
-      case field
-      when "name"            then p.name = read_string(pull, errors, "params.name")
-      when "protocolVersion" then p.protocol_version = read_string(pull, errors, "params.protocolVersion")
-      when "arguments"       then p.arguments = pull.read_raw
-      when "_meta"
-        case pull.kind
-        when .begin_object? then pull.read_object { |k| p.meta[k] = pull.read_raw }
-        when .null?
-          pull.read_null
-          p.meta.clear
-        else
-          errors << type_error(pull.kind, "params._meta", "map[string]json.RawMessage")
-          pull.skip
-        end
-      else
-        pull.skip
-      end
-    end
-    raise RPCError.new(CODE_INVALID_PARAMS, "Invalid params: #{errors.first}") unless errors.empty?
-    p
+    Params.from_json(raw)
+  rescue ex : JSON::SerializableError
+    raise RPCError.new(CODE_INVALID_PARAMS, "Invalid params: #{decode_error(Params, ex, "params")}")
   end
 
   # Picks the legacy version for initialize: the requested one if supported,
@@ -212,7 +205,10 @@ module Zipfelkasse::MCP
       unless MCP.header(req.headers, "Content-Type").partition(';')[0].strip.downcase == "application/json"
         return write_error(ctx, 415, nil, CODE_INVALID_REQUEST, "Content-Type must be application/json.")
       end
-      body = read_body(req) || return write_error(ctx, 413, nil, CODE_INVALID_REQUEST, "Message too large or incomplete.")
+      unless body = read_body(req)
+        ctx.response.headers["Connection"] = "close"
+        return write_error(ctx, 413, nil, CODE_INVALID_REQUEST, "Message too large or incomplete.")
+      end
       if body.lstrip.starts_with?('[')
         return write_error(ctx, 400, nil, CODE_INVALID_REQUEST, "JSON-RPC batches are not supported.")
       end
@@ -228,7 +224,7 @@ module Zipfelkasse::MCP
       end
       return write_error(ctx, 400, m.id, CODE_INVALID_REQUEST, %(jsonrpc must be "2.0".)) unless m.jsonrpc == "2.0"
       p = Params.new
-      if (raw = m.params) && raw != "null"
+      if raw = m.params
         begin
           p = MCP.parse_params(raw)
         rescue ex : RPCError
@@ -236,8 +232,8 @@ module Zipfelkasse::MCP
         end
       end
       meta_version = ""
-      if raw = p.meta[META_PROTOCOL_VERSION]?
-        meta_version = JSON.parse(raw).as_s? || ""
+      if v = p.meta.try(&.[META_PROTOCOL_VERSION]?)
+        meta_version = v.as_s? || ""
         if meta_version.empty?
           return write_error(ctx, 400, m.id, CODE_INVALID_PARAMS, "_meta.#{META_PROTOCOL_VERSION} must be a non-empty string.")
         end
@@ -301,6 +297,7 @@ module Zipfelkasse::MCP
     end
 
     private def respond(ctx : HTTP::Server::Context, status : Int32, id : String?, & : JSON::Builder ->) : Nil
+      skip_unread(ctx)
       res = ctx.response
       res.status_code = status
       res.headers["Content-Type"] = "application/json"

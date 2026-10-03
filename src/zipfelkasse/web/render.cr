@@ -68,10 +68,11 @@ module Zipfelkasse::Web
     def initialize(@store : Store)
     end
 
-    def page(req : Request, status : Int32, page : Page, & : IO ->) : Nil
-      # The cast works around a compiler bug (Crystal 1.21: "trying to
-      # downcast IO+ <- String::Builder") with nested blocks in templates.
-      content = String.build { |io| yield io.as(IO) }
+    # Not `& : IO ->`: a block restriction wider than the yielded type
+    # crashes Crystal 1.21's codegen ("BUG: trying to downcast IO+ <-
+    # String::Builder") once a template uses the parameter two blocks deep.
+    def page(req : Request, status : Int32, page : Page, & : String::Builder ->) : Nil
+      content = String.build { |io| yield io }
       me = req.me?
       group_name = @store.group_name
       flash = req.take_flash

@@ -143,139 +143,79 @@ module Zipfelkasse::MCP
     end
   end
 
-  # Tool arguments, decoded strictly: unknown fields are errors, keys match
-  # case-insensitively, the last duplicate wins and null leaves the default.
-  # Types: :string, :int, :int64, :float (nil when absent), :bool,
-  # :strings (list of strings), :text (a string or a list of strings),
-  # :amount (a string, or a number as written), :weights (name → amount).
-  class Args
-    alias Value = String | Int64 | Float64 | Bool | Array(String) | Hash(String, String)
+  # Tool arguments: unknown fields are errors, null leaves the default.
+  module Args
+    macro included
+      include Decodable
 
-    TYPE_NAMES = {string: "string", int: "int", int64: "int64", float: "float64", bool: "bool", strings: "[]string",
-                  weights: "map[string]mcp.amountText"}
-
-    # A wrongly typed value; the first one is reported after decoding.
-    class TypeError < Exception
-    end
-
-    @values = {} of String => Value
-
-    def initialize(raw : String?, fields = {} of String => Symbol)
-      return if raw.nil? || raw.strip.empty? || raw == "null"
-      pull = JSON::PullParser.new(raw)
-      unless pull.kind.begin_object?
-        type = fields.empty? ? "struct {}" : "struct"
-        raise MCP.invalid("Invalid arguments: json: cannot unmarshal #{MCP.json_kind(pull.kind)} into Go value of type #{type}")
+      protected def on_unknown_json_attribute(pull, key, key_location)
+        raise MCP.invalid(%(Invalid arguments: unknown field #{key.inspect}.))
       end
-      error = nil
-      MCP.each_field(pull, fields.keys) do |name, key|
-        if name.nil?
-          error ||= "json: unknown field #{key.inspect}"
-          pull.skip
-          next
-        end
-        type = fields[name]
-        begin
-          if v = decode(pull.read_raw, name, type)
-            @values[name] = v
-          elsif type == :float
-            @values.delete(name)
-          end
-        rescue ex : TypeError
-          error ||= ex.message
+    end
+  end
+
+  def self.args(type : T.class, raw : String?) : T forall T
+    T.from_json(raw || "{}")
+  rescue ex : JSON::SerializableError
+    raise invalid("Invalid arguments: #{decode_error(T, ex, "arguments")}")
+  end
+
+  # A string or a list of strings.
+  module TextList
+    def self.from_json(pull : JSON::PullParser) : Array(String)
+      not_text = MCP.invalid("Invalid arguments: must be a string or a list of strings")
+      return [pull.read_string] if pull.kind.string?
+      raise not_text unless pull.kind.begin_array?
+      list = [] of String
+      pull.read_array do
+        case pull.kind
+        when .string? then list << pull.read_string
+        when .null?   then pull.read_null
+        else               raise not_text
         end
       end
-      raise MCP.invalid("Invalid arguments: #{error}") if error
+      list
     end
+  end
 
-    def str(name : String) : String
-      @values[name]?.as?(String) || ""
-    end
+  struct NoArgs
+    include Args
+  end
 
-    def int(name : String) : Int64
-      @values[name]?.as?(Int64) || 0_i64
-    end
+  struct HistoryArgs
+    include Args
+    getter interval = "", from = "", to = "", person = ""
+  end
 
-    def float?(name : String) : Float64?
-      @values[name]?.as?(Float64)
-    end
+  struct SearchArgs
+    include Args
+    getter from = "", to = "", category = "", person = "", paid_by = "", involved = ""
+    @[JSON::Field(converter: Zipfelkasse::MCP::TextList)]
+    getter text = [] of String
+    getter min_amount : Float64? = nil
+    getter max_amount : Float64? = nil
+    getter reimbursements = "", sort = "", detail = ""
+    getter limit = 0_i64
+  end
 
-    def bool(name : String) : Bool
-      @values[name]?.as?(Bool) || false
-    end
+  struct StatisticsArgs
+    include Args
+    getter group_by = "", from = "", to = "", share_of = "", category = ""
+    @[JSON::Field(converter: Zipfelkasse::MCP::TextList)]
+    getter text = [] of String
+    getter compare = ""
+    getter limit = 0_i64
+  end
 
-    def list(name : String) : Array(String)
-      @values[name]?.as?(Array(String)) || [] of String
-    end
+  struct ActivityArgs
+    include Args
+    getter from = "", to = "", person = "", action = ""
+    getter expense_id = 0_i64, before_id = 0_i64, limit = 0_i64
+  end
 
-    def weights(name : String) : Hash(String, String)
-      @values[name]?.as?(Hash(String, String)) || {} of String => String
-    end
-
-    # nil for JSON null.
-    private def decode(raw : String, name : String, type : Symbol) : Value?
-      pull = JSON::PullParser.new(raw)
-      kind = pull.kind
-      return if kind.null?
-      mismatch = TypeError.new(MCP.type_error(kind, ".#{name}", TYPE_NAMES[type]? || ""))
-      number = kind.int? || kind.float?
-      case type
-      when :string
-        kind.string? ? pull.read_string : raise mismatch
-      when :int, :int64
-        raise mismatch unless number
-        return pull.read_int if kind.int?
-        raise TypeError.new("json: cannot unmarshal number #{raw} into Go struct field .#{name} of type #{TYPE_NAMES[type]}")
-      when :float
-        raise mismatch unless number
-        f = raw.to_f64?
-        return f if f && f.finite?
-        raise TypeError.new("json: cannot unmarshal number #{raw} into Go struct field .#{name} of type float64")
-      when :bool
-        kind.bool? ? pull.read_bool : raise mismatch
-      when :strings
-        raise mismatch unless kind.begin_array?
-        list = [] of String
-        error = nil
-        pull.read_array do
-          if pull.kind.string?
-            list << pull.read_string
-          else
-            error ||= TypeError.new(MCP.type_error(pull.kind, ".#{name}", "string"))
-            pull.skip
-          end
-        end
-        raise error if error
-        list
-      when :text
-        return [pull.read_string] if kind.string?
-        not_text = MCP.invalid("Invalid arguments: must be a string or a list of strings")
-        raise not_text unless kind.begin_array?
-        list = [] of String
-        pull.read_array { list << (pull.kind.string? ? pull.read_string : raise not_text) }
-        list
-      when :amount
-        amount_text(pull)
-      when :weights
-        raise mismatch unless kind.begin_object?
-        weights = {} of String => String
-        pull.read_object { |k| weights[k] = amount_text(pull) }
-        weights
-      else
-        raise ArgumentError.new("unknown argument type #{type}")
-      end
-    end
-
-    # Given as a string or a JSON number; parsed later, once the currency
-    # (and its decimals) is known.
-    private def amount_text(pull : JSON::PullParser) : String
-      case pull.kind
-      when .string?       then pull.read_string
-      when .int?, .float? then pull.read_raw
-      when .null?         then pull.read_null || ""
-      else                     raise MCP.invalid("Invalid arguments: must be a string or a number")
-      end
-    end
+  struct SQLArgs
+    include Args
+    getter query = ""
   end
 
   class StatOut
@@ -339,8 +279,6 @@ module Zipfelkasse::MCP
     @order = [] of String # tools/list order
     @sql_sem = Channel(Nil).new(2)
     @log : Logger
-    # Overrides the clock in tests.
-    property clock : Proc(Time)? = nil
 
     def initialize(@d : Web::Deps)
       @log = @d.log
@@ -348,16 +286,12 @@ module Zipfelkasse::MCP
       register_write_tools
     end
 
-    def now : Time
-      @clock.try(&.call) || @d.now
-    end
-
     def location : Time::Location
       @d.config.location
     end
 
     def today : Time
-      Domain.date_of(now.in(location))
+      @d.today
     end
 
     # The current date in the server time zone, computed per request so that
@@ -381,7 +315,7 @@ module Zipfelkasse::MCP
     # server/discover contains the date, so it is cached at most until the
     # next midnight in the server time zone.
     def discover_ttl : Time::Span
-      t = now.in(location)
+      t = @d.now.in(location)
       midnight = Time.local(t.year, t.month, t.day, location: location).shift(days: 1)
       {LIST_TTL, midnight - t}.min
     end
@@ -506,18 +440,19 @@ module Zipfelkasse::MCP
       @d.store.list_participants(include_archived: true)
     end
 
-    private def find_person(name : String) : Store::Participant
-      name = name.strip
-      ps = participants
-      ps.find(&.name.compare(name, case_insensitive: true).zero?) ||
-        raise MCP.invalid("Unknown person #{name.inspect}. Available: #{ps.join(", ", &.name)}.")
+    # nil for a blank name.
+    private def person_arg(name : String) : Store::Participant?
+      Server.find_named(participants, "person", name) unless name.blank?
     end
 
     private def find_category(name : String) : Store::Category
+      Server.find_named(@d.store.list_categories(include_archived: true), "category", name)
+    end
+
+    def self.find_named(items : Array(T), kind : String, name : String) : T forall T
       name = name.strip
-      cs = @d.store.list_categories(include_archived: true)
-      cs.find(&.name.compare(name, case_insensitive: true).zero?) ||
-        raise MCP.invalid("Unknown category #{name.inspect}. Available: #{cs.join(", ", &.name)}.")
+      items.find(&.name.compare(name, case_insensitive: true).zero?) ||
+        raise MCP.invalid("Unknown #{kind} #{name.inspect}. Available: #{items.join(", ", &.name)}.")
     end
 
     # A category name, or "none" / "No category" (the statistics label) for
@@ -542,7 +477,7 @@ module Zipfelkasse::MCP
     end
 
     private def balances(raw : String?) : String
-      Args.new(raw)
+      MCP.args(NoArgs, raw)
       bal = @d.store.balances
       ps = participants
       names = ps.to_h { |p| {p.id, p.name} }
@@ -575,13 +510,13 @@ module Zipfelkasse::MCP
     end
 
     private def balance_history(raw : String?) : String
-      a = Args.new(raw, {"interval" => :string, "from" => :string, "to" => :string, "person" => :string})
-      interval = MCP.trim_or(a.str("interval"), Store::STATS_BY_MONTH)
+      a = MCP.args(HistoryArgs, raw)
+      interval = MCP.trim_or(a.interval, Store::STATS_BY_MONTH)
       unless HISTORY_INTERVALS.includes?(interval)
         raise MCP.invalid("interval must be one of #{HISTORY_INTERVALS.join(", ")}.")
       end
-      from, to = MCP.parse_range(a.str("from"), a.str("to"))
-      person = a.str("person").blank? ? nil : find_person(a.str("person"))
+      from, to = MCP.parse_range(a.from, a.to)
+      person = person_arg(a.person)
       today = self.today
       too_many = ->(periods : Array(String)) do
         if periods.size > Store::SQL_MAX_ROWS
@@ -652,32 +587,28 @@ module Zipfelkasse::MCP
     end
 
     private def search_expenses(raw : String?) : String
-      a = Args.new(raw, {"from" => :string, "to" => :string, "category" => :string, "person" => :string, "paid_by" => :string,
-                         "involved" => :string, "text" => :text, "min_amount" => :float, "max_amount" => :float,
-                         "reimbursements" => :string, "sort" => :string, "detail" => :string, "limit" => :int})
-      f = Store::ExpenseFilter.new(any_text: a.list("text"))
-      f.from, f.to = MCP.parse_range(a.str("from"), a.str("to"))
-      f.category_id, f.without_category = category_arg(a.str("category"))
-      person = a.str("person").blank? ? nil : find_person(a.str("person"))
-      payer = a.str("paid_by").blank? ? nil : find_person(a.str("paid_by"))
-      involved = a.str("involved").blank? ? nil : find_person(a.str("involved"))
+      a = MCP.args(SearchArgs, raw)
+      f = Store::ExpenseFilter.new(any_text: a.text)
+      f.from, f.to = MCP.parse_range(a.from, a.to)
+      f.category_id, f.without_category = category_arg(a.category)
+      person, payer, involved = person_arg(a.person), person_arg(a.paid_by), person_arg(a.involved)
       f.participant_id = person.try(&.id) || 0_i64
       f.paid_by = payer.try(&.id) || 0_i64
       f.involved_id = involved.try(&.id) || 0_i64
-      f.min_cents = Server.amount_arg("min_amount", a.float?("min_amount"))
-      f.max_cents = Server.amount_arg("max_amount", a.float?("max_amount"))
-      raise MCP.invalid("max_amount must be greater than 0.") if a.float?("max_amount") && f.max_cents == 0
+      f.min_cents = Server.amount_arg("min_amount", a.min_amount)
+      f.max_cents = Server.amount_arg("max_amount", a.max_amount)
+      raise MCP.invalid("max_amount must be greater than 0.") if a.max_amount && f.max_cents == 0
       if f.max_cents != 0 && f.min_cents > f.max_cents
         raise MCP.invalid("min_amount (#{MCP.eur(f.min_cents)}) is greater than max_amount (#{MCP.eur(f.max_cents)}).")
       end
-      mode = MCP.trim_or(a.str("reimbursements"), REIMBURSEMENTS_EXCLUDE)
+      mode = MCP.trim_or(a.reimbursements, REIMBURSEMENTS_EXCLUDE)
       raise MCP.invalid(%(reimbursements must be "exclude", "include" or "only".)) unless REIMBURSEMENT_MODES.includes?(mode)
-      f.sort = MCP.trim_or(a.str("sort"), Store::SORT_DATE_DESC)
+      f.sort = MCP.trim_or(a.sort, Store::SORT_DATE_DESC)
       raise MCP.invalid("sort must be one of #{SORT_ORDERS.join(", ")}.") unless SORT_ORDERS.includes?(f.sort)
-      detail = MCP.trim_or(a.str("detail"), DETAIL_COMPACT)
+      detail = MCP.trim_or(a.detail, DETAIL_COMPACT)
       raise MCP.invalid(%(detail must be "compact" or "full".)) unless DETAIL_LEVELS.includes?(detail)
       sharer = person || involved # whose shares are summed up
-      limit = Server.limit(a.int("limit"), 50)
+      limit = Server.limit(a.limit, 50)
 
       es = @d.store.list_expenses(f).select do |e|
         mode == REIMBURSEMENTS_INCLUDE || e.reimbursement? == (mode == REIMBURSEMENTS_ONLY)
@@ -762,21 +693,19 @@ module Zipfelkasse::MCP
     end
 
     private def statistics(raw : String?) : String
-      a = Args.new(raw, {"group_by" => :string, "from" => :string, "to" => :string, "share_of" => :string,
-                         "category" => :string, "text" => :text, "compare" => :string, "limit" => :int})
-      f = Store::StatsFilter.new(group_by: a.str("group_by").strip, any_text: a.list("text"))
+      a = MCP.args(StatisticsArgs, raw)
+      f = Store::StatsFilter.new(group_by: a.group_by.strip, any_text: a.text)
       raise MCP.invalid("group_by must be one of #{GROUPINGS.join(", ")}.") unless GROUPINGS.includes?(f.group_by)
-      f.from, f.to = MCP.parse_range(a.str("from"), a.str("to"))
-      f.category_id, f.without_category = category_arg(a.str("category"))
+      f.from, f.to = MCP.parse_range(a.from, a.to)
+      f.category_id, f.without_category = category_arg(a.category)
       perspective = "total amounts of the expenses"
-      unless a.str("share_of").blank?
-        p = find_person(a.str("share_of"))
+      if p = person_arg(a.share_of)
         f.participant_id = p.id
         perspective = "only the share of #{p.name}"
       end
-      limit = Server.limit(a.int("limit"), Store::SQL_MAX_ROWS)
+      limit = Server.limit(a.limit, Store::SQL_MAX_ROWS)
       today = self.today
-      compare = a.str("compare").strip
+      compare = a.compare.strip
       time_keyed = Store.time_grouping?(f.group_by) || f.group_by == Store::STATS_BY_CATEGORY_MONTH
       unless compare.empty?
         raise MCP.invalid(%(compare must be "#{COMPARE_PREVIOUS_YEAR}".)) if compare != COMPARE_PREVIOUS_YEAR
@@ -885,18 +814,17 @@ module Zipfelkasse::MCP
     end
 
     private def activity(raw : String?) : String
-      a = Args.new(raw, {"from" => :string, "to" => :string, "person" => :string, "action" => :string,
-                         "expense_id" => :int64, "before_id" => :int64, "limit" => :int})
-      from, to = MCP.parse_range(a.str("from"), a.str("to"))
+      a = MCP.args(ActivityArgs, raw)
+      from, to = MCP.parse_range(a.from, a.to)
       loc = location
       since = from.try { |t| Time.local(t.year, t.month, t.day, location: loc) }
       until_ = to.try { |t| Time.local(t.year, t.month, t.day, location: loc).shift(days: 1) }
-      actor = a.str("person").blank? ? 0_i64 : find_person(a.str("person")).id
-      expense_id, before_id = a.int("expense_id"), a.int("before_id")
+      actor = person_arg(a.person).try(&.id) || 0_i64
+      expense_id, before_id = a.expense_id, a.before_id
       raise MCP.invalid("expense_id and before_id must be positive.") if expense_id < 0 || before_id < 0
-      limit = Server.limit(a.int("limit"), 50)
+      limit = Server.limit(a.limit, 50)
       acts = @d.store.list_activity(Store::ActivityFilter.new(
-        expense_id: expense_id, actor_id: actor, action: a.str("action").strip, since: since, until: until_,
+        expense_id: expense_id, actor_id: actor, action: a.action.strip, since: since, until: until_,
         before_id: before_id, limit: limit + 1))
       more = acts.size > limit
       acts = acts.first(limit)
@@ -982,7 +910,7 @@ module Zipfelkasse::MCP
       TEXT
 
     private def schema(raw : String?) : String
-      Args.new(raw)
+      MCP.args(NoArgs, raw)
       objects = @d.store.mcp_schema
       ps = participants
       cs = @d.store.list_categories(include_archived: true)
@@ -998,8 +926,8 @@ module Zipfelkasse::MCP
     end
 
     private def sql_query(raw : String?) : String
-      a = Args.new(raw, {"query" => :string})
-      query = a.str("query")
+      a = MCP.args(SQLArgs, raw)
+      query = a.query
       raise MCP.invalid("Parameter query is missing.") if query.blank?
       select
       when @sql_sem.send(nil)

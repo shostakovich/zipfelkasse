@@ -116,7 +116,7 @@ module Zipfelkasse::Web
       body_params[name]? || query(name)
     end
 
-    def page(status : Int32, page : Page, & : IO ->) : Nil
+    def page(status : Int32, page : Page, & : String::Builder ->) : Nil
       @d.render.page(self, status, page) { |io| yield io }
     end
 

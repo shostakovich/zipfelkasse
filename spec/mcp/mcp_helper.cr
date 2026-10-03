@@ -26,7 +26,7 @@ module MCPSpec
   # Cleo and the default categories.
   class Env
     getter store : Zipfelkasse::Store
-    getter server : Zipfelkasse::MCP::Server
+    @server : Zipfelkasse::MCP::Server
     getter log_io = IO::Memory.new
     getter ids = {} of String => Int64
     getter cats = {} of String => Int64
@@ -55,12 +55,10 @@ module MCPSpec
       @log_io.to_s
     end
 
-    # A fresh server whose clock stands at noon of date (server time zone).
+    # Stops the clock at noon of date (server time zone).
     def at(date : String) : Nil
       d = Zipfelkasse::Domain.parse_date(date)
-      now = Time.local(d.year, d.month, d.day, 12, 0, 0, location: @deps.config.location)
-      @server = Zipfelkasse::MCP::Server.new(@deps)
-      @server.clock = -> { now }
+      @deps.config.now = Time.local(d.year, d.month, d.day, 12, 0, 0, location: @deps.config.location)
     end
 
     def expense(title : String, cents : Int64, date : String, payer : String, category : String, *who : String) : Int64

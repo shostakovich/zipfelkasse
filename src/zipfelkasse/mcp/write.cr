@@ -8,7 +8,51 @@ module Zipfelkasse::MCP
   # Neither read-only nor idempotent, so clients ask before running them.
   WRITE = {"readOnlyHint" => false, "destructiveHint" => false, "idempotentHint" => false, "openWorldHint" => false}
 
-  MONEY_ARGS = {"amount" => :amount, "currency" => :string, "fx_rate" => :float}
+  # An amount given as a string or a JSON number (as written); parsed later,
+  # once the currency (and its decimals) is known.
+  module AmountText
+    def self.from_json(pull : JSON::PullParser) : String
+      case pull.kind
+      when .string?       then pull.read_string
+      when .int?, .float? then pull.read_raw
+      when .null?         then pull.read_null || ""
+      else                     raise MCP.invalid("Invalid arguments: must be a string or a number")
+      end
+    end
+  end
+
+  module Weights
+    def self.from_json(pull : JSON::PullParser) : Hash(String, String)
+      weights = {} of String => String
+      pull.read_object { |name| weights[name] = AmountText.from_json(pull) }
+      weights
+    end
+  end
+
+  module MoneyArgs
+    @[JSON::Field(converter: Zipfelkasse::MCP::AmountText)]
+    getter amount = ""
+    getter currency = ""
+    getter fx_rate : Float64? = nil
+  end
+
+  struct ExpenseArgs
+    include Args
+    include MoneyArgs
+    getter title = "", date = "", paid_by = "", category = "", split = ""
+    getter participants = [] of String
+    @[JSON::Field(converter: Zipfelkasse::MCP::Weights)]
+    getter weights = {} of String => String
+    getter notes = ""
+    getter allow_duplicate = false
+  end
+
+  struct ReimbursementArgs
+    include Args
+    include MoneyArgs
+    getter from = "", to = "", date = "", notes = ""
+    getter allow_duplicate = false
+  end
 
   class DecimalError < Exception
   end
@@ -130,38 +174,37 @@ module Zipfelkasse::MCP
     end
 
     private def create_expense(raw : String?) : String
-      a = Args.new(raw, MONEY_ARGS.merge({"title" => :string, "date" => :string, "paid_by" => :string, "category" => :string,
-                                          "split" => :string, "participants" => :strings, "weights" => :weights, "notes" => :string, "allow_duplicate" => :bool}))
-      title = a.str("title").strip
-      mode = Domain::SplitMode.new(MCP.trim_or(a.str("split"), Domain::SPLIT_EQUAL.value))
+      a = MCP.args(ExpenseArgs, raw)
+      title = a.title.strip
+      mode = Domain::SplitMode.new(MCP.trim_or(a.split, Domain::SPLIT_EQUAL.value))
       raise MCP.invalid("Parameter title is missing.") if title.empty?
       raise MCP.invalid("split must be one of equal, shares, percent, amount.") unless mode.valid?
-      date = date_or_today(a.str("date"))
-      input = set_money(Store::ExpenseInput.new(title: title, notes: a.str("notes"), split_mode: mode, date: date), a, date)
+      date = date_or_today(a.date)
+      input = set_money(Store::ExpenseInput.new(title: title, notes: a.notes, split_mode: mode, date: date), a, date)
       ps = participants
-      payer = MCP.active_person(ps, "paid_by", a.str("paid_by"))
+      payer = MCP.active_person(ps, "paid_by", a.paid_by)
       input.paid_by = payer.id
-      unless a.str("category").blank?
-        c = find_category(a.str("category"))
+      unless a.category.blank?
+        c = find_category(a.category)
         raise MCP.invalid("Category #{c.name} is archived.") if c.archived?
         input.category_id = c.id
       end
-      input.parts = MCP.split_args(ps, mode, input.original_currency.presence || "EUR", a.list("participants"), a.weights("weights"))
-      create(input, date, payer, ps, a.bool("allow_duplicate"))
+      input.parts = MCP.split_args(ps, mode, input.original_currency.presence || "EUR", a.participants, a.weights)
+      create(input, date, payer, ps, a.allow_duplicate)
     end
 
     private def create_reimbursement(raw : String?) : String
-      a = Args.new(raw, MONEY_ARGS.merge({"from" => :string, "to" => :string, "date" => :string, "notes" => :string, "allow_duplicate" => :bool}))
-      date = date_or_today(a.str("date"))
-      input = Store::ExpenseInput.new(title: REIMBURSEMENT_TITLE, notes: a.str("notes"), reimbursement: true, date: date)
+      a = MCP.args(ReimbursementArgs, raw)
+      date = date_or_today(a.date)
+      input = Store::ExpenseInput.new(title: REIMBURSEMENT_TITLE, notes: a.notes, reimbursement: true, date: date)
       input = set_money(input, a, date)
       ps = participants
-      from = MCP.active_person(ps, "from", a.str("from"))
-      to = MCP.active_person(ps, "to", a.str("to"))
+      from = MCP.active_person(ps, "from", a.from)
+      to = MCP.active_person(ps, "to", a.to)
       raise MCP.invalid("from and to must be different people.") if from.id == to.id
       input.paid_by = from.id
       input.parts = [Domain::Part.new(to.id)]
-      create(input, date, from, ps, a.bool("allow_duplicate"))
+      create(input, date, from, ps, a.allow_duplicate)
     end
 
     # Empty = today in the server time zone.
@@ -171,13 +214,13 @@ module Zipfelkasse::MCP
 
     # Amount, currency and rate; a foreign currency without fx_rate gets the
     # ECB rate of the date.
-    private def set_money(input : Store::ExpenseInput, a : Args, date : Time) : Store::ExpenseInput
-      currency = a.str("currency")
+    private def set_money(input : Store::ExpenseInput, a : MoneyArgs, date : Time) : Store::ExpenseInput
+      currency = a.currency
       cur = MCP.trim_or(currency, "EUR").upcase
       unless Domain.valid_currency_code?(cur)
         raise MCP.invalid("currency must be a three-letter ISO code such as USD, not #{currency.inspect}.")
       end
-      amount = a.str("amount")
+      amount = a.amount
       raise MCP.invalid("Parameter amount is missing.") if amount.blank?
       minor = begin
         MCP.parse_decimal(amount, Domain.currency_decimals(cur))
@@ -185,7 +228,7 @@ module Zipfelkasse::MCP
         raise MCP.invalid("Invalid amount #{amount.inspect} for #{cur}: #{ex.message}")
       end
       raise MCP.invalid("amount must be greater than 0.") if minor <= 0
-      rate = a.float?("fx_rate")
+      rate = a.fx_rate
       if cur == "EUR"
         raise MCP.invalid("fx_rate is only for foreign currencies.") if rate
         input.amount_cents = minor

@@ -15,6 +15,10 @@ require "crypto/subtle"
 module Zipfelkasse::MCP
   MAX_BODY = 1 << 20
 
+  # A larger unread rest of a body is not skipped before answering; the
+  # connection is closed after the response instead.
+  MAX_SKIP = 256 << 10
+
   # What is logged about a request.
   class RequestInfo
     property method = ""
@@ -32,11 +36,11 @@ module Zipfelkasse::MCP
       ip = MCP.client_ip(remote, req.headers, @d.config.trusted_proxies)
       secret = req.path.lchop("/mcp/")
       if secret.empty? || secret.includes?('/')
-        return Web.text_error(ctx, 404, "404 page not found")
+        return text_error(ctx, 404, "404 page not found")
       end
       unless Crypto::Subtle.constant_time_compare(URI.decode(secret), @d.config.mcp_secret)
         @log.warn("mcp: wrong secret", ip: ip, remote: remote)
-        return Web.text_error(ctx, 404, "404 page not found")
+        return text_error(ctx, 404, "404 page not found")
       end
       unless ip.in?(@d.config.mcp_allowed_cidrs)
         @log.warn("mcp: IP not allowed", ip: ip, remote: remote,
@@ -49,7 +53,7 @@ module Zipfelkasse::MCP
       end
       if req.method != "POST"
         ctx.response.headers["Allow"] = "POST"
-        Web.text_error(ctx, 405, "Method Not Allowed")
+        text_error(ctx, 405, "Method Not Allowed")
         return @log.info("mcp", ip: ip, http: req.method, status: 405)
       end
 
@@ -62,20 +66,36 @@ module Zipfelkasse::MCP
       attrs["tool_error"] = info.tool_error unless info.tool_error.empty?
       @log.log(Logger::Level::Info, "mcp", attrs)
     ensure
-      drain(ctx.request)
+      # A client still writing would get a reset instead of the response.
+      ctx.request.body.try { |body| discard(body, 4 * MAX_BODY) }
     end
 
-    # Reads what the client still sends (up to a limit): the server closes a
-    # connection with an unread body, and a client still writing would get a
-    # reset instead of the response.
-    private def drain(req : HTTP::Request) : Nil
-      body = req.body || return
+    private def text_error(ctx : HTTP::Server::Context, status : Int32, message : String) : Nil
+      skip_unread(ctx)
+      Web.text_error(ctx, status, message)
+    end
+
+    # Before the response: what the handler left unread is skipped, unless
+    # it is more than MAX_SKIP.
+    private def skip_unread(ctx : HTTP::Server::Context) : Nil
+      body = ctx.request.body || return
+      ctx.response.headers["Connection"] = "close" if discard(body, MAX_SKIP + 1) > MAX_SKIP
+    end
+
+    # The number of bytes read, at most limit.
+    private def discard(io : IO, limit : Int32) : Int32
       buf = Bytes.new(64 * 1024)
-      left = 4 * MAX_BODY
-      while left > 0 && (n = body.read(buf)) > 0
-        left -= n
+      total = 0
+      while total < limit
+        n = begin
+          io.read(buf[0, Math.min(buf.size, limit - total)])
+        rescue IO::Error
+          0
+        end
+        break if n == 0
+        total += n
       end
-    rescue IO::Error
+      total
     end
   end
 end

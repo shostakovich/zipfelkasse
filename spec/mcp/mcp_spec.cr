@@ -47,6 +47,26 @@ describe "MCP access" do
     end
   end
 
+  it "closes the connection after an oversized or large unread body" do
+    with_env do |e|
+      ping = %({"jsonrpc":"2.0","id":1,"method":"ping"})
+      big = ping + " " * MCP::MAX_BODY
+      unread = ping + " " * MCP::MAX_SKIP
+      [
+        {"ping", "POST", MCPSpec::PATH, ping, {} of String => String, 200, nil},
+        {"too large", "POST", MCPSpec::PATH, big, {} of String => String, 413, "close"},
+        {"small unread body", "POST", MCPSpec::PATH, ping, {"Content-Type" => "text/plain"}, 415, nil},
+        {"large unread body", "POST", MCPSpec::PATH, unread, {"Content-Type" => "text/plain"}, 415, "close"},
+        {"wrong secret", "POST", "/mcp/wrong", unread, {} of String => String, 404, "close"},
+        {"origin", "POST", MCPSpec::PATH, unread, {"Origin" => "null"}, 403, "close"},
+        {"method", "PUT", MCPSpec::PATH, unread, {} of String => String, 405, "close"},
+      ].each do |name, method, path, body, headers, status, connection|
+        r = e.send(method, path, body, headers)
+        {name, r.status, r.headers["Connection"]?}.should eq({name, status, connection})
+      end
+    end
+  end
+
   it "is disabled without a secret" do
     with_server do |srv|
       r = srv.request("POST", "/mcp/", %({"jsonrpc":"2.0","id":1,"method":"ping"}), HTTP::Headers{"Content-Type" => "application/json"})
@@ -111,14 +131,13 @@ describe "MCP protocol" do
 
   it "puts today's date of the server time zone into instructions and schema" do
     with_env(Time::Location.fixed("Test/Zone", 2 * 3600)) do |e|
-      now = Time.utc(2026, 10, 2, 21, 30) # 23:30 local time
-      e.server.clock = -> { now }
+      e.deps.config.now = Time.utc(2026, 10, 2, 21, 30) # 23:30 local time
       friday = "Today is 2026-10-02 (Friday), server time zone Test/Zone."
       e.post(%({"jsonrpc":"2.0","id":0,"method":"initialize","params":{"protocolVersion":"2025-06-18"}})).result["instructions"].as_s.should contain(friday)
       res = e.modern("server/discover").result
       res["instructions"].as_s.should contain(friday)
       res["ttlMs"].should eq 30 * 60 * 1000
-      now += 1.hour # 00:30 local time, next day
+      e.deps.config.now = Time.utc(2026, 10, 2, 22, 30) # 00:30 local time, next day
       e.call("schema")[1].should contain("Today is 2026-10-03 (Saturday), server time zone Test/Zone.")
       e.modern("server/discover").result["ttlMs"].should eq 3_600_000
     end
@@ -192,20 +211,33 @@ describe "MCP protocol" do
         r = e.post(body)
         {body, r.status, status == 202 ? nil : r.error_code}.should eq({body, status, code})
       end
-      r = e.post(%({"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":5}}))
-      r.json["error"]["message"].should eq "Invalid params: json: cannot unmarshal number into Go struct field params.name of type string"
+      {
+        %({"jsonrpc":"2.0","id":1,"method":5})                                           => "Invalid JSON: method must be a string.",
+        %("ping")                                                                        => "Invalid JSON: the message must be an object.",
+        %({"jsonrpc":"2.0","id":1,"method":tru})                                         => "Invalid JSON: Unexpected char '}' at line 1, column 37",
+        %({"jsonrpc":"2.0","id":1,"method":"ping"} x)                                    => "Invalid JSON: Unexpected char 'x' at line 1, column 42",
+        %({"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":5}})            => "Invalid params: name must be a string.",
+        %({"jsonrpc":"2.0","id":1,"method":"tools/call","params":"x"})                   => "Invalid params: params must be an object.",
+        %({"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"_meta":[]}})          => "Invalid params: _meta must be an object.",
+        %({"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":1}}) => "Invalid params: protocolVersion must be a string.",
+      }.each do |body, message|
+        {body, e.post(body).json["error"]["message"]}.should eq({body, message})
+      end
+      # A body of null is a message without method.
+      e.post("null").json["error"]["message"].should eq "Field method is missing."
       big = %({"jsonrpc":"2.0","id":1,"method":"ping","params":{"x":") + "a" * MCP::MAX_BODY + %("}})
       e.post(big).status.should eq 413
     end
   end
 
-  it "echoes ids verbatim and matches keys case-insensitively" do
+  it "echoes ids verbatim and matches keys exactly" do
     with_env do |e|
       e.post(%({"jsonrpc":"2.0","id":1.50,"method":"ping"})).body.should eq %({"jsonrpc":"2.0","id":1.50,"result":{}}\n)
       e.post(%({"jsonrpc":"2.0","id":null,"method":"ping"})).body.should eq %({"jsonrpc":"2.0","id":null,"result":{}}\n)
       e.post(%({"jsonrpc":"2.0","id":{"a": 1},"method":"ping"})).body.should eq %({"jsonrpc":"2.0","id":{"a":1},"result":{}}\n)
-      e.post(%({"JSONRPC":"2.0","ID":7,"Method":"ping"})).body.should eq %({"jsonrpc":"2.0","id":7,"result":{}}\n)
-      e.ok("search_expenses", %({"LIMIT":2,"limit":3})).should eq JSON.parse(%({"expenses":[],"matches":0,"shown":0,"total":"0.00","total_cents":0,"truncated":false}))
+      e.post(%({"jsonrpc":"2.0","id":7,"Method":"ping"})).json["error"]["message"].should eq "Field method is missing."
+      e.ok("search_expenses", %({"limit":2,"limit":3})).should eq JSON.parse(%({"expenses":[],"matches":0,"shown":0,"total":"0.00","total_cents":0,"truncated":false}))
+      e.fail("search_expenses", %({"LIMIT":2})).should eq %(Invalid arguments: unknown field "LIMIT".)
     end
   end
 end
@@ -304,11 +336,21 @@ describe "MCP tools" do
       end
       e.fail("search_expenses", %({"person":"Dora"})).should eq %(Unknown person "Dora". Available: Anna, Ben, Cleo.)
       e.fail("search_expenses", %({"from":"2026-09-02","to":"2026-09-01"})).should eq %("to" (2026-09-01) is before "from" (2026-09-02).)
-      e.fail("search_expenses", %({"unknown":1})).should eq %(Invalid arguments: json: unknown field "unknown")
-      e.fail("search_expenses", %({"limit":"ten"})).should eq "Invalid arguments: json: cannot unmarshal string into Go struct field .limit of type int"
-      e.fail("search_expenses", %({"limit":5.0})).should eq "Invalid arguments: json: cannot unmarshal number 5.0 into Go struct field .limit of type int"
-      e.fail("search_expenses", %({"text":5})).should eq "Invalid arguments: must be a string or a list of strings"
-      e.fail("balances", %([])).should eq "Invalid arguments: json: cannot unmarshal array into Go value of type struct {}"
+      {
+        %({"unknown":1})                  => %(Invalid arguments: unknown field "unknown".),
+        %({"limit":"ten"})                => "Invalid arguments: limit must be an integer.",
+        %({"limit":5.0})                  => "Invalid arguments: limit must be an integer.",
+        %({"limit":99999999999999999999}) => "Invalid arguments: limit must be an integer.",
+        %({"min_amount":"5"})             => "Invalid arguments: min_amount must be a number.",
+        %({"max_amount":1e400})           => "Invalid arguments: max_amount must be a number.",
+        %({"person":["Anna"]})            => "Invalid arguments: person must be a string.",
+        %({"text":5})                     => "Invalid arguments: must be a string or a list of strings",
+        %({"text":["a",1]})               => "Invalid arguments: must be a string or a list of strings",
+        %([])                             => "Invalid arguments: arguments must be an object.",
+      }.each { |args, msg| {args, e.fail("search_expenses", args)}.should eq({args, msg}) }
+      e.fail("balances", %({"x":1})).should eq %(Invalid arguments: unknown field "x".)
+      e.fail("activity", %({"expense_id":1.5})).should eq "Invalid arguments: expense_id must be an integer."
+      e.ok("search_expenses", %({"text":["Rewe",null]}))["matches"].should eq 1
 
       # statistics
       d = e.ok("statistics", %({"group_by":"category","share_of":"Ben"}))
@@ -375,7 +417,7 @@ describe "MCP tools" do
         %({"paid_by":"Cleo","involved":"Ben"})              => "Kino",
         %({"text":null,"min_amount":null})                  => "Lidl,Kino,Edeka,Rewe",
         %({"min_amount":20,"min_amount":null})              => "Lidl,Kino,Edeka,Rewe",
-        %({"reimbursements":" include ","SORT":"date_asc"}) => "Rewe,Edeka,Kino,Lidl",
+        %({"reimbursements":" include ","sort":"date_asc"}) => "Rewe,Edeka,Kino,Lidl",
       }.each do |args, want|
         {args, titles(e.ok("search_expenses", args))}.should eq({args, want})
       end
@@ -656,10 +698,12 @@ describe "MCP write tools" do
         %({#{x},"currency":"USD","fx_rate":0})                                          => "fx_rate must be greater than 0.",
         %({#{x},"date":"morgen"})                                                       => %(Invalid date for date: "morgen" (expected YYYY-MM-DD).),
         %({"title":"X","amount":true,"paid_by":"Anna"})                                 => "Invalid arguments: must be a string or a number",
-        %({#{x},"titel":"Y"})                                                           => %(Invalid arguments: json: unknown field "titel"),
-        %({#{x},"participants":"Anna"})                                                 => "Invalid arguments: json: cannot unmarshal string into Go struct field .participants of type []string",
-        %({#{x},"allow_duplicate":"yes"})                                               => "Invalid arguments: json: cannot unmarshal string into Go struct field .allow_duplicate of type bool",
-        %({#{x},"weights":["Anna"]})                                                    => "Invalid arguments: json: cannot unmarshal array into Go struct field .weights of type map[string]mcp.amountText",
+        %({#{x},"titel":"Y"})                                                           => %(Invalid arguments: unknown field "titel".),
+        %({#{x},"participants":"Anna"})                                                 => "Invalid arguments: participants must be a list of strings.",
+        %({#{x},"allow_duplicate":"yes"})                                               => "Invalid arguments: allow_duplicate must be true or false.",
+        %({#{x},"weights":["Anna"]})                                                    => "Invalid arguments: weights must be an object.",
+        %({#{x},"currency":"USD","fx_rate":"1.2"})                                      => "Invalid arguments: fx_rate must be a number.",
+        %({#{x},"split":"shares","weights":{"Anna":true}})                              => "Invalid arguments: must be a string or a number",
         # The order of the checks.
         %({"amount":"x","paid_by":"Zoe","split":"x","date":"x"})                                 => "Parameter title is missing.",
         %({"title":"X","amount":"x","paid_by":"Zoe","date":"x"})                                 => %(Invalid date for date: "x" (expected YYYY-MM-DD).),
@@ -685,7 +729,8 @@ describe "MCP write tools" do
         %({"from":"Ben","to":"Ben","amount":"1"})                   => "from and to must be different people.",
         %({"from":"Ben","amount":"1"})                              => "Parameter to is missing.",
         %({"from":"Ben","to":"Dora","amount":"1"})                  => %(Unknown person "Dora" in to. Available: Anna, Ben, Cleo.),
-        %({"from":"Ben","to":"Anna","amount":"1","title":"Geld"})   => %(Invalid arguments: json: unknown field "title"),
+        %({"from":"Ben","to":"Anna","amount":"1","title":"Geld"})   => %(Invalid arguments: unknown field "title".),
+        %({"from":["Ben"],"to":"Anna","amount":"1"})                => "Invalid arguments: from must be a string.",
         %({"from":"Zoe","to":"Zoe","amount":"x"})                   => %(Invalid amount "x" for EUR: use digits with a dot as decimal separator and no thousands separator, e.g. 1234.50),
         %({"from":"Ben","to":"Anna","amount":"5","currency":"XAF"}) => "There is no exchange rate for XAF on 2026-10-02. Ask the user for the rate and pass it as fx_rate.",
       }.each do |args, want|

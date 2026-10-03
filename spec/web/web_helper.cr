@@ -27,13 +27,16 @@ class TestServer
     headers = headers.dup
     headers["Host"] ||= "example.com"
     cookies.each { |k, v| headers.add("Cookie", "#{k}=#{v}") }
-    req = HTTP::Request.new(method, path, headers, body)
+    call(HTTP::Request.new(method, path, headers, body))
+  end
+
+  def call(req : HTTP::Request) : HTTP::Client::Response
     io = IO::Memory.new
     res = HTTP::Server::Response.new(io)
     @handler.call(HTTP::Server::Context.new(req, res))
     res.close
     io.rewind
-    HTTP::Client::Response.from_io(io, ignore_body: method == "HEAD")
+    HTTP::Client::Response.from_io(io, ignore_body: req.method == "HEAD")
   end
 
   def get(path : String, cookies = {} of String => String) : HTTP::Client::Response
