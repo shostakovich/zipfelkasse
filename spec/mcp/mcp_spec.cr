@@ -511,6 +511,15 @@ describe "MCP tools" do
     end
   end
 
+  it "gives activity times in the server time zone" do
+    with_env(Time::Location.load("Europe/Berlin")) do |e|
+      e.store.clock = -> { Time.utc(2026, 10, 3, 10, 0, 0) }
+      e.store.create_category(0_i64, "Kino")
+      e.ok("activity", %({"limit":1}))["entries"][0]["at"].should eq "2026-10-03T12:00:00+02:00"
+      e.ok("activity", %({"from":"2026-10-03","to":"2026-10-03"}))["entries"].as_a.size.should eq 1
+    end
+  end
+
   it "puts a data overview into the instructions" do
     with_env do |e|
       instructions = -> { e.modern("server/discover").result["instructions"].as_s }

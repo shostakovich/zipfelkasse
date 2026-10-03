@@ -1039,8 +1039,9 @@ module Zipfelkasse::MCP
     end
   end
 
-  # RFC 3339 with "Z" for any zero offset.
+  # RFC 3339 in t's zone ("Z" for any zero offset); Time#to_rfc3339 would
+  # convert to UTC.
   def self.rfc3339(t : Time) : String
-    t.offset == 0 ? t.to_utc.to_rfc3339 : t.to_rfc3339
+    t.offset == 0 ? t.to_s("%Y-%m-%dT%H:%M:%SZ") : t.to_s("%Y-%m-%dT%H:%M:%S%:z")
   end
 end
