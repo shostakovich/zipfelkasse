@@ -24,50 +24,12 @@ module E2E
       user.run { |b| b.request(method, path, headers.call(b.app), body) }
     end
 
-    # POSTs a large body, with Content-Length or chunked, and reads the
-    # answer while the body is still being written: a server may answer (and
-    # close the connection) before it has read the body.
+    # POSTs a large body, with Content-Length or chunked.
     def self.post_large(user : User, path : String, body : String, chunked = false,
                         content_type = "application/x-www-form-urlencoded", extra = HTTP::Headers.new) : Response
-      user.run do |b|
-        headers = HTTP::Headers{"Host" => b.app.host, "Content-Type" => content_type}
-        headers.merge!(extra)
-        b.jar.add_request_headers(headers)
-        if chunked
-          headers["Transfer-Encoding"] = "chunked"
-        else
-          headers["Content-Length"] = body.bytesize.to_s
-        end
-        socket = TCPSocket.new("127.0.0.1", b.app.port)
-        socket.read_timeout = 30.seconds
-        begin
-          socket << "POST " << path << " HTTP/1.1\r\n"
-          headers.each { |k, vs| vs.each { |v| socket << k << ": " << v << "\r\n" } }
-          socket << "\r\n"
-          socket.flush
-          spawn do
-            if chunked
-              bytes = body.to_slice
-              (0...bytes.size).step(64 * 1024) do |pos|
-                part = bytes[pos, Math.min(64 * 1024, bytes.size - pos)]
-                socket << part.size.to_s(16) << "\r\n"
-                socket.write(part)
-                socket << "\r\n"
-              end
-              socket << "0\r\n\r\n"
-            else
-              socket << body
-            end
-            socket.flush
-          rescue IO::Error
-            # the server stopped reading
-          end
-          res = HTTP::Client::Response.from_io(socket)
-          Response.new("POST", path, res.status_code, res.headers, res.body? || "", res.cookies)
-        ensure
-          socket.close rescue nil
-        end
-      end
+      headers = HTTP::Headers{"Content-Type" => content_type}
+      headers.merge!(extra)
+      user.run { |b| b.request("POST", path, headers, body, chunked) }
     end
 
     # Puts a cookie into the user's jar.

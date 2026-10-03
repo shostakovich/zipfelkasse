@@ -432,7 +432,7 @@ module E2E
 
     private def ynab
       as_person(:anna)
-      expect(@user.post("/einstellungen/ynab/token", {"token" => "falsch"}), 422, "bad token")
+      expect(@user.post("/einstellungen/ynab/token", {"token" => "wrong"}), 422, "bad token")
       expect(@user.post("/einstellungen/ynab/token", {"token" => FakeYNAB::TOKEN}), 303, "token")
       expect(@user.get("/einstellungen/ynab"), 200, "ynab page")
       expect(@user.post("/einstellungen/ynab/konto", {"ziel" => "#{FakeYNAB::PLAN}|#{FakeYNAB::ACCOUNT}", "start" => "2026-06-01"}), 303, "ynab target")

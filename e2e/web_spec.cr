@@ -14,7 +14,7 @@ describe "Web: identity" do
     r.status.should eq 303
     r.location.should eq "/wer?zurueck=%2Fsalden%3Fx%3D1"
     anon.get("/ausgaben/neu?von=1&an=2").location.should eq "/wer?zurueck=%2Fausgaben%2Fneu%3Fvon%3D1%26an%3D2"
-    anon.get("/gibt-es-nicht").location.should eq "/wer?zurueck=%2Fgibt-es-nicht"
+    anon.get("/does-not-exist").location.should eq "/wer?zurueck=%2Fdoes-not-exist"
     # No return target for "/" (with or without query), POST and HEAD.
     anon.get("/").location.should eq "/wer"
     anon.get("/?q=pizza").location.should eq "/wer"
@@ -648,9 +648,9 @@ describe "Web: home page" do
     r.doc.xpath_node(%(//a[text()="Filter zurücksetzen"])).should be_nil
     r.doc.xpath_node(%(//a[@data-more])).should be_nil
     r.doc.xpath_node(%(//div[@data-more-list][@data-sync-url])).should_not be_nil
-    r = user.get("/?q=nichts")
+    r = user.get("/?q=nothing")
     W.text_of(r, %(//p[@class="empty"])).should eq "Keine Ausgaben gefunden. Filter zurücksetzen"
-    W.input(r, "q").should eq "nichts"
+    W.input(r, "q").should eq "nothing"
     suggest(user.get("/ausgaben/neu")).should eq JSON.parse(%({"t":{},"w":{}}))
   end
 
@@ -716,7 +716,7 @@ describe "Web: home page" do
       "person=4&q=bahn"                         => ["5"],
       "kategorie=1&person=3&q=rewe"             => ["2", "3"],
       "kategorie=abc&person=&q="                => ["1", "8", "2", "3", "4", "5", "6", "7"],
-      "q=gibtsnicht"                            => [] of String,
+      "q=nonexistent"                           => [] of String,
     }.each do |query, ids|
       r = user.get("/?#{query}")
       {query, r.status, row_ids(r)}.should eq({query, 200, ids})
@@ -726,7 +726,7 @@ describe "Web: home page" do
     W.selected(r, "kategorie").should eq "1"
     W.selected(r, "person").should eq "3"
     W.attr(r, %(//a[text()="Filter zurücksetzen"]), "href").should eq "/"
-    r = user.get("/?q=gibtsnicht")
+    r = user.get("/?q=nonexistent")
     W.text_of(r, %(//p[@class="empty"])).should eq "Keine Ausgaben gefunden. Filter zurücksetzen"
     r = user.get("/?kategorie=abc")
     W.selected(r, "kategorie").should be_nil
@@ -1365,14 +1365,14 @@ describe "Web: security, PWA, static files and CLI" do
     anon = world.user
     [user.get("/"), user.get("/ausgaben/999"), anon.get("/wer"), anon.get("/salden"), anon.get("/healthz"),
      anon.get("/static/app.css"), anon.get("/manifest.webmanifest"), anon.get("/sw.js"), anon.get("/favicon.ico"),
-     anon.get("/api/kurs"), user.get("/gibt-es-nicht"), user.post("/salden")].each { |r| security_headers!(r) }
+     anon.get("/api/kurs"), user.get("/does-not-exist"), user.post("/salden")].each { |r| security_headers!(r) }
     r = user.get("/")
     {r.content_type, r.headers["Cache-Control"]}.should eq({"text/html; charset=utf-8", "no-store"})
 
-    ["/gibt-es-nicht", "/salden/", "/ausgaben/1/x", "/ausgaben/1/", "/einstellungen/gibts/nicht", "/static/fehlt.css"].each do |p|
+    ["/does-not-exist", "/salden/", "/ausgaben/1/x", "/ausgaben/1/", "/einstellungen/no/such", "/static/missing.css"].each do |p|
       {p, user.get(p).status}.should eq({p, 404})
     end
-    user.get("/static/fehlt.css").headers["Cache-Control"]?.should be_nil
+    user.get("/static/missing.css").headers["Cache-Control"]?.should be_nil
 
     {
       {"POST", "/salden"}                          => "GET, HEAD",

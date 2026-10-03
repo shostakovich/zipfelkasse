@@ -41,7 +41,7 @@ describe "Read everything" do
     user.login(people[1][1])
     categories.each { |id, _| user.get("/?kategorie=#{id}").status.should eq 200 }
     people.each { |id, _| user.get("/?person=#{id}").status.should eq 200 }
-    ["pizza", "PIZZA", "müller", "MÜLLER", "<script>", "&", "\"Luigi\"", "korrigiert", "nichts-zu-finden", "  rewe  ", "ß", "strasse"].each do |q|
+    ["pizza", "PIZZA", "müller", "MÜLLER", "<script>", "&", "\"Luigi\"", "korrigiert", "no-match", "  rewe  ", "ß", "strasse"].each do |q|
       user.get("/?q=#{URI.encode_www_form(q)}").status.should eq 200
     end
     user.get("/?q=rewe&kategorie=#{categories.first[0]}&person=#{people.first[0]}").status.should eq 200
@@ -95,7 +95,7 @@ describe "Read everything" do
       "?von=01.09.2026&bis=03.10.2026" => 200,
       "?von=&bis="                     => 200,
       "?von=2026-01-01&bis=2025-01-01" => 422,
-      "?von=kaputt"                    => 422,
+      "?von=broken"                    => 422,
     }
     types = {
       "/export"               => "text/html",
@@ -129,7 +129,7 @@ describe "Read everything" do
       status ? r.status.should(eq status) : r.status.should(be < 500)
     end
     {"/manifest.webmanifest" => 200, "/sw.js" => 200, "/favicon.ico" => 200, "/healthz" => 200,
-     "/gibt-es-nicht" => 404, "/salden/" => 404}.each do |path, status|
+     "/does-not-exist" => 404, "/salden/" => 404}.each do |path, status|
       {path, user.get(path).status}.should eq({path, status})
     end
     page = user.get("/ausgaben/neu")
@@ -142,7 +142,7 @@ describe "Read everything" do
       icons/icon-192.png icons/icon-512.png icons/maskable-512.png).each do |f|
       user.get("/static/#{f}").status.should eq 200
     end
-    user.get("/static/fehlt.css").status.should eq 404
+    user.get("/static/missing.css").status.should eq 404
   end
 
   scenario "identity redirects", world do
@@ -213,9 +213,9 @@ describe "Read everything" do
     ].each { |q| JSON.parse(ok.call("sql_query", {query: q}.to_json))["row_count"].as_i }
     [
       "SELECT * FROM ynab_config", "DELETE FROM expenses", "UPDATE participants SET name = 'x'", "SELECT 1; SELECT 2",
-      "ATTACH DATABASE '/tmp/x.db' AS x", "PRAGMA table_info(expenses)", "SELECT * FROM gibtsnicht",
+      "ATTACH DATABASE '/tmp/x.db' AS x", "PRAGMA table_info(expenses)", "SELECT * FROM nonexistent",
     ].each { |q| refused.call("sql_query", {query: q}.to_json) }
     refused.call("sql_query", {query: ""}.to_json).should contain "query is missing"
-    E2E::MCPKit.error(user.tool("gibt_es_nicht")).should eq({-32602_i64, "Unknown tool: gibt_es_nicht"})
+    E2E::MCPKit.error(user.tool("no_such_tool")).should eq({-32602_i64, "Unknown tool: no_such_tool"})
   end
 end

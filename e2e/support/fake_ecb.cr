@@ -18,7 +18,6 @@ module E2E
     getter requests = [] of String
     getter port : Int32
     @server : HTTP::Server
-    @mutex = Mutex.new
     @days : Array(Time)
 
     def initialize(@last_day : Time = Time.utc(2026, 10, 2))
@@ -36,13 +35,9 @@ module E2E
       @server.close
     end
 
-    def served?(file : String) : Bool
-      @mutex.synchronize { @requests.includes?(file) }
-    end
-
     private def handle(ctx)
       file = ctx.request.path.lstrip('/')
-      @mutex.synchronize { @requests << file }
+      @requests << file
       case file
       when "eurofxref-daily.xml"
         xml(ctx, @days.first(1))

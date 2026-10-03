@@ -4,8 +4,8 @@ require "json"
 module E2E
   # In-memory fake of the YNAB API, reachable at base_url (".../v1").
   class FakeYNAB
-    TOKEN       = "geheimer-token-123"
-    OTHER_TOKEN = "token-anderer-nutzer"
+    TOKEN       = "secret-token-123"
+    OTHER_TOKEN = "other-user-token"
     PLAN        = "plan-1"
     ACCOUNT     = "acc-geteilt"
 
@@ -39,7 +39,6 @@ module E2E
     @next_id = 0
     @fail_next = [] of Int32
     @last_request = Time.instant
-    @mutex = Mutex.new
     @server : HTTP::Server
 
     def initialize
@@ -58,36 +57,31 @@ module E2E
 
     # Non-deleted transactions sorted by ID number.
     def live : Array(Txn)
-      @mutex.synchronize { @txns.values.reject(&.deleted).sort_by { |t| t.id[1..].to_i } }
+      all.reject(&.deleted)
     end
 
     def all : Array(Txn)
-      @mutex.synchronize { @txns.values.sort_by { |t| t.id[1..].to_i } }
+      @txns.values.sort_by { |t| t.id[1..].to_i }
     end
 
     def fail(*statuses : Int32) : Nil
-      @mutex.synchronize { @fail_next.concat(statuses.to_a) }
+      @fail_next.concat(statuses.to_a)
     end
 
     def request_count : Int32
-      @mutex.synchronize { @requests.size }
+      @requests.size
     end
 
     # Waits until the app has not talked to the fake for `quiet`.
     def wait_idle(quiet = 1.5.seconds, timeout = 30.seconds) : Nil
-      E2E.wait_until("YNAB fake idle", timeout) do
-        @mutex.synchronize { Time.instant - @last_request > quiet }
-      end
+      E2E.wait_until("YNAB fake idle", timeout) { Time.instant - @last_request > quiet }
     end
 
     private def handle(ctx)
       req = ctx.request
-      fail = 0
-      @mutex.synchronize do
-        @requests << "#{req.method} #{req.path}"
-        @last_request = Time.instant
-        fail = @fail_next.shift? || 0
-      end
+      @requests << "#{req.method} #{req.path}"
+      @last_request = Time.instant
+      fail = @fail_next.shift? || 0
       auth = req.headers["Authorization"]?
       res = ctx.response
       res.content_type = "application/json"
@@ -97,14 +91,14 @@ module E2E
         res.headers["Retry-After"] = "60"
         error(res, 429, "429", "too_many_requests", "Too many requests")
       elsif fail != 0
-        error(res, fail, fail.to_s, "error", "Fehler #{fail} mit #{TOKEN}")
+        error(res, fail, fail.to_s, "error", "Error #{fail} with #{TOKEN}")
       elsif auth == "Bearer #{OTHER_TOKEN}"
         other_user(req, res)
       else
         route(req, res)
       end
     ensure
-      @mutex.synchronize { @last_request = Time.instant }
+      @last_request = Time.instant
     end
 
     private def route(req, res)
@@ -201,55 +195,47 @@ module E2E
 
     private def create(req, res)
       txns = body_txns(req)
-      return error(res, 400, "400", "bad_request", "kaputt") if txns.nil? || txns.empty?
-      @mutex.synchronize do
-        txns.each do |t|
-          return error(res, 400, "400", "bad_request", "import_id not expected") if t.as_h.has_key?("import_id")
-          if t["payee_name"]?.try(&.as_s?).try(&.includes?("ABLEHNEN"))
-            return error(res, 400, "400", "bad_request", "payee rejected")
-          end
+      return error(res, 400, "400", "bad_request", "broken") if txns.nil? || txns.empty?
+      txns.each do |t|
+        return error(res, 400, "400", "bad_request", "import_id not expected") if t.as_h.has_key?("import_id")
+        if t["payee_name"]?.try(&.as_s?).try(&.includes?("REJECT"))
+          return error(res, 400, "400", "bad_request", "payee rejected")
         end
-        out = txns.map do |t|
-          @next_id += 1
-          txn = Txn.new("t#{@next_id}")
-          apply(txn, t)
-          @txns[txn.id] = txn
-        end
-        data(res, 201, {transaction_ids: out.map(&.id), transactions: out, server_knowledge: 2})
       end
+      out = txns.map do |t|
+        @next_id += 1
+        txn = Txn.new("t#{@next_id}")
+        apply(txn, t)
+        @txns[txn.id] = txn
+      end
+      data(res, 201, {transaction_ids: out.map(&.id), transactions: out, server_knowledge: 2})
     end
 
     private def update(req, res)
       txns = body_txns(req)
-      return error(res, 400, "400", "bad_request", "kaputt") if txns.nil?
-      @mutex.synchronize do
-        txns.each do |t|
-          return error(res, 404, "404", "not_found", "transaction not found") unless @txns.has_key?(t["id"]?.try(&.as_s?) || "")
-        end
-        out = txns.map do |t|
-          txn = @txns[t["id"].as_s]
-          apply(txn, t) unless txn.deleted
-          txn
-        end
-        data(res, 200, {transaction_ids: [] of String, transactions: out, server_knowledge: 3})
+      return error(res, 400, "400", "bad_request", "broken") if txns.nil?
+      txns.each do |t|
+        return error(res, 404, "404", "not_found", "transaction not found") unless @txns.has_key?(t["id"]?.try(&.as_s?) || "")
       end
+      out = txns.map do |t|
+        txn = @txns[t["id"].as_s]
+        apply(txn, t) unless txn.deleted
+        txn
+      end
+      data(res, 200, {transaction_ids: [] of String, transactions: out, server_knowledge: 3})
     end
 
     private def delete(id, res)
-      @mutex.synchronize do
-        txn = @txns[id]?
-        return error(res, 404, "404", "not_found", "transaction not found") if txn.nil? || txn.deleted
-        txn.deleted = true
-        data(res, 200, {transaction: txn, server_knowledge: 4})
-      end
+      txn = @txns[id]?
+      return error(res, 404, "404", "not_found", "transaction not found") if txn.nil? || txn.deleted
+      txn.deleted = true
+      data(res, 200, {transaction: txn, server_knowledge: 4})
     end
 
     private def list(acc, req, res)
       since = req.query_params["since_date"]? || ""
-      @mutex.synchronize do
-        out = @txns.values.select { |t| !t.deleted && t.account_id == acc && t.date >= since }
-        data(res, 200, {transactions: out, server_knowledge: 5})
-      end
+      out = @txns.values.select { |t| !t.deleted && t.account_id == acc && t.date >= since }
+      data(res, 200, {transactions: out, server_knowledge: 5})
     end
 
     private def apply(txn : Txn, t : JSON::Any)

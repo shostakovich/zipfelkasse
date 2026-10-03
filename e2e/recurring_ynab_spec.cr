@@ -421,7 +421,7 @@ describe "YNAB sync" do
     calls.should(be_empty)
 
     calls = RY.ynab_calls(world, 1) do
-      r = user.post("#{page}/token", {"token" => "falsch"})
+      r = user.post("#{page}/token", {"token" => "wrong"})
       r.status.should eq 422
       r.error_message.should eq "YNAB kennt diesen Token nicht. Bitte prüfen und neu kopieren."
     end
@@ -431,7 +431,7 @@ describe "YNAB sync" do
     fail.call(503)
     r = user.post("#{page}/token", {"token" => "  #{token}  "})
     r.status.should eq 422
-    r.error_message.should eq "YNAB ist gerade nicht erreichbar: YNAB-Fehler 503: Fehler 503 mit •••"
+    r.error_message.should eq "YNAB ist gerade nicht erreichbar: YNAB-Fehler 503: Error 503 with •••"
     r.body.should_not contain token
     E2E::Database.count(world.app.db_path, "SELECT count(*) FROM ynab_config").should eq 0
 
@@ -472,7 +472,7 @@ describe "YNAB sync" do
         r.status.should eq 422
         r.error_message.should eq "Bitte Plan und Konto auswählen."
       end
-      ["", "kaputt", "31.02.2026", "1999-12-31", "2026-13-01"].each do |start|
+      ["", "broken", "31.02.2026", "1999-12-31", "2026-13-01"].each do |start|
         r = user.post("#{page}/konto", {"ziel" => target, "start" => start})
         r.status.should eq 422
         r.error_message.should eq "Bitte ein gültiges Startdatum angeben."
@@ -534,7 +534,7 @@ describe "YNAB sync" do
     user = world.user
     user.login("Anna")
     calls = RY.ynab_calls(world) do
-      {"c-gibtsnicht", "c-old", "c-rta", "c-visa"}.each do |cat|
+      {"c-unknown", "c-old", "c-rta", "c-visa"}.each do |cat|
         r = user.post("#{page}/kategorien", {"kat-1" => cat})
         r.status.should eq 422
         r.error_message.should eq "Unbekannte YNAB-Kategorie. Bitte die Seite neu laden."
@@ -665,10 +665,10 @@ describe "YNAB sync" do
     end
     calls.should(eq [post_txns])
     RY.rows(world, "SELECT ynab_txn_id, synced_hash FROM ynab_sync WHERE expense_id = #{ids["getraenke"]}").should eq [["", "pending"]]
-    config.call("retry_at, error").should eq ["2026-10-03T10:16:00Z", "YNAB-Fehler 500: Fehler 500 mit •••"]
+    config.call("retry_at, error").should eq ["2026-10-03T10:16:00Z", "YNAB-Fehler 500: Error 500 with •••"]
     r = user.get(page)
     r.body.should_not contain token
-    alerts.call(r).should eq ["YNAB-Fehler 500: Fehler 500 mit •••"]
+    alerts.call(r).should eq ["YNAB-Fehler 500: Error 500 with •••"]
     status_texts.call(r).last.should eq "Nächster Versuch ab 03.10.2026, 12:16."
     calls = RY.ynab_calls(world, 2) { world.restart("2026-10-03T10:17:00Z") }
     calls.should(eq ["GET /v1/plans/plan-1/accounts/acc-geteilt/transactions", post_txns])
@@ -680,14 +680,14 @@ describe "YNAB sync" do
     fail.call(503)
     r = user.get(page)
     r.status.should eq 200
-    alerts.call(r).should eq ["YNAB ist gerade nicht erreichbar: YNAB-Fehler 503: Fehler 503 mit •••"]
+    alerts.call(r).should eq ["YNAB ist gerade nicht erreichbar: YNAB-Fehler 503: Error 503 with •••"]
     r.body.should_not contain token
     r.doc.xpath_nodes("//select[@id='ziel']").size.should eq 0
     r.text.should contain "Die Kategorien aus YNAB konnten nicht geladen werden."
     fail.call(503) # errors are not cached
     r = user.post("#{page}/konto", {"ziel" => target, "start" => "2026-09-01"})
     r.status.should eq 502
-    r.error_message.should eq "YNAB ist gerade nicht erreichbar: YNAB-Fehler 503: Fehler 503 mit •••"
+    r.error_message.should eq "YNAB ist gerade nicht erreichbar: YNAB-Fehler 503: Error 503 with •••"
     config.call("start_date").should eq ["2026-09-25"]
     r = user.get(page)
     alerts.call(r).should be_empty
@@ -696,10 +696,10 @@ describe "YNAB sync" do
     # A transaction YNAB rejects is listed and only retried when it changes
     # or in a full sync.
     calls = RY.ynab_calls(world, 2) do
-      ids["ablehnen"] = RY.create(world, user, RY.form("Bitte ABLEHNEN", "2026-10-01", "6,00", anna, [anna, ben]))
+      ids["reject"] = RY.create(world, user, RY.form("Please REJECT", "2026-10-01", "6,00", anna, [anna, ben]))
     end
     calls.should(eq [post_txns, post_txns])
-    RY.rows(world, "SELECT ynab_txn_id, substr(synced_hash, 1, 6), last_error FROM ynab_sync WHERE expense_id = #{ids["ablehnen"]}")
+    RY.rows(world, "SELECT ynab_txn_id, substr(synced_hash, 1, 6), last_error FROM ynab_sync WHERE expense_id = #{ids["reject"]}")
       .should eq [["", "error:", "YNAB-Fehler 400: payee rejected"]]
     r = user.get(page)
     alerts.call(r).should be_empty
@@ -709,8 +709,8 @@ describe "YNAB sync" do
     ]
     RY.texts(r, "//section[.//h2[.='Status']]//h3").should eq ["Fehler bei einzelnen Ausgaben"]
     problems = r.doc.xpath_nodes("//section[.//h3]//tbody/tr").map { |tr| tr.xpath_nodes("td").map(&.content.strip) }
-    problems.should eq [["01.10.2026", "Bitte ABLEHNEN", "YNAB-Fehler 400: payee rejected"]]
-    RY.attr(r, "//section[.//h3]//tbody//a/@href").should eq ["/ausgaben/#{ids["ablehnen"]}"]
+    problems.should eq [["01.10.2026", "Please REJECT", "YNAB-Fehler 400: payee rejected"]]
+    RY.attr(r, "//section[.//h3]//tbody//a/@href").should eq ["/ausgaben/#{ids["reject"]}"]
 
     calls = RY.ynab_calls(world, 1) do
       ids["broetchen"] = RY.create(world, user, RY.form("Brötchen", "2026-10-03", "3,00", anna, [anna, ben]))
@@ -722,10 +722,10 @@ describe "YNAB sync" do
     config.call("summary").should eq ["0 neu · 0 geändert · 0 gelöscht · 1 fehlgeschlagen"]
 
     calls = RY.ynab_calls(world, 1) do
-      RY.update(user, ids["ablehnen"], RY.form("Bitte annehmen", "2026-10-01", "6,00", anna, [anna, ben]))
+      RY.update(user, ids["reject"], RY.form("Please accept", "2026-10-01", "6,00", anna, [anna, ben]))
     end
     calls.should(eq [post_txns])
-    RY.live(world).last[2..3].should eq ["Bitte annehmen", "Gesamt 6,00 € · bezahlt von Anna · #{marker.call(ids["ablehnen"])}"]
+    RY.live(world).last[2..3].should eq ["Please accept", "Gesamt 6,00 € · bezahlt von Anna · #{marker.call(ids["reject"])}"]
     r = user.get(page)
     r.doc.xpath_nodes("//h3").size.should eq 0
     status_texts.call(r)[1].should eq "Synchronisierte Buchungen: 6"
@@ -790,7 +790,7 @@ describe "YNAB sync" do
     config.call("token_invalid, error, summary").should eq ["0", "", "1 neu · 1 geändert · 0 gelöscht"]
     RY.live(world).map { |t| [t[2], t[1]] }.should eq [
       ["Wocheneinkauf", -25000], ["Kino", -15000], ["Bäcker", -4500], ["Getränke", -6000], ["Brötchen", -1500],
-      ["Bitte annehmen", -3000], ["Eis", -2000],
+      ["Please accept", -3000], ["Eis", -2000],
     ]
 
     # Disconnecting keeps everything in YNAB and stops the sync.

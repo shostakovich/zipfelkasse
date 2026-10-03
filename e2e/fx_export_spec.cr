@@ -263,7 +263,7 @@ module FxExportSpec
       [
         {"usd", "", "1", "Bitte ein Datum angeben."},
         {"usd", "   ", "1", "Bitte ein Datum angeben."},
-        {"usd", "kaputt", "1", "Ungültiges Datum „kaputt“."},
+        {"usd", "broken", "1", "Ungültiges Datum „broken“."},
         {"usd", "30.02.2026", "1", "Ungültiges Datum „30.02.2026“."},
         {"usd", "1999-12-31", "1", "Das Datum „1999-12-31“ liegt nicht zwischen 2000 und 2100."},
         {"usd", "01.01.2101", "1", "Das Datum „01.01.2101“ liegt nicht zwischen 2000 und 2100."},
@@ -281,7 +281,7 @@ module FxExportSpec
         {"U5D", "2026-10-01", "1", "Bitte einen dreistelligen Währungscode angeben (z. B. USD)."},
         {"usd", "2026-10-01", "1.000.000.001", "Der Kurs muss größer als 0 sein."},
         # The date is checked first, then the rate, then the currency.
-        {"US", "kaputt", "abc", "Ungültiges Datum „kaputt“."},
+        {"US", "broken", "abc", "Ungültiges Datum „broken“."},
         {"eur", "2026-10-01", "abc", bad_rate.call("abc")},
       ].each do |cur, date, input, msg|
         r = user.post("/einstellungen/kurse", {"waehrung" => cur, "datum" => date, "kurs" => input})
@@ -304,7 +304,7 @@ module FxExportSpec
       [
         {"USD", "2026-10-01"}, # already deleted
         {"USD", "2026-10-02"}, # only an ECB rate
-        {"USD", "kaputt"},
+        {"USD", "broken"},
         {"", "2026-09-30"},
       ].each do |cur, date|
         r = user.post("/einstellungen/kurse/loeschen", {"waehrung" => cur, "datum" => date})
@@ -492,10 +492,8 @@ module FxExportSpec
     end
   end
 
-  # The FX job waits for the next 16:30 after the frozen "now" with a timer on
-  # the real clock; once that moment lies in the real past, the job would refresh the
-  # daily file in a tight loop. These scenarios count downloads exactly, so
-  # they use a "now" far in the future where the timer never fires.
+  # The frozen clock does not advance, so the FX job's wait for the next 16:30
+  # never ends within a scenario and downloads can be counted exactly.
   describe "ECB schedule" do
     fri = Time.utc(2036, 11, 7)
     mon = fri + 3.days
@@ -775,8 +773,8 @@ module FxExportSpec
       {page.status, input_value(page, "von"), input_value(page, "bis")}.should eq({200, "2026-09-01", "2026-09-30"})
 
       {
-        "von=kaputt"                    => "Ungültiges Datum „kaputt“.",
-        "von=kaputt&bis=2026-09-30"     => "Ungültiges Datum „kaputt“.",
+        "von=broken"                    => "Ungültiges Datum „broken“.",
+        "von=broken&bis=2026-09-30"     => "Ungültiges Datum „broken“.",
         "von=2026-09-01&bis=31.02.2026" => "Ungültiges Datum „31.02.2026“.",
         "bis=1999-12-31"                => "Das Datum „1999-12-31“ liegt nicht zwischen 2000 und 2100.",
         "von=%20"                       => "Bitte ein Datum angeben.",

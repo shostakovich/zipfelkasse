@@ -13,7 +13,6 @@ module E2E
     property failure : Int32 | Symbol | Nil = nil
     getter port : Int32
     @requests = [] of String
-    @mutex = Mutex.new
 
     def initialize(@upstream : FakeECB)
       @server = HTTP::Server.new { |ctx| handle(ctx) }
@@ -26,7 +25,7 @@ module E2E
     end
 
     def requests : Array(String)
-      @mutex.synchronize { @requests.dup }
+      @requests.dup
     end
 
     def count(file : String) : Int32
@@ -39,11 +38,11 @@ module E2E
 
     private def handle(ctx)
       file = ctx.request.path.lstrip('/')
-      @mutex.synchronize { @requests << file }
+      @requests << file
       case f = @failure
       when Int32
         ctx.response.status_code = f
-        ctx.response.print "kaputt"
+        ctx.response.print "broken"
       when :empty
         ctx.response.content_type = "text/xml"
         ctx.response.print EMPTY_XML
@@ -84,10 +83,6 @@ module E2E
 
     def iso(t : Time) : String
       t.to_s("%Y-%m-%d")
-    end
-
-    def german(t : Time) : String
-      t.to_s("%d.%m.%Y")
     end
 
     def day(s : String) : Time
