@@ -12,9 +12,9 @@ describe Config do
     c.now.should be_close(Time.utc, 5.seconds)
   end
 
-  it "calls the time zone Local without TZ" do
-    Config.from_env({} of String => String).location_name.should eq "Local"
-    Config.from_env({"TZ" => ""}).location_name.should eq "Local"
+  it "takes the system time zone without TZ" do
+    Config.from_env({} of String => String).location.should eq Time::Location.load_local
+    Config.from_env({"TZ" => ""}).location.should eq Time::Location.load_local
   end
 
   it "reads all variables" do
@@ -29,7 +29,6 @@ describe Config do
     c.backup_dir.should eq "/data/backups"
     c.mcp_secret.should eq "secret"
     c.location.name.should eq "Europe/Berlin"
-    c.location_name.should eq "Europe/Berlin"
     c.mcp_allowed_cidrs.any?(&.contains?("10.1.2.3")).should be_true
     c.mcp_allowed_cidrs.any?(&.contains?("::ffff:192.168.1.5")).should be_true
     c.mcp_allowed_cidrs.any?(&.contains?("192.168.1.6")).should be_false

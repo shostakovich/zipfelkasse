@@ -3,25 +3,14 @@ require "sqlite3"
 require "./sqlite"
 
 module Zipfelkasse
-  # Feature files put their queries in src/zipfelkasse/store/<name>.cr
-  # (reopening this class) and use `db` (reads) or `transaction` (writes).
-  #
-  # Concurrency: all fibers share one Store. Reads go through the connection
-  # pool. Writes go through `transaction`: BEGIN IMMEDIATE plus a
-  # fiber-aware mutex, because SQLite's busy handler sleeps inside C and would
-  # block the only thread while another fiber holds the write lock.
+  # Feature files reopen this class with their queries and use `db` (reads)
+  # or `transaction` (writes).
   class Store
     Log = ::Log.for(self)
 
-    class Error < Exception
-    end
+    class Error < Exception; end
 
-    # Also raised for expenses that are already deleted, where that matters.
-    class NotFound < Exception
-      def initialize(message = "not found")
-        super
-      end
-    end
+    class NotFound < Exception; end
 
     TIME_FORMAT = "%Y-%m-%dT%H:%M:%SZ"
 
@@ -39,34 +28,34 @@ module Zipfelkasse
     getter db : DB::Database
     getter path : String
     property clock : Proc(Time) = -> { Time.utc }
+    # Runs after every committed expense change, in the caller's fiber; it must not block.
+    property on_change : Proc(Nil)?
 
+    # SQLite's busy handler sleeps inside C and would block the only thread
+    # while another fiber holds the write lock, so writers queue here.
     @write_lock = Mutex.new
-    @hooks = [] of ExpenseChange -> Nil
 
     def self.open(path : String) : Store
-      memory = path == ":memory:"
-      begin
-        Dir.mkdir_p(File.dirname(path)) unless memory
-        store = new(path, connect(path, memory))
-      rescue ex
-        raise Error.new("database #{path}", cause: ex)
-      end
+      Dir.mkdir_p(File.dirname(path)) unless path == ":memory:"
+      store = new(path, connect(path))
       begin
         store.migrate
       rescue ex
         store.close
-        raise Error.new("database #{path}", cause: ex)
+        raise ex
       end
       store
+    rescue ex
+      raise Error.new("database #{path}", cause: ex)
     end
 
     protected def initialize(@path : String, @db : DB::Database)
     end
 
-    private def self.connect(path : String, memory : Bool) : DB::Database
+    private def self.connect(path : String) : DB::Database
       conn_options = DB::Connection::Options.new
       # A memory database exists once per connection: keep exactly one.
-      pool_options = memory ? DB::Pool::Options.new(initial_pool_size: 1, max_pool_size: 1, max_idle_pool_size: 1) : DB::Pool::Options.new
+      pool_options = path == ":memory:" ? DB::Pool::Options.new(initial_pool_size: 1, max_pool_size: 1, max_idle_pool_size: 1) : DB::Pool::Options.new
       sqlite_options = SQLite3::Connection::Options.new(
         filename: path, busy_timeout: "5000", foreign_keys: "1", journal_mode: "WAL", synchronous: "NORMAL")
       db = DB::Database.new(conn_options, pool_options) do
@@ -111,28 +100,24 @@ module Zipfelkasse
       end
     end
 
+    # A new database gets the schema of version BASE_VERSION, then every migration.
     def migrate(migrations = MIGRATIONS) : Nil
-      latest = migrations.last?.try(&.[0]) || BASE_VERSION
       current = schema_version
-      if current == 0
-        transaction do |tx|
-          Store.exec_script(tx, SCHEMA_SQL)
-          tx.exec("PRAGMA user_version = #{BASE_VERSION}")
-        end
-        current = BASE_VERSION
-      elsif current < BASE_VERSION
+      latest = migrations.last?.try(&.[0]) || BASE_VERSION
+      if 0 < current < BASE_VERSION
         raise Error.new("schema version #{current} is older than the oldest supported one (#{BASE_VERSION})")
       elsif current > latest
         raise Error.new("schema version #{current} is newer than this release knows (#{latest})")
       end
-      migrations.each do |n, sql|
-        next if n <= current
+      steps = migrations.select { |version, _| version > current }
+      steps.unshift({BASE_VERSION, SCHEMA_SQL}) if current == 0
+      steps.each do |version, sql|
         transaction do |tx|
           Store.exec_script(tx, sql)
-          tx.exec("PRAGMA user_version = #{n}")
+          tx.exec("PRAGMA user_version = #{version}")
         end
       rescue ex
-        raise Error.new("migration #{n}", cause: ex)
+        raise Error.new("migration #{version}", cause: ex)
       end
     end
 
@@ -144,21 +129,10 @@ module Zipfelkasse
       Store.format_time(now)
     end
 
-    record ExpenseChange, expense_id : Int64, action : Action
-
-    # Runs after every successful commit of an expense change, in the caller's
-    # fiber; it must not block. A failing hook is logged and does not undo or
-    # fail the change.
-    def on_expense_change(&block : ExpenseChange -> Nil) : Nil
-      @hooks << block
-    end
-
-    protected def notify(change : ExpenseChange) : Nil
-      @hooks.dup.each do |hook|
-        hook.call(change)
-      rescue ex
-        Log.error(exception: ex, &.emit("expense change hook failed", expense_id: change.expense_id))
-      end
+    protected def changed(expense_id : Int64) : Nil
+      @on_change.try &.call
+    rescue ex
+      Log.error(exception: ex, &.emit("expense change hook failed", expense_id: expense_id))
     end
 
     def self.normalize_name(name : String) : String

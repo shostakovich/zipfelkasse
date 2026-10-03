@@ -2,17 +2,22 @@ require "http/server/handler"
 require "uri"
 
 module Zipfelkasse::Web
-  CSP = "default-src 'self'; img-src 'self' data:; style-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'"
+  SECURITY_HEADERS = HTTP::Headers{
+    "X-Content-Type-Options"  => "nosniff",
+    "Referrer-Policy"         => "same-origin",
+    "X-Frame-Options"         => "DENY",
+    "Content-Security-Policy" => "default-src 'self'; img-src 'self' data:; style-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'",
+  }
 
+  UNIDENTIFIED_PATHS = {"/healthz", "/manifest.webmanifest", "/sw.js", "/favicon.ico"}
+  PUBLIC_PATHS       = {"/wer", "/wer/neu"}
+
+  # A handler rather than a filter, so that the MCP endpoint gets the headers too.
   class SecurityHeaders
     include HTTP::Handler
 
     def call(context : HTTP::Server::Context)
-      headers = context.response.headers
-      headers["X-Content-Type-Options"] = "nosniff"
-      headers["Referrer-Policy"] = "same-origin"
-      headers["X-Frame-Options"] = "DENY"
-      headers["Content-Security-Policy"] = CSP
+      context.response.headers.merge!(SECURITY_HEADERS)
       call_next(context)
     end
   end
@@ -31,61 +36,46 @@ module Zipfelkasse::Web
 
   # Rejects requests that a browser sends from a foreign site and selects the
   # person. Public paths work without a person, static files need none.
-  class Gate
-    UNIDENTIFIED = {"/healthz", "/manifest.webmanifest", "/sw.js", "/favicon.ico"}
-    PUBLIC       = {"/wer", "/wer/neu"}
-
-    def initialize(@d : Deps)
-    end
-
-    def install : Nil
-      gate = self
-      before_all do |env|
-        next if env.request.path.starts_with?("/mcp/")
-        halt env, 403, gate.rejection(env, 403) unless gate.same_origin?(env.request)
-        next if gate.admitted?(env)
-        halt env, 401, gate.rejection(env, 401) if env.request.path.starts_with?("/api/")
-        env.redirect(gate.login_path(env.request), 303)
-      end
-    end
-
-    def rejection(env : HTTP::Server::Context, status : Int32) : String
+  def self.install_filters(store : Store) : Nil
+    before_all do |env|
       request = env.request
-      Log.warn(&.emit("cross-origin request rejected", method: request.method, path: request.path,
-        origin: request.headers["Origin"]? || "")) if status == 403
-      Web.error_body(env, @d.store, status)
-    end
-
-    # Sec-Fetch-Site, or Origin against Host. Requests without these headers
-    # (curl) pass, since they carry no victim's cookie.
-    def same_origin?(request : HTTP::Request) : Bool
-      return true if request.method.in?("GET", "HEAD", "OPTIONS")
-      if site = request.headers["Sec-Fetch-Site"]?.presence
-        return site.in?("same-origin", "none")
+      next if request.path.starts_with?("/mcp/")
+      unless same_origin?(request)
+        Log.warn(&.emit("cross-origin request rejected", method: request.method, path: request.path,
+          origin: request.headers["Origin"]? || ""))
+        halt env, 403, error_body(env, store, 403)
       end
-      origin = request.headers["Origin"]?.presence || return true
-      URI.parse(origin).authority == request.headers["Host"]?
-    rescue URI::Error
-      false
+      next if admitted?(env, store)
+      halt env, 401, error_body(env, store, 401) if request.path.starts_with?("/api/")
+      env.redirect(login_path(request), 303)
     end
+  end
 
-    def admitted?(env : HTTP::Server::Context) : Bool
-      path = env.request.path
-      return true if path.starts_with?("/static/") || UNIDENTIFIED.includes?(path)
-      identify(env) || PUBLIC.includes?(path)
+  # Sec-Fetch-Site, or Origin against Host. Requests without these headers
+  # (curl) pass, since they carry no victim's cookie.
+  def self.same_origin?(request : HTTP::Request) : Bool
+    return true if request.method.in?("GET", "HEAD", "OPTIONS")
+    if site = request.headers["Sec-Fetch-Site"]?.presence
+      return site.in?("same-origin", "none")
     end
+    origin = request.headers["Origin"]?.presence || return true
+    URI.parse(origin).authority == request.headers["Host"]?
+  rescue URI::Error
+    false
+  end
 
-    def login_path(request : HTTP::Request) : String
-      return "/wer" unless request.method == "GET" && request.path != "/"
-      "/wer?zurueck=" + URI.encode_www_form(request.resource)
-    end
+  def self.login_path(request : HTTP::Request) : String
+    return "/wer" unless request.method == "GET" && request.path != "/"
+    "/wer?zurueck=" + URI.encode_www_form(request.resource)
+  end
 
-    private def identify(env : HTTP::Server::Context) : Bool
-      id = env.request.cookies[IDENTITY_COOKIE]?.try(&.value.to_i64?(whitespace: false)) || return false
-      participant = @d.store.get_participant?(id) || return false
-      return false if participant.archived?
-      env.me = participant
-      true
-    end
+  private def self.admitted?(env : HTTP::Server::Context, store : Store) : Bool
+    path = env.request.path
+    return true if path.starts_with?("/static/") || UNIDENTIFIED_PATHS.includes?(path)
+    id = env.request.cookies[IDENTITY_COOKIE]?.try(&.value.to_i64?(whitespace: false))
+    participant = id.try { |i| store.get_participant?(i) }
+    return PUBLIC_PATHS.includes?(path) if participant.nil? || participant.archived?
+    env.me = participant
+    true
   end
 end

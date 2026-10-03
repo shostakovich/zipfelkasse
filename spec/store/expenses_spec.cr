@@ -27,19 +27,19 @@ describe "Store expenses" do
     end
 
     it "tells the hooks and logs the creation" do
-      changes = [] of Store::ExpenseChange
-      store.on_expense_change { |change| changes << change }
+      changes = 0
+      store.on_change = -> { changes += 1; nil }
 
       id = store.create_expense(household.anna, household.equal("Einkauf Rewe", 1000, "2026-09-30", household.anna, household.anna))
 
-      changes.should eq [Store::ExpenseChange.new(id, Store::Action::ExpenseCreated)]
+      changes.should eq 1
       entry = store.list_activity(Store::ActivityFilter.new(expense_id: id)).first
       {entry.action, entry.actor_id, entry.actor_name, entry.expense_id}.should eq({Store::Action::ExpenseCreated, household.anna, "Anna", id})
       {entry.details.title, entry.details.amount_cents}.should eq({"Einkauf Rewe", 1000})
     end
 
     it "keeps the expense and logs the error when a hook fails" do
-      store.on_expense_change { |_| raise "hook broke" }
+      store.on_change = -> { raise "hook broke" }
 
       id = household.create(household.equal("Kino", 1000, "2026-09-01", household.anna, household.anna))
 
@@ -126,12 +126,12 @@ describe "Store expenses" do
     end
 
     it "logs nothing and tells no hook when it is saved unchanged" do
-      changes = [] of Store::ExpenseChange
-      store.on_expense_change { |change| changes << change }
+      changes = 0
+      store.on_change = -> { changes += 1; nil }
 
       store.update_expense(household.ben, expense_id, store.get_expense(expense_id).to_input)
 
-      changes.should be_empty
+      changes.should eq 0
       store.list_activity(Store::ActivityFilter.new(expense_id: expense_id)).size.should eq 1
     end
 
@@ -150,8 +150,8 @@ describe "Store expenses" do
     end
 
     it "tells the hooks and lists each changed field with its old and new value" do
-      changes = [] of Store::ExpenseChange
-      store.on_expense_change { |change| changes << change }
+      changes = 0
+      store.on_change = -> { changes += 1; nil }
       input = store.get_expense(expense_id).to_input
       input.amount_cents = 4500
       input.split_mode = Domain::SplitMode::Shares
@@ -159,7 +159,7 @@ describe "Store expenses" do
       input.category_id = nil
       store.update_expense(household.ben, expense_id, input)
 
-      changes.map(&.action).should eq [Store::Action::ExpenseUpdated]
+      changes.should eq 1
       entry = store.list_activity(Store::ActivityFilter.new(expense_id: expense_id)).first
       {entry.action, entry.actor_name}.should eq({Store::Action::ExpenseUpdated, "Ben"})
       fields = entry.details.changes.to_h { |change| {change.field, change} }
@@ -208,12 +208,12 @@ describe "Store expenses" do
     end
 
     it "tells the hooks and logs the deletion" do
-      changes = [] of Store::ExpenseChange
-      store.on_expense_change { |change| changes << change }
+      changes = 0
+      store.on_change = -> { changes += 1; nil }
 
       store.delete_expense(household.ben, expense_id)
 
-      changes.should eq [Store::ExpenseChange.new(expense_id, Store::Action::ExpenseDeleted)]
+      changes.should eq 1
       entry = store.list_activity(Store::ActivityFilter.new(limit: 1)).first
       {entry.action, entry.details.title}.should eq({Store::Action::ExpenseDeleted, "Bahn"})
     end

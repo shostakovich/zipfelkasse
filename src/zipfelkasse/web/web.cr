@@ -27,8 +27,6 @@ module Zipfelkasse::Web
     end
   end
 
-  class_property location : Time::Location = Time::Location.local
-
   def self.positive_id?(value : String?, trim = false) : Int64?
     id = (trim ? value.try(&.strip) : value).try(&.to_i64?(whitespace: false))
     id if id && id > 0

@@ -273,7 +273,7 @@ module Zipfelkasse
           ActivityDetails.new(title: input.title, amount_cents: input.amount_cents, text: text))
         new_id
       end
-      notify(ExpenseChange.new(id, Action::ExpenseCreated))
+      changed(id)
       id
     end
 
@@ -302,7 +302,7 @@ module Zipfelkasse
           ActivityDetails.new(title: input.title, amount_cents: input.amount_cents, changes: changes))
         true
       end
-      notify(ExpenseChange.new(id, Action::ExpenseUpdated)) if changed
+      changed(id) if changed
     end
 
     # Soft delete; the shares stay. Already deleted expenses raise NotFound.
@@ -315,7 +315,7 @@ module Zipfelkasse
         insert_activity(tx, actor_id, Action::ExpenseDeleted, id,
           ActivityDetails.new(title: old.title, amount_cents: old.amount_cents))
       end
-      notify(ExpenseChange.new(id, Action::ExpenseDeleted))
+      changed(id)
     end
 
     # Deleted expenses too (the YNAB sync processes deletions).

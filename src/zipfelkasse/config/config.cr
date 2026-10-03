@@ -1,7 +1,7 @@
 require "socket"
 
 module Zipfelkasse
-  struct Config
+  class Config
     class Error < Exception
     end
 
@@ -21,11 +21,10 @@ module Zipfelkasse
     setter backup_dir : String?
     setter now : Time?
 
-    getter location : Time::Location = Time::Location.local
-    getter location_name = "Local"
+    property location : Time::Location = Time::Location.load_local
 
-    def location=(@location : Time::Location)
-      @location_name = location.name
+    def location_name : String
+      location.name
     end
 
     def backup_dir : String
@@ -37,8 +36,7 @@ module Zipfelkasse
     end
 
     def today : Time
-      t = now.in(location)
-      Time.utc(t.year, t.month, t.day)
+      Domain.date_of(now.in(location))
     end
 
     def self.from_env(env = ENV) : Config

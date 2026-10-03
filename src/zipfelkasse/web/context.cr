@@ -11,10 +11,6 @@ class HTTP::Server::Context
     params.body[name]? || ""
   end
 
-  def form_values(name : String) : Array(String)
-    params.body.fetch_all(name)
-  end
-
   def flash=(message : String) : String
     response.cookies << HTTP::Cookie.new(Zipfelkasse::Web::FLASH_COOKIE, URI.encode_www_form(message),
       path: "/", max_age: 60.seconds, http_only: true, samesite: HTTP::Cookie::SameSite::Lax)

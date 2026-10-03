@@ -10,34 +10,34 @@ module Zipfelkasse
     getter recurring : Recurring::Service
     getter ynab : YNAB::Service
     getter handlers : Array(HTTP::Handler)
-    # Background jobs: each runs in its own fiber until the stopper fires.
-    getter jobs : Array(Proc(Stopper, Nil))
 
     # Kemal keeps routes, filters and handlers in global state: build one App
-    # per process (specs reset it, see spec/web/web_helper.cr).
+    # per process (specs reset it, see spec/support/test_server.cr).
     def initialize(config : Config, store : Store)
-      Web.location = config.location
+      Time::Location.local = config.location
+      store.clock = -> { config.now }
       @deps = Web::Deps.new(config, store)
       @fx = FX::Service.new(@deps)
       @deps.fx = @fx
       @recurring = Recurring::Service.new(@deps)
       @ynab = YNAB::Service.new(@deps)
-      @jobs = [
-        ->(stopper : Stopper) { @fx.run(stopper) },
-        ->(stopper : Stopper) { @recurring.run(stopper) },
-        ->(stopper : Stopper) { @ynab.run(stopper) },
-      ]
       configure_kemal
+      Web.install_filters(store)
       mount_mcp
-      Web::Gate.new(@deps).install
       Web.install_errors(store)
       register_routes
       Kemal.config.setup
       @handlers = Kemal.config.handlers.dup
     end
 
+    def spawn_jobs(stopper : Stopper, wait_group : WaitGroup) : Nil
+      wait_group.spawn { @fx.run(stopper) }
+      wait_group.spawn { @recurring.run(stopper) }
+      wait_group.spawn { @ynab.run(stopper) }
+      wait_group.spawn { CLI.backup_loop(stopper, @deps.store, @deps.config) }
+    end
+
     private def configure_kemal : Nil
-      Kemal.config.app_name = "Zipfelkasse"
       Kemal.config.env = "production"
       Kemal.config.logging = false
       Kemal.config.serve_static = false
@@ -107,7 +107,6 @@ module Zipfelkasse
       config = Config.from_env
       Zipfelkasse.setup_logging
       store = Store.open(config.db_path)
-      store.clock = -> { config.now }
       stopper = Stopper.new
       jobs = WaitGroup.new
       begin
@@ -115,19 +114,10 @@ module Zipfelkasse
         server = HTTP::Server.new(app.handlers)
         listen(server, config.addr)
         Kemal.config.server = server
-        (app.jobs + [->(s : Stopper) { backup_loop(s, store, config) }]).each do |job|
-          jobs.spawn { job.call(stopper) }
-        end
-        Process.on_terminate do
-          if Kemal.config.running
-            Log.info { "shutting down" }
-            Kemal.stop
-          else
-            exit
-          end
-        end
-        Log.info(&.emit("Zipfelkasse running", addr: config.addr, db: config.db_path, tz: config.location_name))
-        Kemal.run(args: [] of String, trap_signal: false)
+        app.spawn_jobs(stopper, jobs)
+        Log.info(&.emit("Zipfelkasse running", addr: config.addr, db: config.db_path, tz: config.location.name))
+        Kemal.run(args: [] of String)
+        Log.info { "shutting down" }
       ensure
         stopper.stop
         jobs.wait

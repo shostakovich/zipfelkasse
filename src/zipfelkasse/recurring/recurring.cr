@@ -34,10 +34,6 @@ module Zipfelkasse::Recurring
     def initialize(@d : Web::Deps)
     end
 
-    def today : Time
-      @d.today
-    end
-
     # Creates all instances due up to and including today (at most
     # MAX_INSTANCES_PER_RUN per rule) and returns their count. Repeated calls
     # create no duplicates; occurrences for which an equal expense exists are
@@ -78,7 +74,7 @@ module Zipfelkasse::Recurring
     end
 
     def previews(expense : Store::Expense) : Array(Preview)
-      today = self.today
+      today = @d.today
       existing = Set(Time).new
       if expense.date < today
         existing = @d.store.expense_dates_like(expense.to_input, expense.date.shift(days: 1), today)
@@ -179,7 +175,7 @@ module Zipfelkasse::Recurring
       tick = Time.instant + every
       loop do
         begin
-          n = materialize(today, stopper)
+          n = materialize(@d.today, stopper)
           Log.info(&.emit("recurring expenses created", count: n)) if n > 0
         rescue ex
           Log.error(exception: ex) { "recurring expenses" } unless stopper.stopped?

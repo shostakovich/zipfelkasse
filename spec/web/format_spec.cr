@@ -9,7 +9,7 @@ private def share(id : Int64, cents : Int64) : Domain::Share
 end
 
 describe Web do
-  describe ".expense_period" do
+  describe ".period_label" do
     friday = date("2026-10-02")
 
     {
@@ -18,26 +18,26 @@ describe Web do
       "2025-12-31" => "Letztes Jahr", "2024-06-01" => "Älter",
     }.each do |day, label|
       it "labels #{day} as #{label.inspect} on Friday, 2026-10-02" do
-        Web.expense_period(date(day), friday).should eq label
+        Web.period_label(date(day), friday).should eq label
       end
     end
 
     it "labels an earlier day of the month as earlier in this month" do
-      Web.expense_period(date("2026-10-05"), date("2026-10-20")).should eq "Früher in diesem Monat"
+      Web.period_label(date("2026-10-05"), date("2026-10-20")).should eq "Früher in diesem Monat"
     end
 
     it "calls December of the year before last month in January, not last year" do
-      Web.expense_period(date("2025-12-15"), date("2026-01-20")).should eq "Letzter Monat"
+      Web.period_label(date("2025-12-15"), date("2026-01-20")).should eq "Letzter Monat"
     end
   end
 
-  describe ".activity_period" do
+  describe ".period_label for the activity" do
     {
       "2026-10-20" => "Heute", "2026-10-19" => "Gestern", "2026-10-18" => "Letzte Woche", "2026-10-12" => "Letzte Woche",
       "2026-10-11" => "Früher in diesem Monat", "2026-09-30" => "Letzter Monat", "2026-01-01" => "Früher in diesem Jahr",
     }.each do |day, label|
       it "labels #{day} as #{label.inspect} on 2026-10-20" do
-        Web.activity_period(date(day), date("2026-10-20")).should eq label
+        Web.period_label(date(day), date("2026-10-20"), activity: true).should eq label
       end
     end
   end

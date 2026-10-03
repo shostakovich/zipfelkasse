@@ -59,8 +59,7 @@ module Zipfelkasse::Web
         more = "/aktivitaet?vor=#{acts.last.id}"
       end
       today = @d.today
-      location = @d.config.location
-      groups = Web.activity_items(acts).chunks { |item| Web.activity_period(Domain.date_of(item.at.in(location)), today) }
+      groups = Web.activity_items(acts).chunks { |item| Web.period_label(Domain.date_of(item.at.in(@d.config.location)), today, activity: true) }
       page(env, Views::Activity.new(groups, more), "Aktivität", Nav::Activity)
     end
   end

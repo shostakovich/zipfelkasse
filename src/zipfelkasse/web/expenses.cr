@@ -34,7 +34,7 @@ module Zipfelkasse::Web
       my_balance = (e.paid_by == me_id ? e.amount_cents : 0_i64) - e.share_of(me_id)
       ExpenseRow.new(e, e.shares.map { |sh| names[sh.participant_id]? || "" }, everyone, involved, my_balance)
     end
-    rows.chunks { |row| expense_period(row.date, today) }
+    rows.chunks { |row| period_label(row.date, today) }
   end
 
   # A person in the split of the expense form. value holds shares, percent

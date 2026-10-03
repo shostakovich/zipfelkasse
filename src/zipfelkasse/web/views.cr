@@ -34,7 +34,7 @@ module Zipfelkasse::Web
     end
 
     def date_time(t : Time?) : String
-      t ? t.in(Web.location).to_s("%d.%m.%Y, %H:%M") : ""
+      t.try &.to_local.to_s("%d.%m.%Y, %H:%M") || ""
     end
 
     def sign_class(v : Int64) : String

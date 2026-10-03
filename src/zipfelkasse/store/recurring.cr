@@ -1,23 +1,11 @@
 module Zipfelkasse
   class Store
-    class RecurringExists < Exception
-      def initialize(message = "expense for this occurrence already exists")
-        super
-      end
-    end
+    class RecurringExists < Exception; end
 
-    # The recurrence was paused, deleted or advanced since it was read.
-    class RecurringChanged < Exception
-      def initialize(message = "recurring rule was paused, deleted or advanced meanwhile")
-        super
-      end
-    end
+    # The rule was paused, deleted or advanced since it was read.
+    class RecurringChanged < Exception; end
 
-    class NoInstance < Exception
-      def initialize(message = "recurring rule has no expense")
-        super
-      end
-    end
+    class NoInstance < Exception; end
 
     # A rule for a recurring expense. The template has no date and no
     # recurring_id.
