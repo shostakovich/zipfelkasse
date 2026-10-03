@@ -130,11 +130,11 @@ describe "Store recurring expenses" do
   it "reads stored templates, also incomplete ones" do
     with_expense_fixture do |f|
       s = f.s
-      go = %q({"title":"Pizza & <Wein>","date":"0001-01-01T00:00:00Z","category_id":1,"paid_by":1,) +
-           %q("notes":"","is_reimbursement":false,"split_mode":"equal","amount_cents":2310,"parts":[{"participant_id":1,) +
-           %q("weight":1},{"participant_id":2,"weight":1}],"original_amount_minor":2500,"original_currency":"USD",) +
-           %q("fx_rate":1.0823,"fx_source":"ezb","recurring_id":0})
-      {go, "{}", %({"parts":null,"fx_rate":1})}.each do |json|
+      stored = %q({"title":"Pizza & <Wein>","date":"0001-01-01T00:00:00Z","category_id":1,"paid_by":1,) +
+               %q("notes":"","is_reimbursement":false,"split_mode":"equal","amount_cents":2310,"parts":[{"participant_id":1,) +
+               %q("weight":1},{"participant_id":2,"weight":1}],"original_amount_minor":2500,"original_currency":"USD",) +
+               %q("fx_rate":1.0823,"fx_source":"ezb","recurring_id":0})
+      {stored, "{}", %({"parts":null,"fx_rate":1})}.each do |json|
         s.db.exec("INSERT INTO recurring (template_json, frequency, start_date, next_date, created_at, updated_at) " \
                   "VALUES (?, 'monthly', '2026-01-31', '2026-02-28', 'x', '')", json)
       end
