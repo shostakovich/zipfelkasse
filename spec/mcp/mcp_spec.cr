@@ -47,22 +47,31 @@ describe "MCP access" do
     end
   end
 
-  it "closes the connection after an oversized or large unread body" do
+  it "closes the connection after a large unread rest of the body" do
     with_env do |e|
       ping = %({"jsonrpc":"2.0","id":1,"method":"ping"})
-      big = ping + " " * MCP::MAX_BODY
-      unread = ping + " " * MCP::MAX_SKIP
+      text = {"Content-Type" => "text/plain"}
+      chunked = {"Content-Type" => "text/plain", "Transfer-Encoding" => "chunked"}
+      rest = ->(n : Int32) { ping + " " * (n - ping.bytesize) }
       [
-        {"ping", "POST", MCPSpec::PATH, ping, {} of String => String, 200, nil},
-        {"too large", "POST", MCPSpec::PATH, big, {} of String => String, 413, "close"},
-        {"small unread body", "POST", MCPSpec::PATH, ping, {"Content-Type" => "text/plain"}, 415, nil},
-        {"large unread body", "POST", MCPSpec::PATH, unread, {"Content-Type" => "text/plain"}, 415, "close"},
-        {"wrong secret", "POST", "/mcp/wrong", unread, {} of String => String, 404, "close"},
-        {"origin", "POST", MCPSpec::PATH, unread, {"Origin" => "null"}, 403, "close"},
-        {"method", "PUT", MCPSpec::PATH, unread, {} of String => String, 405, "close"},
-      ].each do |name, method, path, body, headers, status, connection|
-        r = e.send(method, path, body, headers)
+        {"ping", MCPSpec::PATH, ping, {} of String => String, 200, nil},
+        {"too large by a few bytes", MCPSpec::PATH, ping + " " * MCP::MAX_BODY, {} of String => String, 413, nil},
+        {"too large by a lot", MCPSpec::PATH, ping + " " * (MCP::MAX_BODY + MCP::MAX_SKIP), {} of String => String, 413, "close"},
+        {"small unread body", MCPSpec::PATH, ping, text, 415, nil},
+        {"unread body just below the limit", MCPSpec::PATH, rest.call(MCP::MAX_SKIP - 1), text, 415, nil},
+        {"unread body at the limit", MCPSpec::PATH, rest.call(MCP::MAX_SKIP), text, 415, "close"},
+        {"large unread body", MCPSpec::PATH, rest.call(MCP::MAX_SKIP + 1), text, 415, "close"},
+        {"wrong secret", "/mcp/wrong", rest.call(MCP::MAX_SKIP + 1), {} of String => String, 404, "close"},
+        {"origin", MCPSpec::PATH, rest.call(MCP::MAX_SKIP + 1), {"Origin" => "null"}, 403, "close"},
+        {"method", MCPSpec::PATH, rest.call(MCP::MAX_SKIP + 1), {} of String => String, 405, "close"},
+      ].each do |name, path, body, headers, status, connection|
+        r = e.send(name == "method" ? "PUT" : "POST", path, body, headers)
         {name, r.status, r.headers["Connection"]?}.should eq({name, status, connection})
+      end
+      # Without a Content-Length the size of the rest is not known in advance.
+      [{MCP::MAX_SKIP, nil}, {MCP::MAX_SKIP + 1, "close"}].each do |size, connection|
+        r = e.send("POST", MCPSpec::PATH, IO::Memory.new(rest.call(size)), chunked)
+        {size, r.status, r.headers["Connection"]?}.should eq({size, 415, connection})
       end
     end
   end

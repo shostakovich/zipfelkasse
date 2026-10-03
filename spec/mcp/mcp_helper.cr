@@ -74,7 +74,7 @@ module MCPSpec
     end
 
     # headers: an empty value removes the header; remote nil = no address.
-    def send(method : String, path : String, body : String = "", headers = {} of String => String,
+    def send(method : String, path : String, body : String | IO = "", headers = {} of String => String,
              remote : String? = ANTHROPIC) : Reply
       h = HTTP::Headers{"Content-Type" => "application/json", "Accept" => "application/json, text/event-stream"}
       headers.each { |k, v| v.empty? ? h.delete(k) : (h[k] = v) }

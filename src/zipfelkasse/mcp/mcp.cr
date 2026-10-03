@@ -15,8 +15,8 @@ require "crypto/subtle"
 module Zipfelkasse::MCP
   MAX_BODY = 1 << 20
 
-  # A larger unread rest of a body is not skipped before answering; the
-  # connection is closed after the response instead.
+  # An unread rest of a body of this size or more closes the connection after
+  # the response.
   MAX_SKIP = 256 << 10
 
   # What is logged about a request.
@@ -75,11 +75,14 @@ module Zipfelkasse::MCP
       Web.text_error(ctx, status, message)
     end
 
-    # Before the response: what the handler left unread is skipped, unless
-    # it is more than MAX_SKIP.
+    # Before the response: skips what the handler left unread and closes the
+    # connection if that is MAX_SKIP or more (a known Content-Length counts
+    # the rest in advance, so exactly MAX_SKIP is enough then).
     private def skip_unread(ctx : HTTP::Server::Context) : Nil
-      body = ctx.request.body || return
-      ctx.response.headers["Connection"] = "close" if discard(body, MAX_SKIP + 1) > MAX_SKIP
+      req = ctx.request
+      body = req.body || return
+      n = discard(body, MAX_SKIP + 1)
+      ctx.response.headers["Connection"] = "close" if n > MAX_SKIP || (n == MAX_SKIP && req.content_length)
     end
 
     # The number of bytes read, at most limit.

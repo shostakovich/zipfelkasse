@@ -206,7 +206,6 @@ module Zipfelkasse::MCP
         return write_error(ctx, 415, nil, CODE_INVALID_REQUEST, "Content-Type must be application/json.")
       end
       unless body = read_body(req)
-        ctx.response.headers["Connection"] = "close"
         return write_error(ctx, 413, nil, CODE_INVALID_REQUEST, "Message too large or incomplete.")
       end
       if body.lstrip.starts_with?('[')
