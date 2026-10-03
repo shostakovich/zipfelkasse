@@ -1,0 +1,62 @@
+require "../spec_helper"
+require "../store/expense_fixture"
+
+# Runs the app's full handler chain in memory (no port).
+class TestServer
+  getter app : Zipfelkasse::App
+  getter store : Zipfelkasse::Store
+  getter log_io = IO::Memory.new
+  @handler : HTTP::Handler
+
+  def initialize(config = Zipfelkasse::Config.new, @store = Zipfelkasse::Store.open(":memory:"))
+    config.location = Time::Location::UTC
+    @app = Zipfelkasse::App.new(config, @store, Zipfelkasse::Logger.new(@log_io))
+    @handler = HTTP::Server.build_middleware(@app.handlers)
+  end
+
+  def d : Zipfelkasse::Web::Deps
+    @app.d
+  end
+
+  def close : Nil
+    @store.close
+  end
+
+  def request(method : String, path : String, body : String? = nil, headers = HTTP::Headers.new,
+              cookies = {} of String => String) : HTTP::Client::Response
+    headers = headers.dup
+    headers["Host"] ||= "example.com"
+    cookies.each { |k, v| headers.add("Cookie", "#{k}=#{v}") }
+    req = HTTP::Request.new(method, path, headers, body)
+    io = IO::Memory.new
+    res = HTTP::Server::Response.new(io)
+    @handler.call(HTTP::Server::Context.new(req, res))
+    res.close
+    io.rewind
+    HTTP::Client::Response.from_io(io, ignore_body: method == "HEAD")
+  end
+
+  def get(path : String, cookies = {} of String => String) : HTTP::Client::Response
+    request("GET", path, cookies: cookies)
+  end
+
+  def post_form(path : String, form : Hash(String, String) | Hash(String, Array(String)) | URI::Params,
+                cookies = {} of String => String) : HTTP::Client::Response
+    body = form.is_a?(URI::Params) ? form.to_s : URI::Params.encode(form)
+    headers = HTTP::Headers{"Content-Type" => "application/x-www-form-urlencoded"}
+    request("POST", path, body, headers, cookies)
+  end
+end
+
+def with_server(config = Zipfelkasse::Config.new, &)
+  srv = TestServer.new(config)
+  begin
+    yield srv
+  ensure
+    srv.close
+  end
+end
+
+def who_cookie(id : Int64) : Hash(String, String)
+  {Zipfelkasse::Web::IDENTITY_COOKIE => id.to_s}
+end

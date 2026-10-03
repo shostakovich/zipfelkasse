@@ -13,6 +13,7 @@ module Zipfelkasse
     def initialize(config : Config, store : Store, log : Logger)
       Web.location = config.location
       @d = Web::Deps.new(config, store, Web::Renderer.new(store), log)
+      Web.reset_kemal
       mcp = Web::MCPMount.new
       Web::Handlers.new(@d).register
       App.wire_features(self, @d, mcp)

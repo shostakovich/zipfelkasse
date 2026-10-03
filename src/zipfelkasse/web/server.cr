@@ -23,6 +23,14 @@ module Zipfelkasse::Web
     end
   end
 
+  # Kemal keeps routes and handlers globally; a new App (e.g. in specs)
+  # starts from scratch.
+  def self.reset_kemal : Nil
+    Kemal.config.clear
+    Kemal::RouteHandler::INSTANCE.routes = Radix::Tree(Kemal::Route).new
+    Kemal::RouteHandler::INSTANCE.cached_routes = Kemal::LRUCache(String, Radix::Result(Kemal::Route)).new(Kemal.config.max_route_cache_size)
+  end
+
   def self.handlers(d : Deps, mcp : MCPMount) : Array(HTTP::Handler)
     Kemal.config.logging = false
     Kemal.config.powered_by_header = false
@@ -35,6 +43,6 @@ module Zipfelkasse::Web
     Kemal.config.add_handler(CrossOrigin.new(d))
     Kemal.config.add_handler(Identity.new(d))
     Kemal.config.setup
-    Kemal.config.handlers
+    Kemal.config.handlers.dup
   end
 end
