@@ -35,9 +35,9 @@ describe "Store YNAB" do
       s.set_ynab_token(f.cleo, "tok-c")
       s.set_participant_archived(nil, f.cleo, true)
       s.list_ynab_configs.map(&.participant_id).should eq [f.anna, f.ben]
-      s.set_ynab_token(f.anna, "")
+      s.set_ynab_token(f.anna, nil)
       c = s.get_ynab_config(f.anna)
-      {c.token, c.enabled?, c.ready?, c.plan_id}.should eq({"", false, false, "p"})
+      {c.token, c.enabled?, c.ready?, c.plan_id}.should eq({nil, false, false, "p"})
       s.list_ynab_configs.size.should eq 1
     end
   end
@@ -50,10 +50,10 @@ describe "Store YNAB" do
         start: date("2026-09-01")))
       s.set_ynab_target(f.anna, Store::YNABTarget.new(plan_id: "p", account_id: "a", start: date("2026-08-01")))
       s.set_ynab_target(f.anna, Store::YNABTarget.new(plan_id: "p", account_id: "a", start: date("2026-08-01")))
-      s.set_ynab_token(f.anna, "tok-2", ->(_plan : String) { true }).should be_false
-      s.set_ynab_token(f.anna, "tok-3", ->(plan : String) { plan != "p" }).should be_true
+      s.set_ynab_token(f.anna, "tok-2", Set{"p", "q"}).should be_false
+      s.set_ynab_token(f.anna, "tok-3", Set{"q"}).should be_true
       c = s.get_ynab_config(f.anna)
-      {c.plan_id, c.account_id, c.start_date}.should eq({"", "", date("2026-08-01")})
+      {c.plan_id, c.account_id, c.start_date}.should eq({nil, nil, date("2026-08-01")})
       s.set_ynab_token(f.anna, "")
       settings_texts(s).reverse.should eq [
         "YNAB verbunden (Token gesetzt)",
@@ -86,7 +86,7 @@ describe "Store YNAB" do
       s.set_ynab_target(f.anna, target("p", "b", "2026-08-01"))
       rows = s.list_ynab_sync(f.anna)
       rows.size.should eq 1
-      {rows[0].txn_id, rows[0].synced_hash, rows[0].synced_at}.should eq({"", Store::YNAB_HASH_RETARGET, nil})
+      {rows[0].txn_id, rows[0].synced_hash, rows[0].synced_at}.should eq({nil, Store::YNABSync::RETARGET, nil})
       s.ynab_sync_summary(f.anna)[0].should eq 0
     end
   end

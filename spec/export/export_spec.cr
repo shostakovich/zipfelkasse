@@ -353,6 +353,16 @@ describe Zipfelkasse::Export do
     end
   end
 
+  it "writes nothing to the database" do
+    with_fixture do |f|
+      f.st.set_ynab_token(f.anna, "tok")
+      f.st.set_ynab_target(f.anna, Store::YNABTarget.new("p", "a", start: date("2026-09-01")))
+      f.st.db.exec("UPDATE ynab_config SET connected_at = NULL")
+      f.get("/export/ynab.csv").status_code.should eq 200
+      f.st.get_ynab_config(f.anna).connected_at.should be_nil
+    end
+  end
+
   it "contains exactly what the YNAB sync transfers" do
     with_fixture do |f|
       # Without YNAB: all past expenses, no future ones.

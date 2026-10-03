@@ -93,27 +93,27 @@ module Zipfelkasse::YNAB
       me = r.me
       cfg = config_of(me.id) || YNAB.empty_config(me.id)
       data = PageData.new
-      data.token_set = !cfg.token.empty?
+      data.token_set = !cfg.token.nil?
       data.start_date = cfg.start_date || today
       data.ready = cfg.ready?
-      data.has_target = !cfg.account_id.empty?
+      data.has_target = !cfg.account_id.nil?
       data.status = load_status(me.id)
       data.token_invalid = data.token_set? && data.status.token_invalid?
       data.retry_at = data.status.retry_at.try { |t| t if t > @now.call }
       data.synced, data.problems = @d.store.ynab_sync_summary(me.id)
       data.balance = @d.store.balances[me.id]? || 0_i64
 
-      if data.token_set? && !data.token_invalid?
+      if (token = cfg.token) && !data.token_invalid?
         begin
-          fill_plans(data, plans(cfg.token, refresh), cfg)
+          fill_plans(data, plans(token, refresh), cfg)
         rescue ex
-          data.api_error = api_message(ex, cfg.token)
+          data.api_error = api_message(ex, token)
         end
-        if !cfg.plan_id.empty? && data.api_error.empty?
+        if (plan_id = cfg.plan_id) && data.api_error.empty?
           begin
-            data.groups = YNAB.usable_groups(categories(cfg.token, cfg.plan_id, refresh))
+            data.groups = YNAB.usable_groups(categories(token, plan_id, refresh))
           rescue ex
-            data.api_error = api_message(ex, cfg.token)
+            data.api_error = api_message(ex, token)
           end
         end
       end
@@ -149,7 +149,7 @@ module Zipfelkasse::YNAB
     end
 
     private def api_message(ex : Exception, token : String) : String
-      return TOKEN_INVALID_MESSAGE if YNAB.status_of(ex) == 401
+      return TOKEN_INVALID_MESSAGE if Failure.of(ex).unauthorized?
       "YNAB ist gerade nicht erreichbar: " + YNAB.redact(ex.message || "", token)
     end
 
@@ -172,12 +172,11 @@ module Zipfelkasse::YNAB
       plans = begin
         plans(token, true)
       rescue ex
-        msg = YNAB.status_of(ex) == 401 ? "YNAB kennt diesen Token nicht. Bitte prüfen und neu kopieren." : api_message(ex, token)
+        msg = Failure.of(ex).unauthorized? ? "YNAB kennt diesen Token nicht. Bitte prüfen und neu kopieren." : api_message(ex, token)
         return render(r, 422, msg, false)
       end
-      reachable = ->(plan_id : String) { plans.any?(&.id.==(plan_id)) }
       # also resets the rate-limit pause and old errors of the old token
-      reset_target = change_connection { @d.store.set_ynab_token(me.id, token, reachable) }
+      reset_target = change_connection { @d.store.set_ynab_token(me.id, token, plans.to_set(&.id)) }
       if reset_target
         return done(r, "Token gespeichert. Der bisher gewählte Plan ist mit diesem Token nicht erreichbar – bitte Plan und Konto neu wählen.")
       end
@@ -193,8 +192,8 @@ module Zipfelkasse::YNAB
 
     private def save_target(r : Web::Request) : Nil
       me = r.me
-      cfg = config_of(me.id)
-      return render(r, 422, "Bitte zuerst einen Token eingeben.", false) if cfg.nil? || cfg.token.empty?
+      token = config_of(me.id).try(&.token)
+      return render(r, 422, "Bitte zuerst einen Token eingeben.", false) unless token
       plan_id, _, account_id = r.form_value("ziel").partition('|')
       start = begin
         Domain.parse_date(r.form_value("start"))
@@ -202,9 +201,9 @@ module Zipfelkasse::YNAB
         return render(r, 422, "Bitte ein gültiges Startdatum angeben.", false)
       end
       plans = begin
-        plans(cfg.token, false)
+        plans(token, false)
       rescue ex
-        return render(r, 502, api_message(ex, cfg.token), false)
+        return render(r, 502, api_message(ex, token), false)
       end
       return render(r, 422, "Bitte Plan und Konto auswählen.", false) unless YNAB.account_exists?(plans, plan_id, account_id)
       plan_name, account_name = YNAB.target_names(plans, plan_id, account_id)
@@ -218,13 +217,12 @@ module Zipfelkasse::YNAB
     private def save_categories(r : Web::Request) : Nil
       me = r.me
       cfg = config_of(me.id)
-      if cfg.nil? || cfg.token.empty? || cfg.plan_id.empty?
-        return render(r, 422, "Bitte zuerst Token, Plan und Konto einrichten.", false)
-      end
+      token, plan_id = cfg.try(&.token), cfg.try(&.plan_id)
+      return render(r, 422, "Bitte zuerst Token, Plan und Konto einrichten.", false) unless token && plan_id
       groups = begin
-        categories(cfg.token, cfg.plan_id, false)
+        categories(token, plan_id, false)
       rescue ex
-        return render(r, 502, api_message(ex, cfg.token), false)
+        return render(r, 502, api_message(ex, token), false)
       end
       known = YNAB.known_categories(YNAB.usable_groups(groups))
       old = @d.store.ynab_category_map(me.id)

@@ -9,8 +9,6 @@ module Zipfelkasse::YNAB
   HTTP_TIMEOUT  = 30.seconds
   MAX_BODY      = 64 << 20
 
-  # An error response of the YNAB API; the message is shown on the settings
-  # page, hence German.
   class APIError < Exception
     getter status : Int32
     getter id : String
@@ -37,19 +35,37 @@ module Zipfelkasse::YNAB
     end
   end
 
-  # Transport error, timeout or unreadable response: whether YNAB processed
-  # the request is unknown.
   class UnclearError < Exception
   end
 
-  def self.status_of(ex : Exception?) : Int32
-    ex.is_a?(APIError) ? ex.status : 0
-  end
+  enum Failure
+    Unclear # whether YNAB processed the request is unknown (network, timeout, 5xx, unreadable answer)
+    Unauthorized
+    Forbidden
+    NotFound
+    RateLimited
+    Rejected # another 4xx: concerns a single transaction
+    Other    # not from YNAB (database, shutdown)
 
-  # Whether YNAB processed the request is unknown (network error, timeout,
-  # 5xx).
-  def self.uncertain?(ex : Exception) : Bool
-    ex.is_a?(UnclearError) || status_of(ex) >= 500
+    def self.of(ex : Exception) : Failure
+      case ex
+      when UnclearError then Unclear
+      when APIError
+        case ex.status
+        when 401   then Unauthorized
+        when 403   then Forbidden
+        when 404   then NotFound
+        when 429   then RateLimited
+        when 500.. then Unclear
+        else            Rejected
+        end
+      else Other
+      end
+    end
+
+    def aborts_run? : Bool
+      !rejected?
+    end
   end
 
   struct APIAccount
@@ -112,52 +128,36 @@ module Zipfelkasse::YNAB
     getter deleted : Bool = false
   end
 
-  # A transaction to create (without id) or to update (with id). Empty
-  # id/account_id/cleared and nil category_id/approved are left out;
-  # payee_name and memo are always sent. Never an import_id: YNAB would merge
-  # imported transactions with the reimbursement transfers of equal amount
-  # in "Geteilt".
-  record SaveTxn, id : String = "", account_id : String = "", date : String = "", amount : Int64 = 0_i64,
-    payee_name : String = "", memo : String = "", category_id : String? = nil, cleared : String = "",
-    approved : Bool? = nil do
-    def to_json(j : JSON::Builder) : Nil
-      j.object do
-        j.field "id", id unless id.empty?
-        j.field "account_id", account_id unless account_id.empty?
-        j.field "date", date
-        j.field "amount", amount
-        j.field "payee_name", payee_name
-        j.field "memo", memo
-        category_id.try { |c| j.field "category_id", c }
-        j.field "cleared", cleared unless cleared.empty?
-        approved.try { |a| j.field "approved", a }
-      end
-    end
+  # Never an import_id: YNAB would merge imported transactions with the
+  # reimbursement transfers of equal amount in "Geteilt".
+  record SaveTxn, date : String, amount : Int64, payee_name : String, memo : String, id : String? = nil,
+    account_id : String? = nil, category_id : String? = nil, cleared : String? = nil, approved : Bool? = nil do
+    include JSON::Serializable
   end
 
   struct PlansData
     include JSON::Serializable
-    getter plans : Array(APIPlan) = [] of APIPlan
+    getter plans : Array(APIPlan)
   end
 
   struct CategoriesData
     include JSON::Serializable
-    getter category_groups : Array(APICategoryGroup) = [] of APICategoryGroup
+    getter category_groups : Array(APICategoryGroup)
   end
 
   struct AccountData
     include JSON::Serializable
-    getter account : APIAccount = APIAccount.from_json("{}")
+    getter account : APIAccount
   end
 
   struct TxnsData
     include JSON::Serializable
-    getter transactions : Array(APITxn) = [] of APITxn
+    getter transactions : Array(APITxn)
   end
 
   struct Envelope(T)
     include JSON::Serializable
-    getter data : T?
+    getter data : T
   end
 
   struct ErrorBody
@@ -172,25 +172,22 @@ module Zipfelkasse::YNAB
     getter detail : String = ""
   end
 
-  # Talks to the YNAB API on behalf of a token.
+  # Talks to the YNAB API on behalf of a token. An answer without the
+  # expected data is an unclear outcome, never an empty list.
   class Client
-    # Plan and account confirmed in this sync run (see Service#confirm_target).
-    property? target_ok = false
-
     def initialize(@base_url : String, @token : String, @http : OutboundHTTP)
     end
 
     def plans : Array(APIPlan)
-      get(PlansData, "/plans?include_accounts=true").try(&.plans) || [] of APIPlan
+      get(PlansData, "/plans?include_accounts=true").plans
     end
 
     def categories(plan_id : String) : Array(APICategoryGroup)
-      get(CategoriesData, Client.plan_path(plan_id) + "/categories").try(&.category_groups) || [] of APICategoryGroup
+      get(CategoriesData, Client.plan_path(plan_id) + "/categories").category_groups
     end
 
     def account(plan_id : String, account_id : String) : APIAccount
-      get(AccountData, Client.plan_path(plan_id) + "/accounts/" + URI.encode_path_segment(account_id)).try(&.account) ||
-        APIAccount.from_json("{}")
+      get(AccountData, Client.plan_path(plan_id) + "/accounts/" + URI.encode_path_segment(account_id)).account
     end
 
     def create_transactions(plan_id : String, txns : Array(SaveTxn)) : Array(APITxn)
@@ -205,11 +202,8 @@ module Zipfelkasse::YNAB
       request("DELETE", Client.plan_path(plan_id) + "/transactions/" + URI.encode_path_segment(txn_id))
     end
 
-    # The (non-deleted) transactions of an account from since on.
-    def account_transactions(plan_id : String, account_id : String, since : Time) : Array(APITxn)
-      path = Client.plan_path(plan_id) + "/accounts/" + URI.encode_path_segment(account_id) +
-             "/transactions?since_date=" + since.to_s("%Y-%m-%d")
-      get(TxnsData, path).try(&.transactions) || [] of APITxn
+    def account_transactions(plan_id : String, account_id : String) : Array(APITxn)
+      get(TxnsData, Client.plan_path(plan_id) + "/accounts/" + URI.encode_path_segment(account_id) + "/transactions").transactions
     end
 
     protected def self.plan_path(plan_id : String) : String
@@ -218,21 +212,19 @@ module Zipfelkasse::YNAB
 
     private def save(method : String, plan_id : String, txns : Array(SaveTxn)) : Array(APITxn)
       body = {transactions: txns}.to_json
-      decode(TxnsData, request(method, Client.plan_path(plan_id) + "/transactions", body)).try(&.transactions) ||
-        [] of APITxn
+      decode(TxnsData, request(method, Client.plan_path(plan_id) + "/transactions", body)).transactions
     end
 
-    private def get(type : T.class, path : String) : T? forall T
+    private def get(type : T.class, path : String) : T forall T
       decode(type, request("GET", path))
     end
 
-    private def decode(type : T.class, data : String) : T? forall T
+    private def decode(type : T.class, data : String) : T forall T
       Envelope(T).from_json(data).data
     rescue ex : JSON::ParseException | JSON::SerializableError
       raise UnclearError.new("YNAB-Antwort unlesbar: #{ex.message}")
     end
 
-    # The error messages end up on the settings page, hence German.
     private def request(method : String, path : String, body : String? = nil) : String
       headers = HTTP::Headers{"Authorization" => "Bearer #{@token}", "Accept" => "application/json"}
       headers["Content-Type"] = "application/json" if body
