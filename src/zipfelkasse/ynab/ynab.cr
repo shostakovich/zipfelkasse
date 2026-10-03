@@ -29,9 +29,9 @@ module Zipfelkasse::YNAB
     # At most one sync at a time (worker or button); changes of token or
     # target wait for it (see change_connection).
     @sync_mutex = Mutex.new
+    @connections = Connections.new
     # Background syncs via "Jetzt synchronisieren"; run stops them on
     # shutdown and waits for them.
-    @bg_stopped = false
     @bg_busy = Set(Int64).new
     @bg_wait = WaitGroup.new
     @plans_cache = {} of String => {Time, Array(APIPlan)}
@@ -43,11 +43,11 @@ module Zipfelkasse::YNAB
       delay = @d.config.ynab_delay
       @debounce = delay && delay.positive? ? delay : DEFAULT_DEBOUNCE
       @start_delay = delay && delay.positive? ? delay : DEFAULT_START_DELAY
-      @d.store.on_expense_change { |c| trigger(c.expense_id) }
+      @d.store.on_expense_change { trigger }
     end
 
     def client(token : String) : Client
-      Client.new(@base_url, token)
+      Client.new(@base_url, token, @connections)
     end
 
     def location : Time::Location
@@ -56,8 +56,8 @@ module Zipfelkasse::YNAB
 
     # Never blocks. Every run compares the complete desired state with
     # ynab_sync (without requests if nothing differs), so a signal is
-    # enough; the expense ID is not needed.
-    def trigger(expense_id : Int64 = 0_i64) : Nil
+    # enough.
+    def trigger : Nil
       select
       when @wake.send(nil)
       else # a run is already pending
@@ -67,6 +67,10 @@ module Zipfelkasse::YNAB
     # Processes triggers (batched after a short delay), runs a full sync
     # every hour and retries after rate limits or outages until stopped.
     def run(stopper : Stopper) : Nil
+      spawn do
+        stopper.done.receive?
+        @connections.stop
+      end
       deadline = Time.instant + @start_delay
       last_full = nil.as(Time::Instant?)
       loop do
@@ -81,18 +85,18 @@ module Zipfelkasse::YNAB
         when timeout(wait.positive? ? wait : Time::Span.zero)
           full = last_full.nil? || last_full.elapsed >= FULL_INTERVAL - 1.minute
           last_full = Time.instant if full
-          next_run = sync_all(full, stopper)
+          next_run = sync_all(full)
           deadline = Time.instant + next_run
         end
       end
     ensure
-      stop_background
+      stop
     end
 
     # Syncs all configured people and returns the delay until the next
     # necessary run. The mutex is taken per person, so a change of the
     # settings waits for one person's run at most.
-    def sync_all(full : Bool, stopper : Stopper? = nil) : Time::Span
+    def sync_all(full : Bool) : Time::Span
       next_run = FULL_INTERVAL
       cfgs = begin
         @d.store.list_ynab_configs
@@ -101,7 +105,7 @@ module Zipfelkasse::YNAB
         return RETRY_DELAY
       end
       cfgs.each do |c|
-        return next_run if stopper.try(&.stopped?)
+        return next_run if @connections.stopped?
         next unless c.ready?
         cfg, res, st, err = sync_person(c.participant_id, full)
         next if err.is_a?(NotReadyError) # changed in the meantime
@@ -161,7 +165,7 @@ module Zipfelkasse::YNAB
     # does not wait for YNAB. Nothing happens if one is already running for
     # the person or run has ended; the result ends up in the status.
     def sync_in_background(participant_id : Int64) : Nil
-      return if @bg_stopped || @bg_busy.includes?(participant_id)
+      return if @connections.stopped? || @bg_busy.includes?(participant_id)
       @bg_busy << participant_id
       @bg_wait.spawn do
         cfg, res, _, err = sync_person(participant_id, true)
@@ -171,8 +175,10 @@ module Zipfelkasse::YNAB
       end
     end
 
-    def stop_background : Nil
-      @bg_stopped = true
+    # Aborts running requests, refuses new ones and waits for the background
+    # syncs.
+    def stop : Nil
+      @connections.stop
       @bg_wait.wait
     end
 

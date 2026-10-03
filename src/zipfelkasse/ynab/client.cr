@@ -174,12 +174,39 @@ module Zipfelkasse::YNAB
     getter detail : String = ""
   end
 
+  # The open connections of a service. Stopping closes them, so that the
+  # shutdown does not wait for a slow YNAB, and refuses new ones.
+  class Connections
+    getter? stopped = false
+    @open = Set(HTTP::Client).new
+
+    def open(uri : URI) : HTTP::Client
+      raise UnclearError.new("YNAB nicht erreichbar: shutting down") if @stopped
+      client = HTTP::Client.new(uri)
+      client.connect_timeout = HTTP_TIMEOUT
+      client.read_timeout = HTTP_TIMEOUT
+      client.write_timeout = HTTP_TIMEOUT
+      @open << client
+      client
+    end
+
+    def close(client : HTTP::Client) : Nil
+      @open.delete(client)
+      client.close
+    end
+
+    def stop : Nil
+      @stopped = true
+      @open.each(&.close)
+    end
+  end
+
   # Talks to the YNAB API on behalf of a token.
   class Client
     # Plan and account confirmed in this sync run (see Service#confirm_target).
     property? target_ok = false
 
-    def initialize(@base_url : String, @token : String)
+    def initialize(@base_url : String, @token : String, @connections : Connections)
     end
 
     def plans : Array(APIPlan)
@@ -239,11 +266,8 @@ module Zipfelkasse::YNAB
       uri = URI.parse(@base_url + path)
       headers = HTTP::Headers{"Authorization" => "Bearer #{@token}", "Accept" => "application/json"}
       headers["Content-Type"] = "application/json" if body
-      client = HTTP::Client.new(uri)
-      client.connect_timeout = HTTP_TIMEOUT
-      client.read_timeout = HTTP_TIMEOUT
-      client.write_timeout = HTTP_TIMEOUT
       status, retry_after, data = 0, nil.as(String?), ""
+      client = @connections.open(uri)
       begin
         client.exec(method, uri.request_target, headers, body) do |res|
           status, retry_after = res.status_code, res.headers["Retry-After"]?
@@ -258,7 +282,7 @@ module Zipfelkasse::YNAB
       rescue ex
         raise UnclearError.new("YNAB nicht erreichbar: #{ex.message}")
       ensure
-        client.close
+        @connections.close(client)
       end
       raise api_error(status, data, retry_after) unless 200 <= status <= 299
       data

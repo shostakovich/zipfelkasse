@@ -276,6 +276,9 @@ describe "FX file parsing" do
     res.from.should eq date("2026-07-06")
     res.to.should eq date("2026-10-01")
     res.currencies.size.should eq 3
+    # A cut-off file is broken, not a file with fewer (or wrong) rates.
+    cut = File.read("#{FXSpec::FakeECB::TESTDATA}/#{FX::FILE_DAILY}")
+    expect_raises(Exception, /xml: /) { FX.parse_xml(cut[0, cut.index!("rate='178") + 7]) }
 
     rates = File.open("#{FXSpec::FakeECB::TESTDATA}/eurofxref-hist.csv") { |f| FX.parse_hist_csv(f) }
     # N/A and empty columns are skipped.

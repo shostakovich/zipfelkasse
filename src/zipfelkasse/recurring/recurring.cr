@@ -151,8 +151,10 @@ module Zipfelkasse::Recurring
       input
     end
 
-    # Materializes right away and then hourly until the stopper fires.
-    def run(stopper : Stopper) : Nil
+    # Materializes right away and then on a fixed tick every hour from the
+    # start until the stopper fires.
+    def run(stopper : Stopper, every : Time::Span = 1.hour) : Nil
+      tick = Time.instant + every
       loop do
         begin
           n = materialize(today, stopper)
@@ -160,7 +162,12 @@ module Zipfelkasse::Recurring
         rescue ex
           log.error("recurring expenses", err: ex) unless stopper.stopped?
         end
-        return unless stopper.wait(1.hour)
+        # A run that overran a tick starts the next one right away; further
+        # missed ticks are dropped.
+        return unless stopper.wait(tick - Time.instant)
+        until tick > Time.instant
+          tick += every
+        end
       end
     end
   end

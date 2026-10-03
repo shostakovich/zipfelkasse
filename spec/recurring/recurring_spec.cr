@@ -306,6 +306,32 @@ describe Zipfelkasse::Recurring do
     end
   end
 
+  it "runs at a fixed interval from the start, not an interval after each run" do
+    with_env do |e|
+      input = e.expense("Cloud", "2026-08-20", 9091)
+      input.original_currency, input.original_amount_minor, input.fx_rate, input.fx_source = "USD", 10000_i64, 1.1, Domain::FX_SOURCE_ECB
+      e.rule(input, Domain::FREQ_MONTHLY)
+      # Every run takes 150 ms and fails, so the occurrence stays due.
+      starts = [] of Time::Instant
+      e.fx.on_rate = -> { starts << Time.instant; sleep 150.milliseconds }
+      e.fx.err = Exception.new("ECB not reachable")
+      stopper = Zipfelkasse::Stopper.new
+      done = Channel(Nil).new
+      spawn do
+        e.svc.run(stopper, every: 200.milliseconds)
+        done.close
+      end
+      deadline = Time.instant + 2.seconds
+      until starts.size >= 2 || Time.instant > deadline
+        sleep 5.milliseconds
+      end
+      stopper.stop
+      done.receive?
+      starts.size.should be >= 2
+      (starts[1] - starts[0]).should be < 275.milliseconds # not 150 + 200
+    end
+  end
+
   # The run works on a snapshot of the rule and must not override the change.
   describe "a rule changed during its catch-up" do
     {

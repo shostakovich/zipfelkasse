@@ -55,7 +55,9 @@ module Zipfelkasse::FX
   # <gesmes:Envelope><Cube><Cube time="…"><Cube currency="USD" rate="1.1"/>…
   def self.parse_xml(xml : String) : Array(Domain::FXRate)
     doc = begin
-      XML.parse(xml)
+      # Without the default RECOVER option: a cut-off file must fail, not
+      # yield its first rates (the last one possibly cut, "1.1298" as "1").
+      XML.parse(xml, XML::ParserOptions::NONET)
     rescue ex : XML::Error
       raise "xml: #{ex.message}"
     end

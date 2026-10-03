@@ -426,7 +426,7 @@ describe "YNAB sync" do
   it "never blocks on trigger" do
     with_env do |e|
       start = Time.instant
-      10000.times { |i| e.svc.trigger(i.to_i64) }
+      10000.times { e.svc.trigger }
       start.elapsed.should be < 2.seconds
     end
   end
@@ -453,6 +453,39 @@ describe "YNAB sync" do
         stopper.stop
         stopped.receive
       end
+    end
+  end
+
+  it "aborts a hanging request on shutdown without pausing the next start" do
+    with_env do |e|
+      e.connect("2026-09-01")
+      e.create(e.input("Kino", 2400, "2026-09-20", e.anna, e.anna, e.ben))
+      e.svc.start_delay = 1.millisecond
+      hold = Channel(Nil).new
+      e.fake.hold = hold
+      stopper = Zipfelkasse::Stopper.new
+      stopped = Channel(Nil).new(1)
+      spawn do
+        e.svc.run(stopper)
+        stopped.send(nil)
+      end
+      begin
+        deadline = Time.instant + 3.seconds
+        until e.fake.request_count > 0
+          fail "run did not sync" if Time.instant > deadline
+          sleep 1.millisecond
+        end
+        stopper.stop
+        select
+        when stopped.receive
+        when timeout(2.seconds)
+          fail "run waits for YNAB"
+        end
+      ensure
+        hold.close
+      end
+      {e.status.error, e.status.retry_at}.should eq({"", nil})
+      e.sync_rows.values.map(&.synced_hash).should eq [YNAB::PENDING_HASH] # the POST may have arrived
     end
   end
 
