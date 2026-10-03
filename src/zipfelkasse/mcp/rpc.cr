@@ -163,21 +163,22 @@ module Zipfelkasse::MCP
       JSON::Any.new({"supported" => JSON::Any.new(ALL_VERSIONS.map { |v| JSON::Any.new(v) }), "requested" => JSON::Any.new(version)}))
   end
 
-  def self.header(req : HTTP::Request, name : String) : String
-    req.headers.get?(name).try(&.first?) || ""
+  # The first value, like Go's Header.Get.
+  def self.header(headers : HTTP::Headers, name : String) : String
+    headers.get?(name).try(&.first?) || ""
   end
 
   # The mandatory headers of modern requests against the body; the error
   # message, or nil when they match.
   def self.check_headers(req : HTTP::Request, method : String, name : String, version : String) : String?
-    h = header(req, "MCP-Protocol-Version")
+    h = header(req.headers, "MCP-Protocol-Version")
     return "Header mismatch: header MCP-Protocol-Version is missing." if h.empty?
     return "Header mismatch: MCP-Protocol-Version #{h.inspect} does not match _meta #{version.inspect}." if h != version
-    h = header(req, "Mcp-Method")
+    h = header(req.headers, "Mcp-Method")
     return "Header mismatch: header Mcp-Method is missing." if h.empty?
     return "Header mismatch: Mcp-Method #{h.inspect} does not match method #{method.inspect}." if h != method
     return unless method == "tools/call"
-    h = header(req, "Mcp-Name")
+    h = header(req.headers, "Mcp-Name")
     return "Header mismatch: header Mcp-Name is missing." if h.empty?
     v = decode_header_value(h) || return "Header mismatch: Mcp-Name is not valid Base64."
     "Header mismatch: Mcp-Name #{v.inspect} does not match params.name #{name.inspect}." if v != name
@@ -208,7 +209,7 @@ module Zipfelkasse::MCP
     # Answers exactly one JSON-RPC message.
     def handle_post(ctx : HTTP::Server::Context, info : RequestInfo) : Nil
       req = ctx.request
-      unless MCP.header(req, "Content-Type").partition(';')[0].strip.downcase == "application/json"
+      unless MCP.header(req.headers, "Content-Type").partition(';')[0].strip.downcase == "application/json"
         return write_error(ctx, 415, nil, CODE_INVALID_REQUEST, "Content-Type must be application/json.")
       end
       body = read_body(req) || return write_error(ctx, 413, nil, CODE_INVALID_REQUEST, "Message too large or incomplete.")
@@ -259,7 +260,7 @@ module Zipfelkasse::MCP
       elsif m.method == "initialize"
         info.version = MCP.negotiate(p.protocol_version)
       else
-        v = MCP.header(req, "MCP-Protocol-Version").presence || LEGACY_DEFAULT
+        v = MCP.header(req.headers, "MCP-Protocol-Version").presence || LEGACY_DEFAULT
         info.version = v
         if MODERN_VERSIONS.includes?(v)
           return write_error(ctx, 400, m.id, CODE_HEADER_MISMATCH,

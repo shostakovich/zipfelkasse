@@ -454,7 +454,7 @@ module Zipfelkasse::MCP
       add("statistics", "Statistics",
         "Expense totals grouped by category, title (merchant), year, month (YYYY-MM), ISO week (YYYY-Www), person or category_month, optionally for a period. " \
         "Without share_of: total amounts of the expenses. With share_of: only that person's share of each expense, i.e. what they consumed themselves " \
-        %[(e.g. "How much did I spend on restaurants in 2026?"). With group_by=person, amount is each person's share (consumption) ] \
+        "(e.g. \"How much did I spend on restaurants in 2026?\"). With group_by=person, amount is each person's share (consumption) " \
         "and paid is what they paid up front. year, month and week list periods without expenses with 0. " \
         "compare=previous_year adds the amount of the same group one year earlier and the change. Reimbursements and deleted expenses never count.",
         Server.object_schema({
@@ -792,7 +792,7 @@ module Zipfelkasse::MCP
       stat_rows = @d.store.stats(f)
       rows = Store.time_grouping?(f.group_by) ? Server.fill_gaps(stat_rows, f, today) : stat_rows
       total = rows.sum(0_i64, &.amount_cents)
-      out = rows.map { |r| StatOut.new(r, f.group_by) }
+      items = rows.map { |r| StatOut.new(r, f.group_by) }
       previous_period = ""
       unless compare.empty?
         prev = f
@@ -801,7 +801,7 @@ module Zipfelkasse::MCP
         # Without from and to, the previous year's rows are the same rows.
         prev_rows = prev.from || prev.to ? @d.store.stats(prev) : stat_rows
         window = time_keyed ? Server.period_window(f, stat_rows, today) : nil
-        out = Server.compare_previous(out, prev_rows, f.group_by, window)
+        items = Server.compare_previous(items, prev_rows, f.group_by, window)
         previous_period = time_keyed ? "each #{f.group_by.lchop("category_")} one year earlier" : MCP.describe_range(prev.from, prev.to)
       end
       note = "Reimbursements and deleted expenses are not included. count = number of expenses."
@@ -816,16 +816,16 @@ module Zipfelkasse::MCP
           j.field "period", MCP.describe_range(f.from, f.to)
           j.field "perspective", perspective
           unless compare.empty?
-            previous_total = out.sum(0_i64) { |o| o.previous_cents || 0_i64 }
+            previous_total = items.sum(0_i64) { |o| o.previous_cents || 0_i64 }
             j.field "previous_period", previous_period
             j.field "previous_total", MCP.eur(previous_total)
             j.field "previous_total_cents", previous_total
           end
-          j.field "rows", out.first(limit)
-          j.field "rows_total", out.size
+          j.field "rows", items.first(limit)
+          j.field "rows_total", items.size
           j.field "total", MCP.eur(total)
           j.field "total_cents", total
-          j.field "truncated", out.size > limit
+          j.field "truncated", items.size > limit
         end
       end
     end
@@ -852,7 +852,7 @@ module Zipfelkasse::MCP
     # one year earlier; their periods are shifted by one year to match. Groups
     # that only exist in prev are appended with 0 – for time-keyed groupings
     # (window given) only if their period lies within window.
-    def self.compare_previous(out : Array(StatOut), prev : Array(Store::StatRow), group_by : String,
+    def self.compare_previous(items : Array(StatOut), prev : Array(Store::StatRow), group_by : String,
                                         window : Proc(String, Bool)?) : Array(StatOut)
       key = ->(o : StatOut) { {o.category, Store.fold(o.title), o.person, o.year, o.month, o.week} }
       prev_by = {} of {String, String, String, String, String, String} => StatOut
@@ -864,7 +864,7 @@ module Zipfelkasse::MCP
           prev_by[key.call(o)] = o
         end
       end
-      out.each { |o| o.set_previous(prev_by.delete(key.call(o)).try(&.amount_cents) || 0_i64) }
+      items.each { |o| o.set_previous(prev_by.delete(key.call(o)).try(&.amount_cents) || 0_i64) }
       appended = false
       prev_by.each_value do |p|
         next if window && !window.call(p.period)
@@ -872,14 +872,14 @@ module Zipfelkasse::MCP
         o.category, o.title, o.year, o.month, o.week, o.person = p.category, p.title, p.year, p.month, p.week, p.person
         o.paid_cents = 0_i64 if group_by == Store::STATS_BY_PERSON
         o.set_previous(p.amount_cents)
-        out << o
+        items << o
         appended = true
       end
       if appended && window
         # Back into the order of Store#stats: by period, then amount, then category.
-        out = out.each_with_index.to_a.sort_by! { |o, i| {o.period, -o.amount_cents, o.category, i} }.map(&.[0])
+        items = items.each_with_index.to_a.sort_by! { |o, i| {o.period, -o.amount_cents, o.category, i} }.map(&.[0])
       end
-      out
+      items
     end
 
     private def activity(raw : String?) : String

@@ -2,6 +2,8 @@ module Zipfelkasse::Web
   # Errors go to Web::ErrorHandler. Kemal's GET routes also answer HEAD.
   def self.route(d : Deps, method : String, path : String, &block : Request -> _) : Nil
     Kemal::RouteHandler::INSTANCE.add_route(method, path) do |ctx|
+      # Kemal ignores a trailing slash (/salden/ would match /salden).
+      raise Kemal::Exceptions::RouteNotFound.new(ctx) if ctx.request.path.ends_with?('/') && !path.ends_with?('/')
       block.call(Request.new(ctx, d))
       nil
     end

@@ -65,12 +65,12 @@ module Zipfelkasse::MCP
   # proxy is the client (anything left of it may come from the client).
   # Without X-Forwarded-For, X-Real-IP applies; without both, the proxy
   # itself. An unparsable hop makes the result invalid (fail closed).
-  def self.client_ip(request : HTTP::Request, trusted : Array(Config::Prefix)) : Addr
-    remote = Addr.parse(request.remote_address.to_s)
+  def self.client_ip(remote_addr : String, headers : HTTP::Headers, trusted : Array(Config::Prefix)) : Addr
+    remote = Addr.parse(remote_addr)
     return remote unless remote.in?(trusted)
-    hops = request.headers.get?("X-Forwarded-For").try(&.flat_map(&.split(',')).map(&.strip).reject(&.empty?)) || [] of String
+    hops = headers.get?("X-Forwarded-For").try(&.flat_map(&.split(',')).map(&.strip).reject(&.empty?)) || [] of String
     if hops.empty?
-      real = (request.headers["X-Real-IP"]? || "").strip
+      real = MCP.header(headers, "X-Real-IP").strip
       return real.empty? ? remote : Addr.parse(real)
     end
     hops.reverse_each do |hop|

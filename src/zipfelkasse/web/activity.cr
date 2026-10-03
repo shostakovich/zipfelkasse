@@ -50,7 +50,7 @@ module Zipfelkasse::Web
     end
 
     # The activity-item partial; link makes the entry a link to its expense.
-    private def activity_item(__io__, a : ActivityItem, link : Bool) : Nil
+    private def activity_item(__io__ : IO, a : ActivityItem, link : Bool) : Nil
       link &&= a.expense_id != 0
       Web.template __io__, "web/_activity.ecr"
     end

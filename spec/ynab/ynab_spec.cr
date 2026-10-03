@@ -708,7 +708,7 @@ describe "YNAB settings page" do
       e.must_sync(false)
       before = e.sync_rows
       e.st.set_ynab_token(e.anna, YNABSpec::OTHER_TOKEN)
-      check = ->do
+      check = -> do
         _, err = e.sync(false)
         YNAB.status_of(err).should eq 404
         e.status.error.should contain("Plan oder Konto")

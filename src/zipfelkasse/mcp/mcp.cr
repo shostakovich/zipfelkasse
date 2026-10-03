@@ -21,7 +21,6 @@ module Zipfelkasse::MCP
     property tool = ""
     property version = ""
     property tool_error = ""
-    property status = 200
   end
 
   class Server
@@ -29,21 +28,22 @@ module Zipfelkasse::MCP
     def call(ctx : HTTP::Server::Context) : Nil
       start = Time.instant
       req = ctx.request
-      ip = MCP.client_ip(req, @d.config.trusted_proxies)
+      remote = req.remote_address.to_s
+      ip = MCP.client_ip(remote, req.headers, @d.config.trusted_proxies)
       secret = req.path.lchop("/mcp/")
       if secret.empty? || secret.includes?('/')
         return Web.text_error(ctx, 404, "404 page not found")
       end
       unless Crypto::Subtle.constant_time_compare(URI.decode(secret), @d.config.mcp_secret)
-        @log.warn("mcp: wrong secret", ip: ip, remote: req.remote_address.to_s)
+        @log.warn("mcp: wrong secret", ip: ip, remote: remote)
         return Web.text_error(ctx, 404, "404 page not found")
       end
       unless ip.in?(@d.config.mcp_allowed_cidrs)
-        @log.warn("mcp: IP not allowed", ip: ip, remote: req.remote_address.to_s,
-          x_forwarded_for: req.headers.get?("X-Forwarded-For") || [] of String, x_real_ip: req.headers["X-Real-IP"]? || "")
+        @log.warn("mcp: IP not allowed", ip: ip, remote: remote,
+          x_forwarded_for: req.headers.get?("X-Forwarded-For") || [] of String, x_real_ip: MCP.header(req.headers, "X-Real-IP"))
         return write_error(ctx, 403, nil, CODE_FORBIDDEN, "Access from this address is not allowed.")
       end
-      if (origin = req.headers["Origin"]?) && !origin.empty?
+      unless (origin = MCP.header(req.headers, "Origin")).empty?
         @log.warn("mcp: Origin header rejected", ip: ip, origin: origin)
         return write_error(ctx, 403, nil, CODE_FORBIDDEN, "Access from a browser is not allowed.")
       end
@@ -55,7 +55,7 @@ module Zipfelkasse::MCP
 
       info = RequestInfo.new
       handle_post(ctx, info)
-      attrs = {"ip" => ip.to_s, "method" => info.method, "status" => info.status.to_s,
+      attrs = {"ip" => ip.to_s, "method" => info.method, "status" => ctx.response.status_code.to_s,
                "duration" => "#{(Time.instant - start).total_milliseconds.round.to_i}ms"}
       attrs["tool"] = info.tool unless info.tool.empty?
       attrs["version"] = info.version unless info.version.empty?

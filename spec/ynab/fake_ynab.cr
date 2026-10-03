@@ -48,7 +48,7 @@ module YNABSpec
     def initialize
       @server = HTTP::Server.new { |ctx| handle(ctx) }
       @port = @server.bind_tcp("127.0.0.1", 0).port
-      spawn { @server.listen }
+      spawn { @server.listen unless @server.closed? }
     end
 
     def base_url : String
