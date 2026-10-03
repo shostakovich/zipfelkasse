@@ -130,7 +130,7 @@ describe "MCP transport" do
       "statistics"           => %(Expense totals grouped by category, title (merchant), year, month (YYYY-MM), ISO week (YYYY-Www), person or category_month, optionally for a period. Without share_of: total amounts of the expenses. With share_of: only that person's share of each expense, i.e. what they consumed themselves (e.g. "How much did I spend on restaurants in 2026?"). With group_by=person, amount is each person's share (consumption) and paid is what they paid up front. year, month and week list periods without expenses with 0. compare=previous_year adds the amount of the same group one year earlier and the change. Reimbursements and deleted expenses never count.),
       "activity"             => "Who created, changed or deleted which expense when, and other changes (settings, people, categories, rates, recurring expenses), newest first. Entries of expense_updated list the changed fields with old and new value (field names and values as shown in the app, in German).",
       "schema"               => "Explains the database tables and columns in words (amounts in cents, deleted expenses, reimbursements, shares, foreign currency), lists people and categories and returns the CREATE statements. Call before sql_query.",
-      "sql_query"            => "Runs exactly one read-only SQL query (SQLite dialect, only SELECT or WITH … SELECT) on a read-only copy of the data. Call schema first. Important: amounts are cents (divide by 100.0 for euros), exclude deleted expenses with deleted_at IS NULL, reimbursements (is_reimbursement = 1) are not expenses, a person's share is expense_shares.amount_cents. At most 500 rows, aborted after 5 seconds, texts longer than 2000 characters are truncated. For standard questions, balances, search_expenses and statistics are simpler.",
+      "sql_query"            => "Runs exactly one read-only SQL query (SQLite dialect, only SELECT or WITH … SELECT) on a read-only copy of the data. Call schema first. Important: amounts are cents (divide by 100.0 for euros), exclude deleted expenses with deleted_at IS NULL, reimbursements (is_reimbursement = 1) are not expenses, a person's share is expense_shares.amount_cents. At most 500 rows, aborted after 2 seconds, texts longer than 2000 characters are truncated. For standard questions, balances, search_expenses and statistics are simpler.",
       "create_expense"       => "Creates an expense, as if the payer had entered it in the app. Ask the user before calling it if anything is unclear (amount, payer, who takes part); then tell them what was created. Without participants and weights, the amount is split equally among all active people. An entry with the same date, payer, amount and title is refused unless allow_duplicate is set. Settlement payments between people are not expenses: use create_reimbursement for them.",
       "create_reimbursement" => "Records a settlement payment: from paid amount to to (e.g. a bank transfer to settle up). It changes the balances, but is not an expense. An entry with the same date, payer, amount and recipient is refused unless allow_duplicate is set.",
     }.each { |name, desc| tool.call(name)["description"].should eq desc }
@@ -941,7 +941,7 @@ describe "MCP tools" do
     rows.call("SELECT 1 AS one; -- done")["rows"].should eq MK.json("[[1]]")
     rows.call("/* a; b */ SELECT ';' AS x;;")["rows"].should eq MK.json(%([[";"]]))
     rows.call(%(SELECT 'it''s; fine' AS "a;b", [c;d] FROM (SELECT 1 AS [c;d])))["rows"].should eq MK.json(%([["it's; fine",1]]))
-    rows.call("SELECT 1, 1, 'a' AS x, 'b' AS x").should eq MK.json(%({"columns":["1","1","x","x"],"row_count":1,"rows":[[1,1,"a","b"]],"truncated":false}))
+    rows.call("SELECT 1, 1, 'a' AS x, 'b' AS x").should eq MK.json(%({"columns":["1","1:1","x","x:1"],"row_count":1,"rows":[[1,1,"a","b"]],"truncated":false}))
     rows.call("SELECT * FROM participants WHERE 0").should eq MK.json(%({"columns":["id","name","created_at","archived_at"],"row_count":0,"rows":[],"truncated":false}))
     # Value types: integers, reals, text (also JSON text), NULL and blobs.
     d = rows.call("SELECT 42 AS i, 2.5 AS r, 0.1 + 0.2 AS s, 1e30 AS big, 'a<&>b' AS t, NULL AS n, x'00ff' AS b, json_object('a', 1) AS j, 9007199254740993 AS l")
@@ -979,9 +979,9 @@ describe "MCP tools" do
     refused.call("").should eq "Parameter query is missing."
     refused.call(" \n\t").should eq "Parameter query is missing."
     MK.fail(user, "sql_query", "{}").should eq "Parameter query is missing."
-    # Writes disguised as WITH return no columns.
-    refused.call("WITH d AS (SELECT 1) DELETE FROM expenses").should eq "The query returns no columns. Only SELECT or WITH … SELECT is allowed."
-    refused.call("WITH d AS (SELECT 1) INSERT INTO settings SELECT 'a', 'b' FROM d").should eq "The query returns no columns. Only SELECT or WITH … SELECT is allowed."
+    # Writes disguised as WITH do not parse as a subquery.
+    refused.call("WITH d AS (SELECT 1) DELETE FROM expenses").should eq %(SQL error: near "DELETE": syntax error (1))
+    refused.call("WITH d AS (SELECT 1) INSERT INTO settings SELECT 'a', 'b' FROM d").should eq %(SQL error: near "INSERT": syntax error (1))
     # SQLite's own errors (the exact text belongs to SQLite).
     {
       "SELECT * FROM doesnotexist"        => "no such table: doesnotexist",
@@ -1010,13 +1010,13 @@ describe "MCP tools" do
     MK.decode_fail(user, "sql_query", %({"query":"SELECT 1","limit":5}), "limit")
     MK.decode_fail(user, "sql_query", %({"query":["SELECT 1"]}), "query")
 
-    # A slow query is aborted after 5 seconds.
+    # A slow query is aborted after 2 seconds.
     t = Time.instant
     r = user.tool("sql_query", {"query" => JSON::Any.new("WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 2000000000) SELECT count(*) FROM n")})
     took = Time.instant - t
-    MK.text(r, error: true).should eq "The query was aborted after 5 s. Please narrow it down (WHERE, LIMIT) or simplify it."
-    took.should be >= 4.5.seconds
-    took.should be < 12.seconds
+    MK.text(r, error: true).should eq "The query was aborted after 2 s. Please narrow it down (WHERE, LIMIT) or simplify it."
+    took.should be >= 1.5.seconds
+    took.should be < 8.seconds
     # The server is still fine afterwards.
     rows.call("SELECT 1 AS ok")["rows"].should eq MK.json("[[1]]")
   end

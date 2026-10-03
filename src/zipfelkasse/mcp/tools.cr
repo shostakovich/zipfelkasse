@@ -36,10 +36,6 @@ module Zipfelkasse::MCP
   HISTORY_INTERVALS     = [Store::StatsGroup::Month, Store::StatsGroup::Week, Store::StatsGroup::Year].map(&.key)
   COMPARE_PREVIOUS_YEAR = "previous_year"
 
-  # The semaphore wait of sql_query; the query itself stops after
-  # SQLSandbox::TIMEOUT.
-  TOOL_TIMEOUT = 20.seconds
-
   READ_ONLY = {"readOnlyHint" => true, "destructiveHint" => false, "idempotentHint" => true, "openWorldHint" => false}
 
   # A tool returns its result as text: JSON, or plain text for schema.
@@ -305,7 +301,6 @@ module Zipfelkasse::MCP
   class Server
     @tools = {} of String => Tool
     @order = [] of String # tools/list order
-    @sql_sem = Channel(Nil).new(2)
 
     def initialize(@d : Web::Deps)
       register_read_tools
@@ -454,7 +449,7 @@ module Zipfelkasse::MCP
         "Runs exactly one read-only SQL query (SQLite dialect, only SELECT or WITH … SELECT) on a read-only copy of the data. " \
         "Call schema first. Important: amounts are cents (divide by 100.0 for euros), exclude deleted expenses with deleted_at IS NULL, " \
         "reimbursements (is_reimbursement = 1) are not expenses, a person's share is expense_shares.amount_cents. " \
-        "At most #{SQLSandbox::MAX_ROWS} rows, aborted after #{SQLSandbox::TIMEOUT.total_seconds.to_i} seconds, texts longer than 2000 characters are truncated. " \
+        "At most #{SQLSandbox::MAX_ROWS} rows, aborted after #{SQLSandbox::TIMEOUT.total_seconds.to_i} seconds, texts longer than #{SQLSandbox::MAX_CELL_CHARS} characters are truncated. " \
         "For standard questions, balances, search_expenses and statistics are simpler.",
         Server.object_schema({
           "query" => {"type" => "string", "description" => "The SQL query, e.g. SELECT name FROM participants WHERE archived_at IS NULL"},
@@ -963,20 +958,11 @@ module Zipfelkasse::MCP
       a = MCP.args(SQLArgs, raw)
       query = a.query
       raise MCP.invalid("Parameter query is missing.") if query.blank?
-      select
-      when @sql_sem.send(nil)
-      when timeout(TOOL_TIMEOUT)
-        raise MCP.invalid("Too many concurrent queries, please try again.")
-      end
-      res = begin
-        SQLSandbox.new(@d.store.path).query(query)
-      ensure
-        @sql_sem.receive
-      end
+      res = SQLSandbox.new(@d.store.path).query(query)
       JSON.build do |j|
         j.object do
           j.field "columns", res.columns
-          if res.truncated?
+          if res.truncated
             j.field "note", "There are more than #{SQLSandbox::MAX_ROWS} rows; only the first #{SQLSandbox::MAX_ROWS} are included. " \
                             "Please aggregate or narrow down with WHERE/LIMIT."
           end
@@ -995,7 +981,7 @@ module Zipfelkasse::MCP
               end
             end
           end
-          j.field "truncated", res.truncated?
+          j.field "truncated", res.truncated
         end
       end
     end

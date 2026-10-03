@@ -19,7 +19,7 @@ with "The app refused the entry (message in German):" followed by the app's Germ
 | `statistics` | totals by `group_by` = `category`, `title`, `year`, `month`, `week`, `person` or `category_month`. Either total amounts or – with `share_of` – only one person's share, optionally compared with the previous year. Reimbursements never count |
 | `activity` | the activity log: who created, changed or deleted what when |
 | `schema` | explains tables and columns, lists people and categories, returns the CREATE statements |
-| `sql_query` | any `SELECT`/`WITH` (SQLite) as `query`, at most 500 rows, aborted after 5 s |
+| `sql_query` | any `SELECT`/`WITH` (SQLite) as `query`, at most 500 rows, aborted after 2 s |
 | `create_expense` | **writes:** creates an expense |
 | `create_reimbursement` | **writes:** records a settlement payment from one person to another |
 
@@ -104,9 +104,13 @@ Main output keys:
 - `sql_query`: `columns`, `rows`, `row_count`, `truncated`, and `note` when truncated.
 
 **Protection in `sql_query`:** the query does not run on the real database. It runs on a fresh in-memory copy. The
-server attaches the real file via `ATTACH 'file:…?mode=ro'`, copies the allowed tables in a read transaction and
-detaches the file again. After that, `ATTACH` is blocked via `sqlite3_limit` and `PRAGMA query_only` is on.
-Lexically, exactly one `SELECT`/`WITH` is allowed. The query is additionally embedded as a subquery.
+server attaches the real file, copies the allowed tables in a read transaction and detaches the file again. After
+that, `ATTACH` is blocked via `sqlite3_limit` and `PRAGMA query_only` is on. Lexically, exactly one `SELECT`/`WITH`
+is allowed. The query is additionally embedded as a subquery, so only a `SELECT` parses.
+
+SQLite runs on the only thread of the app, so a slow query makes the whole app (web UI, YNAB sync, other MCP calls)
+wait. Queries are therefore aborted after 2 seconds, including the copy of the data. Columns with the same name get a
+numeric suffix (`x`, `x:1`).
 
 The allowed tables are participants, categories, expenses, expense_shares, recurring, activity, fx_rates and settings
 (without `ynab…` keys). The YNAB tables holding the token do not exist in the copy at all. New tables only become
