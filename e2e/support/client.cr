@@ -101,10 +101,14 @@ module E2E
     def request(method : String, path : String, headers : HTTP::Headers, body : String? = nil) : Response
       headers = headers.dup
       @jar.add_request_headers(headers) unless headers.has_key?("Cookie")
-      res = HTTP::Client.new(URI.parse(@app.base_url)) do |client|
-        client.read_timeout = 30.seconds
-        client.exec(method, path, headers, body)
-      end
+      res = if body && body.bytesize > LARGE_BODY
+              exec_writing_aside(method, path, headers, body)
+            else
+              HTTP::Client.new(URI.parse(@app.base_url)) do |client|
+                client.read_timeout = 30.seconds
+                client.exec(method, path, headers, body)
+              end
+            end
       res.cookies.each do |c|
         if c.max_age == Time::Span.zero || c.value.empty?
           @jar.delete(c.name)
@@ -113,6 +117,29 @@ module E2E
         end
       end
       Response.new(method, path, res.status_code, res.headers, res.body? || "", res.cookies)
+    end
+
+    LARGE_BODY = 64 << 10
+
+    # A server may answer a large body before reading it and then close the
+    # connection; HTTP::Client would fail writing and never see the answer.
+    private def exec_writing_aside(method : String, path : String, headers : HTTP::Headers, body : String) : HTTP::Client::Response
+      uri = URI.parse(@app.base_url)
+      socket = TCPSocket.new(uri.host.not_nil!, uri.port.not_nil!)
+      socket.read_timeout = 30.seconds
+      socket << method << ' ' << path << " HTTP/1.1\r\n"
+      socket << "Host: " << uri.authority << "\r\nContent-Length: " << body.bytesize << "\r\n"
+      headers.each { |name, values| values.each { |v| socket << name << ": " << v << "\r\n" } }
+      socket << "\r\n"
+      socket.flush
+      spawn do
+        socket.write(body.to_slice)
+        socket.flush
+      rescue IO::Error
+      end
+      HTTP::Client::Response.from_io(socket)
+    ensure
+      socket.try &.close
     end
 
     # The participant ID this browser is logged in as (cookie `wer`).
