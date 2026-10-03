@@ -1,15 +1,11 @@
-require "./web_helper"
+require "../spec_helper"
 
-private alias Web = Zipfelkasse::Web
-private alias Store = Zipfelkasse::Store
-private alias Share = Zipfelkasse::Domain::Share
-
-private def expense(id : Int64, d : Time, paid_by : Int64, amount : Int64, shares : Array(Share)) : Store::Expense
+private def expense(id : Int64, d : Time, paid_by : Int64, amount : Int64, shares : Array(Domain::Share)) : Store::Expense
   build_expense(id, Store::ExpenseInput.new(date: d, paid_by: paid_by, amount_cents: amount), shares)
 end
 
-private def share(id : Int64, cents : Int64) : Share
-  Share.new(participant_id: id, amount_cents: cents)
+private def share(id : Int64, cents : Int64) : Domain::Share
+  Domain::Share.new(participant_id: id, amount_cents: cents)
 end
 
 describe "web formatting" do

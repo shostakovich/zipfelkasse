@@ -19,8 +19,9 @@ class FakeECB
 
   EMPTY_XML = %(<?xml version="1.0" encoding="UTF-8"?>\n<gesmes:Envelope xmlns:gesmes="http://www.gesmes.org/xml/2002-08-01" xmlns="http://www.ecb.int/vocabulary/2002-08-01/eurofxref">\n\t<Cube>\n\t</Cube>\n</gesmes:Envelope>\n)
 
-  # Answers every request with this HTTP status, or with :empty (a valid XML
-  # file without rates), or with :network (the connection is closed).
+  # Answers every request with this HTTP status, with :empty (a valid XML file
+  # without rates), with :broken (a cut-off XML file) or with :network (the
+  # connection is closed).
   property failure : Int32 | Symbol | Nil = nil
   getter last_day : Time
   getter requests = [] of String
@@ -116,6 +117,9 @@ class FakeECB
     when :empty
       ctx.response.content_type = "text/xml"
       ctx.response.print EMPTY_XML
+    when :broken
+      ctx.response.content_type = "text/xml"
+      ctx.response.print "<broken"
     else
       serve(ctx, name)
     end

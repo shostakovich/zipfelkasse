@@ -1,7 +1,5 @@
 require "../spec_helper"
 
-private alias MCP = Zipfelkasse::MCP
-
 private def parse(body : String, headers = {} of String => String) : {MCP::Request, MCP::RequestInfo}
   info = MCP::RequestInfo.new
   request = MCP.parse_request(body, HTTP::Headers.new.tap { |h| headers.each { |k, v| h[k] = v } }, info)
@@ -45,18 +43,61 @@ describe "MCP.parse_request" do
     parse(%({"jsonrpc":"2.0","id":1,"result":{}}))[0].reply.should be_false
   end
 
-  it "refuses what is not a request, with the id when there is one" do
+  describe "a message that is not a request" do
     {
-      %([{"jsonrpc":"2.0","id":1,"method":"ping"}])           => {400, MCP::CODE_INVALID_REQUEST, nil},
-      %({"jsonrpc":"1.0","id":3,"method":"ping"})             => {400, MCP::CODE_INVALID_REQUEST, "3"},
-      %({"jsonrpc":"2.0","id":3})                             => {400, MCP::CODE_INVALID_REQUEST, "3"},
-      %({"jsonrpc":"2.0","id":3,"method":"ping","params":[]}) => {400, MCP::CODE_INVALID_PARAMS, "3"},
-      %({broken)                                              => {400, MCP::CODE_PARSE_ERROR, nil},
-      %({"jsonrpc":"2.0","id":3,"method":"ping"})             => {400, MCP::CODE_UNSUPPORTED_VERSION, "3"},
-    }.each do |body, (status, code, id)|
-      headers = code == MCP::CODE_UNSUPPORTED_VERSION ? {"MCP-Protocol-Version" => "1999-01-01"} : {} of String => String
-      error = refusal(body, headers)
-      {body, error.status, error.code, error.id}.should eq({body, status, code, id})
+      %([{"jsonrpc":"2.0","id":1,"method":"ping"}])           => {MCP::CODE_INVALID_REQUEST, nil},
+      %({"jsonrpc":"1.0","id":3,"method":"ping"})             => {MCP::CODE_INVALID_REQUEST, "3"},
+      %({"jsonrpc":"2.0","id":3})                             => {MCP::CODE_INVALID_REQUEST, "3"},
+      %({"jsonrpc":"2.0","id":3,"method":"ping","params":[]}) => {MCP::CODE_INVALID_PARAMS, "3"},
+      %({broken)                                              => {MCP::CODE_PARSE_ERROR, nil},
+      %({"jsonrpc":"2.0","id":1,"method":"ping"} x)           => {MCP::CODE_PARSE_ERROR, nil},
+      ""                                                      => {MCP::CODE_PARSE_ERROR, nil},
+    }.each do |body, (code, id)|
+      it "is refused with status 400 and code #{code}: #{body.inspect}" do
+        error = refusal(body)
+        {error.status, error.code, error.id}.should eq({400, code, id})
+      end
+    end
+
+    it "is refused when its version is not supported" do
+      error = refusal(%({"jsonrpc":"2.0","id":3,"method":"ping"}), {"MCP-Protocol-Version" => "1999-01-01"})
+      {error.status, error.code, error.id}.should eq({400, MCP::CODE_UNSUPPORTED_VERSION, "3"})
+    end
+
+    {
+      %({"jsonrpc":"2.0","id":1,"method":5})                                           => "Invalid JSON: method must be a string.",
+      %("ping")                                                                        => "Invalid JSON: the message must be an object.",
+      "null"                                                                           => "Field method is missing.",
+      %({"jsonrpc":"2.0","id":7,"Method":"ping"})                                      => "Field method is missing.",
+      %({"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":5}})            => "Invalid params: name must be a string.",
+      %({"jsonrpc":"2.0","id":1,"method":"tools/call","params":"x"})                   => "Invalid params: params must be an object.",
+      %({"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"_meta":[]}})          => "Invalid params: _meta must be an object.",
+      %({"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":1}}) => "Invalid params: protocolVersion must be a string.",
+    }.each do |body, message|
+      it "is explained with #{message.inspect}: #{body.inspect}" do
+        refusal(body).message.should eq message
+      end
+    end
+  end
+
+  it "trims the whitespace around header values" do
+    request, _ = parse(%({"jsonrpc":"2.0","id":1,"method":"tools/list"}), {"MCP-Protocol-Version" => " 2025-06-18 "})
+    request.version.should eq "2025-06-18"
+    MCP.header(HTTP::Headers{"Mcp-Method" => "\ttools/call "}, "Mcp-Method").should eq "tools/call"
+  end
+end
+
+describe "MCP.decode_header_value" do
+  {
+    "balances"                            => "balances",
+    "=?base64?SGVsbG8sIOS4lueVjA==?="     => "Hello, 世界",
+    "=?base64?PT9iYXNlNjQ/bGl0ZXJhbD89?=" => "=?base64?literal?=",
+    "=?base64?SGVsbG8?="                  => "Hello",
+    "=?base64?!!!?="                      => nil,
+    "=?base64?="                          => "=?base64?=",
+  }.each do |value, decoded|
+    it "decodes #{value.inspect} as #{decoded.inspect}" do
+      MCP.decode_header_value(value).should eq decoded
     end
   end
 end

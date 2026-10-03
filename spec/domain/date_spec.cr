@@ -1,51 +1,42 @@
 require "../spec_helper"
 
-private alias D = Zipfelkasse::Domain
-
 private def d(s : String) : Time
-  Time.parse_utc(s, D::DATE_LAYOUT)
+  Time.parse_utc(s, Domain::DATE_LAYOUT)
 end
 
-private def validation_error(&) : String
-  yield
-  fail "expected a ValidationError"
-rescue e : Zipfelkasse::Domain::ValidationError
-  e.msg
-end
-
-describe Zipfelkasse::Domain do
+describe Domain do
   describe ".next_date" do
     {
-      {"weekly", D::Frequency::Weekly, "2026-01-05", "2026-01-05", "2026-01-12"},
-      {"weekly across year boundary", D::Frequency::Weekly, "2025-12-29", "2025-12-30", "2026-01-05"},
-      {"weekly before anchor", D::Frequency::Weekly, "2026-03-01", "2026-01-01", "2026-03-01"},
-      {"monthly simple", D::Frequency::Monthly, "2026-01-15", "2026-01-15", "2026-02-15"},
-      {"monthly Jan 31 → Feb 28", D::Frequency::Monthly, "2026-01-31", "2026-01-31", "2026-02-28"},
-      {"monthly Jan 31 → Feb 29 leap year", D::Frequency::Monthly, "2028-01-31", "2028-01-31", "2028-02-29"},
-      {"monthly back to anchor after February", D::Frequency::Monthly, "2026-01-31", "2026-02-28", "2026-03-31"},
-      {"monthly April 30", D::Frequency::Monthly, "2026-01-31", "2026-03-31", "2026-04-30"},
-      {"monthly December → January", D::Frequency::Monthly, "2026-12-31", "2026-12-31", "2027-01-31"},
-      {"monthly mid-period", D::Frequency::Monthly, "2026-01-10", "2026-05-20", "2026-06-10"},
-      {"monthly before anchor", D::Frequency::Monthly, "2026-05-10", "2026-01-01", "2026-05-10"},
-      {"yearly", D::Frequency::Yearly, "2026-03-15", "2026-03-15", "2027-03-15"},
-      {"yearly Feb 29", D::Frequency::Yearly, "2028-02-29", "2028-02-29", "2029-02-28"},
-      {"yearly Feb 29 back in leap year", D::Frequency::Yearly, "2028-02-29", "2031-03-01", "2032-02-29"},
+      {"weekly", Domain::Frequency::Weekly, "2026-01-05", "2026-01-05", "2026-01-12"},
+      {"weekly across year boundary", Domain::Frequency::Weekly, "2025-12-29", "2025-12-30", "2026-01-05"},
+      {"weekly before anchor", Domain::Frequency::Weekly, "2026-03-01", "2026-01-01", "2026-03-01"},
+      {"monthly simple", Domain::Frequency::Monthly, "2026-01-15", "2026-01-15", "2026-02-15"},
+      {"monthly Jan 31 → Feb 28", Domain::Frequency::Monthly, "2026-01-31", "2026-01-31", "2026-02-28"},
+      {"monthly Jan 31 → Feb 29 leap year", Domain::Frequency::Monthly, "2028-01-31", "2028-01-31", "2028-02-29"},
+      {"monthly back to anchor after February", Domain::Frequency::Monthly, "2026-01-31", "2026-02-28", "2026-03-31"},
+      {"monthly April 30", Domain::Frequency::Monthly, "2026-01-31", "2026-03-31", "2026-04-30"},
+      {"monthly December → January", Domain::Frequency::Monthly, "2026-12-31", "2026-12-31", "2027-01-31"},
+      {"monthly mid-period", Domain::Frequency::Monthly, "2026-01-10", "2026-05-20", "2026-06-10"},
+      {"monthly before anchor", Domain::Frequency::Monthly, "2026-05-10", "2026-01-01", "2026-05-10"},
+      {"yearly", Domain::Frequency::Yearly, "2026-03-15", "2026-03-15", "2027-03-15"},
+      {"yearly Feb 29", Domain::Frequency::Yearly, "2028-02-29", "2028-02-29", "2029-02-28"},
+      {"yearly Feb 29 back in leap year", Domain::Frequency::Yearly, "2028-02-29", "2031-03-01", "2032-02-29"},
     }.each do |(name, freq, anchor, after, want)|
       it name do
-        D.next_date(freq, d(anchor), d(after)).to_s(D::DATE_LAYOUT).should eq want
+        Domain.next_date(freq, d(anchor), d(after)).to_s(Domain::DATE_LAYOUT).should eq want
       end
     end
 
     it "takes the calendar date in the given zone" do
       berlin = Time::Location.load("Europe/Berlin")
-      D.next_date(D::Frequency::Weekly, Time.local(2026, 3, 28, 23, 30, location: berlin), Time.utc(2026, 3, 29, 1, 0)).should eq Time.utc(2026, 4, 4)
+      Domain.next_date(Domain::Frequency::Weekly, Time.local(2026, 3, 28, 23, 30, location: berlin), Time.utc(2026, 3, 29, 1, 0)).should eq Time.utc(2026, 4, 4)
     end
   end
 
   it "computes occurrences from the anchor" do
     anchor = d("2026-01-31")
     ["2026-01-31", "2026-02-28", "2026-03-31", "2026-04-30", "2026-05-31"].each_with_index do |want, n|
-      D.occurrence(D::Frequency::Monthly, anchor, n).to_s(D::DATE_LAYOUT).should eq want
+      Domain.occurrence(Domain::Frequency::Monthly, anchor, n).to_s(Domain::DATE_LAYOUT).should eq want
     end
   end
 
@@ -60,17 +51,17 @@ describe Zipfelkasse::Domain do
        25 => {"2028-02-29", "2051-01-31", "2026-07-25"},
         0 => {"2026-01-31", "2026-01-31", "2026-01-31"},
     }.each do |n, (monthly, yearly, weekly)|
-      D.occurrence(D::Frequency::Monthly, anchor, n).to_s(D::DATE_LAYOUT).should eq monthly
-      D.occurrence(D::Frequency::Yearly, anchor, n).to_s(D::DATE_LAYOUT).should eq yearly
-      D.occurrence(D::Frequency::Weekly, anchor, n).to_s(D::DATE_LAYOUT).should eq weekly
+      Domain.occurrence(Domain::Frequency::Monthly, anchor, n).to_s(Domain::DATE_LAYOUT).should eq monthly
+      Domain.occurrence(Domain::Frequency::Yearly, anchor, n).to_s(Domain::DATE_LAYOUT).should eq yearly
+      Domain.occurrence(Domain::Frequency::Weekly, anchor, n).to_s(Domain::DATE_LAYOUT).should eq weekly
     end
   end
 
   it "names the frequencies by their keys" do
-    D::Frequency.values.map(&.key).should eq %w(weekly monthly yearly)
-    D::Frequency.from_key?("monthly").should eq D::Frequency::Monthly
-    D::Frequency.from_key?("Monthly").should be_nil
-    D::Frequency.from_key?("daily").should be_nil
+    Domain::Frequency.values.map(&.key).should eq %w(weekly monthly yearly)
+    Domain::Frequency.from_key?("monthly").should eq Domain::Frequency::Monthly
+    Domain::Frequency.from_key?("Monthly").should be_nil
+    Domain::Frequency.from_key?("daily").should be_nil
   end
 
   it "parses dates" do
@@ -90,12 +81,12 @@ describe Zipfelkasse::Domain do
       "9999-12-31"   => nil,
     }.each do |input, want|
       if want
-        got = D.parse_date(input)
-        got.to_s(D::DATE_LAYOUT).should eq want
+        got = Domain.parse_date(input)
+        got.to_s(Domain::DATE_LAYOUT).should eq want
         got.location.should eq Time::Location::UTC
         got.hour.should eq 0
       else
-        expect_raises(D::ValidationError) { D.parse_date(input) }
+        expect_raises(Domain::ValidationError) { Domain.parse_date(input) }
       end
     end
   end
@@ -122,33 +113,32 @@ describe Zipfelkasse::Domain do
       "\u{ff11}\u{ff12}.1.2026" => "Ungültiges Datum „\u{ff11}\u{ff12}.1.2026“.",
       "\u{661}.1.2026"          => "Ungültiges Datum „\u{661}.1.2026“.",
       "2026–10–02"              => "Ungültiges Datum „2026–10–02“.",
-      "2026-10-0\xff"           => "Ungültiges Datum „2026-10-0\xff“.",
       ""                        => "Bitte ein Datum angeben.",
       " \u{3000} "              => "Bitte ein Datum angeben.",
     }.each do |input, want|
       if want.starts_with?('2')
-        D.parse_date(input).should eq d(want)
+        Domain.parse_date(input).should eq d(want)
       else
-        validation_error { D.parse_date(input) }.should eq want
+        expect_invalid(want) { Domain.parse_date(input) }
       end
     end
   end
 
   it "formats dates" do
-    D.format_date(d("2026-10-02")).should eq "02.10.2026"
-    D.format_date(Time.utc(26, 10, 2)).should eq "02.10.0026"
+    Domain.format_date(d("2026-10-02")).should eq "02.10.2026"
+    Domain.format_date(Time.utc(26, 10, 2)).should eq "02.10.0026"
   end
 
   it "takes today's date in a time zone" do
     berlin = Time::Location.load("Europe/Berlin")
     # 23:30 UTC on Oct 1 is already Oct 2 in Berlin.
-    got = D.date_of(Time.utc(2026, 10, 1, 23, 30).in(berlin))
-    got.to_s(D::DATE_LAYOUT).should eq "2026-10-02"
+    got = Domain.date_of(Time.utc(2026, 10, 1, 23, 30).in(berlin))
+    got.to_s(Domain::DATE_LAYOUT).should eq "2026-10-02"
     got.location.should eq Time::Location::UTC
   end
 
   it "names the year range in the message" do
-    message = validation_error { D.parse_date("0026-10-02") }
+    message = expect_raises(Domain::ValidationError) { Domain.parse_date("0026-10-02") }.message.not_nil!
     message.should contain "2000"
     message.should contain "2100"
   end

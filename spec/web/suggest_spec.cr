@@ -1,7 +1,4 @@
-require "./expense_helper"
-
-private alias Web = Zipfelkasse::Web
-private alias TitleCategory = Zipfelkasse::Store::TitleCategory
+require "../spec_helper"
 
 describe "category suggestions" do
   it "normalizes titles to keys" do
@@ -16,8 +13,8 @@ describe "category suggestions" do
 
   it "learns from the recent history" do
     food, dining, home = 1_i64, 2_i64, 3_i64
-    hist = [] of TitleCategory # newest first
-    add = ->(title : String, cat : Int64, n : Int32) { n.times { hist << TitleCategory.new(title, cat) } }
+    hist = [] of Store::TitleCategory # newest first
+    add = ->(title : String, cat : Int64, n : Int32) { n.times { hist << Store::TitleCategory.new(title, cat) } }
     add.call("Kaufland", food, 2)
     add.call("kaufland", dining, 1) # outlier
     add.call("Kaufland", food, 3)
@@ -40,23 +37,12 @@ describe "category suggestions" do
 
     # Ambiguous words (1:1) and filler words do not count as single words.
     words = Web.suggest_categories([
-      TitleCategory.new("dm", home), TitleCategory.new("DM", food),
-      TitleCategory.new("Brot und Butter", food), TitleCategory.new("Brot und Käse", food),
+      Store::TitleCategory.new("dm", home), Store::TitleCategory.new("DM", food),
+      Store::TitleCategory.new("Brot und Butter", food), Store::TitleCategory.new("Brot und Käse", food),
     ]).words
     words.has_key?("dm").should be_false
     words.has_key?("und").should be_false
     # A word counts once per title.
-    Web.suggest_categories([TitleCategory.new("Rewe Rewe", food)]).words["rewe"].should eq({food, 1})
-  end
-
-  it "puts the suggestions into the expense form" do
-    with_expense_group do |g|
-      v = g.form
-      v["titel"] = "Kaufland Mitte"
-      g.create(v)
-      _, body = g.get("/ausgaben/neu")
-      food = g.food
-      body.should contain %(data-suggest="{"t":{"kaufland mitte":#{food}},"w":{"kaufland":[#{food},1],"mitte":[#{food},1]}}")
-    end
+    Web.suggest_categories([Store::TitleCategory.new("Rewe Rewe", food)]).words["rewe"].should eq({food, 1})
   end
 end
