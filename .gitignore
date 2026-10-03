@@ -1,10 +1,10 @@
 /data/
 /.crystal/
-*.db-shm
-*.db-wal
-.claude/worktrees/
 /lib/
 /bin/
 /.shards/
-/e2e/data/
-/tmp/
+*.db-shm
+*.db-wal
+.DS_Store
+/.claude/*
+!/.claude/launch.json
