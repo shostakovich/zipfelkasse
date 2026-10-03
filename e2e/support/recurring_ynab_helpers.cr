@@ -1,6 +1,6 @@
 module E2E
   # Helpers of recurring_ynab_spec.cr: entering expenses through the form,
-  # reading the database of every app and watching the YNAB fakes.
+  # reading the database and watching the YNAB fake.
   module RY
     extend self
 
@@ -25,7 +25,7 @@ module E2E
     def create(world : World, user : User, form : Array({String, String})) : Int64
       r = user.post("/ausgaben/neu", form)
       raise "create #{form.to_h["titel"]}: #{r.status} #{r.error_message}" unless r.status == 303
-      Snapshot.count(world.primary.db_path, "SELECT max(id) FROM expenses")
+      Snapshot.count(world.app.db_path, "SELECT max(id) FROM expenses")
     end
 
     # Changes an expense through the form (same fields as when creating).
@@ -36,14 +36,14 @@ module E2E
     end
 
     def person(world : World, name : String) : Int64
-      Snapshot.open(world.primary.db_path) do |db|
+      Snapshot.open(world.app.db_path) do |db|
         db.query_one("SELECT id FROM participants WHERE name = ?", name, as: Int64)
       end
     end
 
-    # Rows of a query on the primary database, every value as text.
+    # Rows of a query on the database, every value as text.
     def rows(world : World, sql : String) : Array(Array(String))
-      Snapshot.open(world.primary.db_path) do |db|
+      Snapshot.open(world.app.db_path) do |db|
         out = [] of Array(String)
         db.query(sql) do |rs|
           rs.each do
@@ -62,29 +62,26 @@ module E2E
       rows(world, sql).first.first
     end
 
-    # Waits until a count query gives *expected* in every app's database
-    # (background work such as the recurring job at startup).
+    # Waits until a count query gives *expected* (background work such as
+    # the recurring job at startup).
     def wait_count(world : World, sql : String, expected : Int64) : Nil
-      world.apps.each do |a|
-        E2E.wait_until("#{a.name}: #{sql} = #{expected}", 15.seconds) { Snapshot.count(a.db_path, sql) == expected }
-      end
+      E2E.wait_until("#{sql} = #{expected}", 15.seconds) { Snapshot.count(world.app.db_path, sql) == expected }
     end
 
-    # Runs the block and returns the requests the YNAB fake of every app
-    # received meanwhile (and shortly after: the sync is debounced). Waits
-    # for *expected* requests (if given) and then until the fakes are idle.
-    def ynab_calls(world : World, expected = 0, &) : Array(Array(String))
-      marks = world.apps.map(&.ynab.request_count)
+    # Runs the block and returns the requests the YNAB fake received
+    # meanwhile (and shortly after: the sync is debounced). Waits for
+    # *expected* requests (if given) and then until the fake is idle.
+    def ynab_calls(world : World, expected = 0, &) : Array(String)
+      ynab = world.app.ynab
+      mark = ynab.request_count
       yield
       if expected > 0
-        world.apps.each_with_index do |a, i|
-          E2E.wait_until("#{a.name}: #{expected} YNAB requests", 15.seconds) { a.ynab.request_count >= marks[i] + expected } rescue nil
-        end
+        E2E.wait_until("#{expected} YNAB requests", 15.seconds) { ynab.request_count >= mark + expected } rescue nil
       else
         sleep 1.second # debounce (300 ms) and a run that must not send anything
       end
-      world.apps.each(&.ynab.wait_idle(quiet: 700.milliseconds))
-      world.apps.map_with_index { |a, i| a.ynab.requests[marks[i]..].dup }
+      ynab.wait_idle(quiet: 700.milliseconds)
+      ynab.requests[mark..].dup
     end
 
     # Text of the page's first <h1>.
@@ -101,17 +98,17 @@ module E2E
       r.doc.xpath_nodes(xpath).map(&.content)
     end
 
-    # The transactions in the primary app's YNAB fake that are not deleted,
+    # The transactions in the YNAB fake that are not deleted,
     # as [date, amount, payee, memo, category, cleared, approved, account].
     def live(world : World) : Array(Array(String | Int64 | Bool | Nil))
-      world.primary.ynab.live.map do |t|
+      world.app.ynab.live.map do |t|
         [t.date, t.amount, t.payee_name, t.memo, t.category_id, t.cleared, t.approved, t.account_id].map(&.as(String | Int64 | Bool | Nil))
       end
     end
 
-    # [id, deleted] of every transaction the primary fake ever received.
+    # [id, deleted] of every transaction the fake ever received.
     def txn_ids(world : World) : Array({String, Bool})
-      world.primary.ynab.all.map { |t| {t.id, t.deleted} }
+      world.app.ynab.all.map { |t| {t.id, t.deleted} }
     end
 
     # Texts of the activity log (newest first) as the activity page shows them.

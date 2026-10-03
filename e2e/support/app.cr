@@ -3,7 +3,7 @@ require "file_utils"
 require "socket"
 
 module E2E
-  # Fixed "now" of every app under test (ZIPFELKASSE_TEST_NOW): Saturday,
+  # Fixed "now" of the app under test (ZIPFELKASSE_TEST_NOW): Saturday,
   # 3 October 2026, 12:00 in Berlin.
   DEFAULT_NOW = "2026-10-03T10:00:00Z"
 

@@ -2,9 +2,9 @@ require "./e2e_helper"
 
 # The MCP server at /mcp/<secret>: transport and access rules, both protocol
 # eras, every tool with its results and messages, the SQL sandbox and the
-# write tools. Messages of Go's JSON decoder ("json: cannot unmarshal …")
-# are not part of the contract: such calls only have to fail and name the
-# offending field (MCPKit.decode_fail, not compared across apps).
+# write tools. The wording of argument decoding errors is not part of the
+# contract: such calls only have to fail and name the offending field
+# (MCPKit.decode_fail).
 private alias MK = E2E::MCPKit
 
 private READ_TOOLS  = %w(balances balance_history search_expenses statistics activity schema sql_query)
@@ -203,22 +203,20 @@ describe "MCP transport" do
     # Parse errors and wrongly typed params carry decoder texts: only the
     # code and the prefix are fixed.
     [%({broken), "", %({"jsonrpc":"2.0","id":1,"method":"ping"} x), %({"jsonrpc":"2.0","id":1,"method":5})].each do |b|
-      MK.each_app(user) { |br| br.post_raw(MK::PATH, b, "application/json", MK.headers) }.each do |r|
-        r.status.should eq 400
-        code, msg = MK.error(r)
-        code.should eq -32700
-        msg.should start_with("Invalid JSON")
-        r.json.as_h.has_key?("id").should be_false
-      end
+      r = MK.post(user, b)
+      r.status.should eq 400
+      code, msg = MK.error(r)
+      code.should eq -32700
+      msg.should start_with("Invalid JSON")
+      r.json.as_h.has_key?("id").should be_false
     end
     [%([1]), %("x"), %({"name":5})].each do |params|
-      MK.each_app(user) { |br| br.post_raw(MK::PATH, MK.body("tools/call", params), "application/json", MK.headers) }.each do |r|
-        r.status.should eq 400
-        code, msg = MK.error(r)
-        code.should eq -32602
-        msg.should start_with("Invalid params")
-        r.json["id"].should eq 1
-      end
+      r = MK.post(user, MK.body("tools/call", params))
+      r.status.should eq 400
+      code, msg = MK.error(r)
+      code.should eq -32602
+      msg.should start_with("Invalid params")
+      r.json["id"].should eq 1
     end
   end
 
@@ -609,7 +607,7 @@ describe "MCP tools" do
     MK.decode_fail(user, "create_expense", %({#{x},"currency":"USD","fx_rate":"1.2"}), "fx_rate")
     MK.decode_fail(user, "create_expense", %({#{x},"weights":["Anna"]}), "weights")
 
-    world.apps.each { |a| E2E::Snapshot.count(a.db_path, "SELECT count(*) FROM expenses").should eq 0 }
+    E2E::Snapshot.count(world.app.db_path, "SELECT count(*) FROM expenses").should eq 0
   end
 
   scenario "create_reimbursement: every refusal", world do
@@ -637,7 +635,7 @@ describe "MCP tools" do
     MK.decode_fail(user, "create_reimbursement", %({"from":"Ben","to":"Anna","amount":"5","title":"Rückzahlung"}), "title")
     MK.decode_fail(user, "create_reimbursement", %({"from":"Ben","to":"Anna","amount":"5","split":"equal"}), "split")
     MK.decode_fail(user, "create_reimbursement", %({"from":["Ben"],"to":"Anna","amount":"5"}), "from")
-    world.apps.each { |a| E2E::Snapshot.count(a.db_path, "SELECT count(*) FROM expenses").should eq 0 }
+    E2E::Snapshot.count(world.app.db_path, "SELECT count(*) FROM expenses").should eq 0
   end
 
   scenario "create_expense and create_reimbursement store entries", world do
@@ -688,9 +686,7 @@ describe "MCP tools" do
     note = "Positive balance = is owed money, negative = owes money. settlements: the transfers needed so that everyone ends at 0."
     MK.ok(user, "balances").should eq MK.json(%({"balances":[{"person":"Anna","balance":"-36.93","balance_cents":-3693,"status":"owes money"},{"person":"Ben","balance":"-5.52","balance_cents":-552,"status":"owes money"},{"person":"Cleo","balance":"-21.92","balance_cents":-2192,"status":"owes money"},{"person":"Dora","balance":"64.37","balance_cents":6437,"status":"is owed money"}],"note":#{note.to_json},"settlements":[{"from":"Anna","to":"Dora","amount":"36.93","amount_cents":3693},{"from":"Cleo","to":"Dora","amount":"21.92","amount_cents":2192},{"from":"Ben","to":"Dora","amount":"5.52","amount_cents":552}]}))
     MK.decode_fail(user, "balances", %({"x":1}), "x")
-    MK.each_app(user) { |b| b.post_raw(MK::PATH, MK.body("tools/call", %({"name":"balances","arguments":[]})), "application/json", MK.headers) }.each do |r|
-      MK.text(r, error: true).should_not contain("Internal error")
-    end
+    MK.text(MK.post(user, MK.body("tools/call", %({"name":"balances","arguments":[]}))), error: true).should_not contain("Internal error")
 
     rows = ->(key : String, list : Array({String, Array(Int32)}), names : Array(String)) do
       MK.json(list.map { |period, cents|
@@ -1007,17 +1003,16 @@ describe "MCP tools" do
     rows.call("SELECT count(*) AS n FROM pragma_database_list")["rows"].should eq MK.json("[[1]]")
     # Nothing has changed.
     rows.call("SELECT count(*) FROM expenses")["rows"].should eq MK.json("[[7]]")
-    world.apps.each do |a|
-      E2E::Snapshot.count(a.db_path, "SELECT count(*) FROM expenses").should eq 7
-      E2E::Snapshot.count(a.db_path, "SELECT count(*) FROM settings WHERE key = 'a'").should eq 0
-      E2E::Snapshot.count(a.db_path, "SELECT count(*) FROM participants WHERE name = 'x'").should eq 0
-    end
+    db = world.app.db_path
+    E2E::Snapshot.count(db, "SELECT count(*) FROM expenses").should eq 7
+    E2E::Snapshot.count(db, "SELECT count(*) FROM settings WHERE key = 'a'").should eq 0
+    E2E::Snapshot.count(db, "SELECT count(*) FROM participants WHERE name = 'x'").should eq 0
     MK.decode_fail(user, "sql_query", %({"query":"SELECT 1","limit":5}), "limit")
     MK.decode_fail(user, "sql_query", %({"query":["SELECT 1"]}), "query")
 
-    # A slow query is aborted after 5 seconds (both apps run at the same time).
+    # A slow query is aborted after 5 seconds.
     t = Time.instant
-    r = MK.parallel(world, user) { |b| b.tool("sql_query", {"query" => JSON::Any.new("WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 2000000000) SELECT count(*) FROM n")}) }
+    r = user.tool("sql_query", {"query" => JSON::Any.new("WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 2000000000) SELECT count(*) FROM n")})
     took = Time.instant - t
     MK.text(r, error: true).should eq "The query was aborted after 5 s. Please narrow it down (WHERE, LIMIT) or simplify it."
     took.should be >= 4.5.seconds
@@ -1098,7 +1093,7 @@ describe "MCP on the seed household" do
   after_all { world.stop }
 
   sql = ->(query : String) do
-    E2E::Snapshot.open(world.primary.db_path) do |d|
+    E2E::Snapshot.open(world.app.db_path) do |d|
       d.query_all(query) { |rs| Array(DB::Any).new(rs.column_count) { rs.read } }
     end
   end
@@ -1214,7 +1209,7 @@ describe "MCP on the seed household" do
 
   scenario "sql_query on real data hides YNAB", world do
     user = world.user
-    world.apps.each { |a| E2E::Snapshot.count(a.db_path, "SELECT count(*) FROM ynab_config").should be > 0 }
+    E2E::Snapshot.count(world.app.db_path, "SELECT count(*) FROM ynab_config").should be > 0
     count = sql.call("SELECT count(*) FROM expenses")[0][0]
     MK.ok(user, "sql_query", %({"query":"SELECT count(*) AS n FROM expenses"}))["rows"].should eq MK.json("[[#{count}]]")
     d = MK.ok(user, "sql_query", %({"query":"SELECT * FROM expenses ORDER BY id"}))

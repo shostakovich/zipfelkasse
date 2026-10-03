@@ -58,6 +58,15 @@ module E2E
       doc.xpath_node("//body").try(&.content.gsub(/\s+/, " ").strip) || ""
     end
 
+    # `<script>` elements without src and on* attributes: what an escaping
+    # bug would produce. The app's CSP forbids both anyway.
+    def injected_scripts : Array(String)
+      found = [] of String
+      doc.xpath_nodes("//script[not(@src)]").each { |n| found << n.to_s }
+      doc.xpath_nodes("//*[@*[starts-with(name(), 'on')]]").each { |n| found << n.to_s[0, 200] }
+      found
+    end
+
     def to_s(io : IO) : Nil
       io << @method << " " << @path << " → " << @status
     end

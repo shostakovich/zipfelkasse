@@ -5,22 +5,22 @@ require "./e2e_helper"
 # JSON, OFX and CSV for YNAB). Exact bytes matter for the CSV and OFX files:
 # other programs read them.
 
-# The JSON /api/kurs answers with (Go's encoder: compact, trailing newline).
+# The JSON /api/kurs answers with (compact, trailing newline).
 private def kurs_json(currency : String, date : String, rate : String, source : String) : String
-  %({"currency":"#{currency}","date":"#{date}","rate":#{E2E::FxExport.go_float(rate)},"source":"#{source}"}\n)
+  %({"currency":"#{currency}","date":"#{date}","rate":#{E2E::FxExport.shortest_float(rate)},"source":"#{source}"}\n)
 end
 
 private def error_json(msg : String) : String
   %({"error":"#{msg}"}\n)
 end
 
-# FormatCents: thousands dot, decimal comma, " €".
+# Thousands dot, decimal comma, " €".
 private def eur(cents : Int64) : String
   euros = (cents.abs // 100).to_s.reverse.scan(/\d{1,3}/).map(&.[0]).join(".").reverse
   "#{cents < 0 ? "-" : ""}#{euros},#{(cents.abs % 100).to_s.rjust(2, '0')} €"
 end
 
-# The OFX file as Go writes it (CRLF after every line).
+# The OFX file (CRLF after every line).
 private def ofx_file(acct : String, from : String, to : String, server : String, transactions : Array(String), balance : String) : String
   head = ["OFXHEADER:100", "DATA:OFXSGML", "VERSION:102", "SECURITY:NONE", "ENCODING:UTF-8", "CHARSET:NONE",
           "COMPRESSION:NONE", "OLDFILEUID:NONE", "NEWFILEUID:NONE", "", "<OFX>", "<SIGNONMSGSRSV1>", "<SONRS>", "<STATUS>",
@@ -61,18 +61,17 @@ module FxExportSpec
     last = Time.utc(2026, 10, 2) # newest day the fake ECB publishes
     rate = ->(cur : String, d : String) { world.ecb.rate(cur, day(d)) }
     count = ->(file : String) { world.ecb.requests.count(file) }
-    n = -> { world.apps.size }
     nf = "eurofxref-hist-90d.xml"
     zip = "eurofxref-hist.zip"
     currencies = E2E::FakeECB::BASE.keys.sort
 
     scenario "downloads the 90-day file at startup and shows the latest rates", world do
-      world.apps
+      world.app
       # On an empty cache the app loads the 90-day file, nothing else.
-      count.call(nf).should eq n.call
+      count.call(nf).should eq 1
       count.call(zip).should eq 0
       days = (0...90).map { |i| last - i.days }.select { |d| E2E::FakeECB.business_day?(d) }
-      E2E::Snapshot.open(world.primary.db_path) do |db|
+      E2E::Snapshot.open(world.app.db_path) do |db|
         db.query_one("SELECT count(*), count(DISTINCT currency), min(date), max(date) FROM fx_rates WHERE source = 'ezb'",
           as: {Int64, Int64, String, String}).should eq({days.size * 16, 16, "2026-07-06", "2026-10-02"})
         db.scalar("SELECT count(*) FROM fx_rates WHERE source <> 'ezb'").should eq 0
@@ -158,7 +157,7 @@ module FxExportSpec
       end
       r = user.get("/api/kurs?waehrung=xyz")
       {r.status, r.body}.should eq({422, error_json("Für XYZ gibt es keinen EZB-Kurs – bitte Kurs von Hand eintragen.")})
-      count.call(nf).should eq n.call
+      count.call(nf).should eq 1
       count.call(zip).should eq 0
     end
 
@@ -167,8 +166,8 @@ module FxExportSpec
       user.login("Anna")
       r = user.get("/api/kurs?waehrung=USD&datum=2024-05-19") # Sunday
       {r.status, r.body}.should eq({200, kurs_json("USD", "2024-05-17", rate.call("USD", "2024-05-17"), "ezb")})
-      count.call(zip).should eq n.call
-      E2E::Snapshot.open(world.primary.db_path) do |db|
+      count.call(zip).should eq 1
+      E2E::Snapshot.open(world.app.db_path) do |db|
         db.scalar("SELECT value FROM settings WHERE key = 'fx.ezb_hist_bis'").should eq "2026-10-02"
         db.scalar("SELECT min(date) FROM fx_rates WHERE source = 'ezb'").should eq "2023-12-01"
       end
@@ -187,8 +186,8 @@ module FxExportSpec
       {r.status, r.body}.should eq({422, error_json("Für USD gibt es um den 15.11.2023 keinen EZB-Kurs – bitte Kurs von Hand eintragen.")})
       r = user.get("/api/kurs?waehrung=XAF&datum=2024-03-01")
       {r.status, r.body}.should eq({422, error_json("Für XAF gibt es keinen EZB-Kurs – bitte Kurs von Hand eintragen.")})
-      count.call(zip).should eq n.call
-      count.call(nf).should eq n.call
+      count.call(zip).should eq 1
+      count.call(nf).should eq 1
     end
 
     scenario "manual rates: saving, every validation message, deleting, precedence", world do
@@ -258,7 +257,7 @@ module FxExportSpec
         .should eq [{"waehrung", "IDR"}, {"datum", "2026-09-04"}]
       page.doc.xpath_nodes(%(//datalist[@id="kurs-waehrungen"]/option)).map(&.["value"]).should eq (currencies + ["KWD", "VND", "XAF"]).sort
 
-      manual_rows = -> { E2E::Snapshot.count(world.primary.db_path, "SELECT count(*) FROM fx_rates WHERE source = 'manuell'") }
+      manual_rows = -> { E2E::Snapshot.count(world.app.db_path, "SELECT count(*) FROM fx_rates WHERE source = 'manuell'") }
       saved = manual_rows.call
       bad_rate = ->(s : String) { "Ungültiger Wechselkurs „#{s}“ – bitte eine Zahl größer als 0 angeben (Einheiten der Währung pro 1 €)." }
       [
@@ -311,7 +310,7 @@ module FxExportSpec
         r = user.post("/einstellungen/kurse/loeschen", {"waehrung" => cur, "datum" => date})
         {cur, date, r.status, r.error_message}.should eq({cur, date, 404, "Diesen manuellen Kurs gibt es nicht (mehr)."})
       end
-      E2E::Snapshot.count(world.primary.db_path, "SELECT count(*) FROM fx_rates WHERE currency = 'USD' AND date = '2026-10-02' AND source = 'ezb'").should eq 1
+      E2E::Snapshot.count(world.app.db_path, "SELECT count(*) FROM fx_rates WHERE currency = 'USD' AND date = '2026-10-02' AND source = 'ezb'").should eq 1
       manual_rows.call.should eq saved - 2
 
       activity = user.get("/aktivitaet").text
@@ -319,8 +318,8 @@ module FxExportSpec
       activity.should contain("Manueller Kurs für USD ab 01.10.2026 gespeichert: 1 € = 1,25 USD")
       activity.should contain("Manueller Kurs für VND ab 03.09.2026 gespeichert: 1 € = 17000,5 VND")
       activity.should contain("Manueller Kurs für IDR ab 04.09.2026 gelöscht")
-      count.call(zip).should eq n.call
-      count.call(nf).should eq n.call
+      count.call(zip).should eq 1
+      count.call(nf).should eq 1
     end
 
     scenario "refreshing the ECB rates by hand", world do
@@ -330,8 +329,8 @@ module FxExportSpec
       r = user.post("/einstellungen/kurse/aktualisieren")
       {r.status, r.location, r.flash}.should eq({303, "/einstellungen/kurse", "EZB-Kurse aktualisiert (Stand 02.10.2026)."})
       # A cache without gaps only needs the daily file.
-      count.call("eurofxref-daily.xml").should be >= daily + n.call
-      count.call(nf).should eq n.call
+      count.call("eurofxref-daily.xml").should be >= daily + 1
+      count.call(nf).should eq 1
       user.get("/einstellungen/kurse").text.should contain("EZB-Kurse aktualisiert (Stand 02.10.2026).")
     end
 
@@ -352,7 +351,7 @@ module FxExportSpec
       gbp = rate.call("GBP", "2026-10-01")
       pub = create.call(expense_form("Pub", "2026-10-01", "100,00", anna, both, currency: "GBP"))
       expense_row(world, pub).should eq({"amount_cents" => to_eur_cents(10000, 2, gbp.to_f).to_s, "original_amount_minor" => "10000",
-                                         "original_currency" => "GBP", "fx_rate" => go_float(gbp), "fx_source" => "ezb", "date" => "2026-10-01"})
+                                         "original_currency" => "GBP", "fx_rate" => shortest_float(gbp), "fx_source" => "ezb", "date" => "2026-10-01"})
       form = user.get("/ausgaben/#{pub}")
       {input_value(form, "betrag"), input_value(form, "kurs"), input_value(form, "kurs_quelle")}.should eq({"100,00", german_rate(gbp), "ezb"})
       form.doc.xpath_node(%(//*[@id="kurs-hinweis"])).not_nil!.content.strip.should eq "EZB-Kurs."
@@ -362,7 +361,7 @@ module FxExportSpec
       # A weekend date takes Friday's rate; a manual rate wins over the ECB.
       sat = create.call(expense_form("Samstag", "2026-09-26", "45,50", ben, both, currency: "CHF"))
       chf = rate.call("CHF", "2026-09-25")
-      expense_row(world, sat)["fx_rate"].should eq go_float(chf)
+      expense_row(world, sat)["fx_rate"].should eq shortest_float(chf)
       expense_row(world, sat)["amount_cents"].should eq to_eur_cents(4550, 2, chf.to_f).to_s
       usd = create.call(expense_form("Mietwagen", "2026-10-01", "100,00", anna, both, currency: "USD"))
       expense_row(world, usd).should eq({"amount_cents" => "8333", "original_amount_minor" => "10000", "original_currency" => "USD",
@@ -393,7 +392,7 @@ module FxExportSpec
       stale = create.call(expense_form("Fondue", "2026-10-01", "80,00", anna, both, currency: "CHF", rate: "1,5", rate_source: "ezb"))
       chf = rate.call("CHF", "2026-10-01")
       expense_row(world, stale).should eq({"amount_cents" => to_eur_cents(8000, 2, chf.to_f).to_s, "original_amount_minor" => "8000",
-                                           "original_currency" => "CHF", "fx_rate" => go_float(chf), "fx_source" => "ezb", "date" => "2026-10-01"})
+                                           "original_currency" => "CHF", "fx_rate" => shortest_float(chf), "fx_source" => "ezb", "date" => "2026-10-01"})
 
       # Errors after the rate lookup show the looked-up rate in the form.
       r = user.post("/ausgaben/neu", expense_form("Ohne Leute", "2026-09-29", "250,00", anna, {} of Int64 => String, currency: "GBP"))
@@ -427,7 +426,7 @@ module FxExportSpec
       ]
       page.doc.xpath_nodes(%(//section[.//h2[normalize-space(.)="Zuletzt verwendet"]]//tbody/tr/td/a)).map(&.["href"])
         .should eq [stale, usd, pub, sat, nine, kwd, yen, half, thb].map { |id| "/ausgaben/#{id}" }
-      count.call(zip).should eq n.call
+      count.call(zip).should eq 1
     end
 
     scenario "after a restart nothing is downloaded again", world do
@@ -455,7 +454,7 @@ module FxExportSpec
     failed = ->(why : String) { "Die EZB-Kurse konnten nicht geladen werden (#{why}). Bitte später erneut versuchen oder den Kurs von Hand eintragen." }
 
     scenario "refresh, /api/kurs and the expense form report the failure", world do
-      world.apps
+      world.app
       user = world.user
       user.login("Anna")
       ecb.failure = 500
@@ -471,7 +470,7 @@ module FxExportSpec
       r = user.get("/api/kurs?waehrung=USD&datum=2024-05-17")
       {r.status, r.body}.should eq({502, error_json(failed.call("HTTP status 500"))})
       r.content_type.should eq "application/json; charset=utf-8"
-      ecb.count("eurofxref-hist.zip").should eq zips + world.apps.size
+      ecb.count("eurofxref-hist.zip").should eq zips + 1
       # Right after a failure the app does not ask again.
       ecb.failure = nil
       r = user.get("/api/kurs?waehrung=USD&datum=2024-05-17")
@@ -479,7 +478,7 @@ module FxExportSpec
       r = user.post("/ausgaben/neu", expense_form("Hotel", "2024-05-17", "100,00", user.me.not_nil!, {user.me.not_nil! => ""}, currency: "USD"))
       r.status.should eq 422
       r.error_message.should eq "Für USD ist am 17.05.2024 kein Wechselkurs verfügbar. Kurs bitte von Hand eintragen."
-      ecb.count("eurofxref-hist.zip").should eq zips + world.apps.size
+      ecb.count("eurofxref-hist.zip").should eq zips + 1
 
       ecb.failure = 404
       r = user.post("/einstellungen/kurse/aktualisieren")
@@ -494,7 +493,7 @@ module FxExportSpec
   end
 
   # The FX job waits for the next 16:30 after the frozen "now" with a timer on
-  # the real clock; once that moment lies in the real past, Go refreshes the
+  # the real clock; once that moment lies in the real past, the job would refresh the
   # daily file in a tight loop. These scenarios count downloads exactly, so
   # they use a "now" far in the future where the timer never fires.
   describe "ECB schedule" do
@@ -510,12 +509,12 @@ module FxExportSpec
       ecb.close
       fakes.each(&.close)
     end
-    newest = -> { E2E::Snapshot.open(world.primary.db_path) { |db| db.scalar("SELECT max(date) FROM fx_rates WHERE source = 'ezb'").as(String) } }
+    newest = -> { E2E::Snapshot.open(world.app.db_path) { |db| db.scalar("SELECT max(date) FROM fx_rates WHERE source = 'ezb'").as(String) } }
     # Restarts at *now* (UTC) and checks which files the startup fetched.
     restart = ->(now : String, files : Array(String)) do
       before = ecb.requests.size
       world.restart(now)
-      expected = files.flat_map { |f| [f] * world.apps.size }
+      expected = files
       E2E.wait_until("startup downloads at #{now}", 10.seconds) { ecb.requests.size >= before + expected.size }
       sleep 700.milliseconds # nothing else follows
       ecb.requests[before..].sort.should eq expected.sort
@@ -523,8 +522,8 @@ module FxExportSpec
 
     scenario "loads at startup only when the cache is behind the last 16:30 (Berlin)", world do
       {fri.friday?, mon.monday?, later.friday?}.should eq({true, true, true})
-      world.apps
-      ecb.requests.should eq ["eurofxref-hist-90d.xml"] * world.apps.size
+      world.app
+      ecb.requests.should eq ["eurofxref-hist-90d.xml"]
       newest.call.should eq "2036-11-07"
       user = world.user
       user.login("Anna")
@@ -534,7 +533,7 @@ module FxExportSpec
         r = user.get("/api/kurs?waehrung=XAF")
         {r.status, r.body}.should eq({422, error_json("Für XAF gibt es keinen EZB-Kurs – bitte Kurs von Hand eintragen.")})
       end
-      ecb.count("eurofxref-daily.xml").should eq world.apps.size
+      ecb.count("eurofxref-daily.xml").should eq 1
 
       # Monday 16:29 in Berlin (CET): Friday's rates are the newest expected.
       restart.call("2036-11-10T15:29:00Z", [] of String)
@@ -552,7 +551,7 @@ module FxExportSpec
       ecb.upstream = fakes[2]
       restart.call("2036-11-15T11:00:00Z", ["eurofxref-hist-90d.xml"])
       newest.call.should eq "2036-11-14"
-      E2E::Snapshot.count(world.primary.db_path, "SELECT count(DISTINCT date) FROM fx_rates WHERE source = 'ezb' AND date > '2036-11-10'").should eq 4
+      E2E::Snapshot.count(world.app.db_path, "SELECT count(DISTINCT date) FROM fx_rates WHERE source = 'ezb' AND date > '2036-11-10'").should eq 4
       # Sunday evening: still Friday's rates.
       restart.call("2036-11-16T19:00:00Z", [] of String)
       user.get("/api/kurs?waehrung=GBP&datum=2036-11-16").body.should eq kurs_json("GBP", "2036-11-14", fakes[2].rate("GBP", later), "ezb")

@@ -60,25 +60,24 @@ module E2E
   module FxExport
     extend self
 
-    # The number as Go's strconv.FormatFloat(f, 'f', -1, 64) (and its JSON
-    # encoder in the usual range) writes it: shortest digits, no ".0".
-    def go_float(v : Float64) : String
+    # The number as the app writes it: shortest digits, no ".0".
+    def shortest_float(v : Float64) : String
       s = v.to_s
       raise "unexpected exponent in #{s}" if s.includes?('e')
       s.ends_with?(".0") ? s[0...-2] : s
     end
 
-    def go_float(s : String) : String
-      go_float(s.to_f)
+    def shortest_float(s : String) : String
+      shortest_float(s.to_f)
     end
 
-    # domain.FormatRate: Go float formatting with a decimal comma.
+    # A rate as the form shows it: shortest digits with a decimal comma.
     def german_rate(v : Float64 | String) : String
-      go_float(v.is_a?(String) ? v.to_f : v).sub('.', ',')
+      shortest_float(v.is_a?(String) ? v.to_f : v).sub('.', ',')
     end
 
-    # domain.ToEURCents: minor / 10^decimals / rate * 100, rounded half away
-    # from zero, in exactly this order.
+    # minor / 10^decimals / rate * 100, rounded half away from zero, in exactly
+    # this order.
     def to_eur_cents(minor : Int64, decimals : Int32, rate : Float64) : Int64
       (minor.to_f / (10.0 ** decimals) / rate * 100).round(:ties_away).to_i64
     end
@@ -97,22 +96,22 @@ module E2E
 
     # The ID of a row of `table` by name (participants, categories).
     def id_of(world : World, table : String, name : String) : Int64
-      Snapshot.open(world.primary.db_path) do |db|
+      Snapshot.open(world.app.db_path) do |db|
         db.scalar("SELECT id FROM #{table} WHERE name = ?", name).as(Int64)
       end
     end
 
     def newest_expense_id(world : World) : Int64
-      Snapshot.count(world.primary.db_path, "SELECT max(id) FROM expenses")
+      Snapshot.count(world.app.db_path, "SELECT max(id) FROM expenses")
     end
 
     # One row of the expenses table as strings.
     def expense_row(world : World, id : Int64) : Hash(String, String)
-      Snapshot.open(world.primary.db_path) do |db|
+      Snapshot.open(world.app.db_path) do |db|
         db.query_one("SELECT amount_cents, original_amount_minor, original_currency, fx_rate, fx_source, date FROM expenses WHERE id = ?", id) do |rs|
           {
             "amount_cents" => rs.read(Int64).to_s, "original_amount_minor" => rs.read(Int64).to_s,
-            "original_currency" => rs.read(String), "fx_rate" => go_float(rs.read(Float64)),
+            "original_currency" => rs.read(String), "fx_rate" => shortest_float(rs.read(Float64)),
             "fx_source" => rs.read(String), "date" => rs.read(String),
           }
         end

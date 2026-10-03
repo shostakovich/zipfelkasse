@@ -2,8 +2,7 @@ require "http/server"
 require "json"
 
 module E2E
-  # In-memory fake of the YNAB API (port of internal/ynab/fake_test.go),
-  # reachable at base_url (".../v1"). Every app under test gets its own.
+  # In-memory fake of the YNAB API, reachable at base_url (".../v1").
   class FakeYNAB
     TOKEN       = "geheimer-token-123"
     OTHER_TOKEN = "token-anderer-nutzer"

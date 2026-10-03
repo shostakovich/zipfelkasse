@@ -59,7 +59,7 @@ describe "Recurring expenses" do
         RY.h1(r).should eq "Wiederkehrende Ausgabe nicht gefunden."
       end
     end
-    E2E::Snapshot.count(world.primary.db_path, "SELECT count(*) FROM recurring").should eq 0
+    E2E::Snapshot.count(world.app.db_path, "SELECT count(*) FROM recurring").should eq 0
   end
 
   scenario "monthly rule from an old expense: preview, validation, catch-up with end-of-month clamping", world do
@@ -126,7 +126,7 @@ describe "Recurring expenses" do
     r.doc.xpath_nodes(%(//input[@name="haeufigkeit"])).size.should eq 0
     r.error_message.should be_nil
     user.post(neu, {"ausgabe" => instance.to_s, "haeufigkeit" => "yearly"}).status.should eq 422
-    E2E::Snapshot.count(world.primary.db_path, "SELECT count(*) FROM recurring").should eq 1
+    E2E::Snapshot.count(world.app.db_path, "SELECT count(*) FROM recurring").should eq 1
   end
 
   scenario "weekly rule, leap-day yearly rule, a rule without missed dates and long previews", world do
@@ -204,7 +204,7 @@ describe "Recurring expenses" do
     dates_of.call(rules["zeitung"]).should eq %w(2026-07-10 2026-08-10)
     rule_row.call(rules["zeitung"]).should eq ["monthly", "2026-07-10", "2026-10-10", "1"]
     RY.value(world, "SELECT coalesce(recurring_id, 'NULL') FROM expenses WHERE id = #{manual}").should eq "NULL"
-    E2E::Snapshot.count(world.primary.db_path, "SELECT count(*) FROM expenses WHERE title = 'Zeitung' AND deleted_at IS NULL").should eq 5
+    E2E::Snapshot.count(world.app.db_path, "SELECT count(*) FROM expenses WHERE title = 'Zeitung' AND deleted_at IS NULL").should eq 5
 
     # A rule whose next occurrence is entered by hand in advance (see the
     # restart below).
@@ -268,7 +268,7 @@ describe "Recurring expenses" do
     r = user.post("#{list}/#{rules["zeitung"]}/loeschen")
     r.status.should eq 303
     r.flash.should eq "Wiederholung gelöscht. Bereits angelegte Ausgaben bleiben erhalten."
-    E2E::Snapshot.count(world.primary.db_path, "SELECT count(*) FROM recurring WHERE id = #{rules["zeitung"]}").should eq 0
+    E2E::Snapshot.count(world.app.db_path, "SELECT count(*) FROM recurring WHERE id = #{rules["zeitung"]}").should eq 0
     RY.rows(world, "SELECT id, coalesce(recurring_id, 'NULL'), coalesce(deleted_at, 'NULL') FROM expenses WHERE id IN (#{zeitung_ids.join(",")}) ORDER BY id")
       .should eq zeitung_ids.map { |i| [i, "NULL", "NULL"] }
     RY.rows(world, "SELECT actor_id, coalesce(expense_id, 'NULL'), details_json FROM activity WHERE action = 'recurring_deleted'")
@@ -328,7 +328,7 @@ describe "Recurring expenses" do
     # The electricity bill entered by hand is not doubled.
     dates_of.call(rules["strom"]).should eq %w(2026-08-31 2026-09-30)
     rule_row.call(rules["strom"]).should eq ["monthly", "2026-08-31", "2026-11-30", "1"]
-    E2E::Snapshot.count(world.primary.db_path, "SELECT count(*) FROM expenses WHERE title = 'Strom' AND deleted_at IS NULL").should eq 3
+    E2E::Snapshot.count(world.app.db_path, "SELECT count(*) FROM expenses WHERE title = 'Strom' AND deleted_at IS NULL").should eq 3
     # Paused: nothing happened.
     dates_of.call(rules["gemuese"]).should eq %w(2026-09-19 2026-09-26 2026-10-03)
     rule_row.call(rules["haft"]).should eq ["yearly", "2020-02-29", "2027-02-28", "1"]
@@ -352,16 +352,15 @@ describe "Recurring expenses" do
 
     blumen = RY.column(world, "SELECT id FROM expenses WHERE recurring_id = #{rules["blumen"]} ORDER BY id")
     user.post("#{list}/#{rules["blumen"]}/loeschen").status.should eq 303
-    E2E::Snapshot.count(world.primary.db_path, "SELECT count(*) FROM expenses WHERE id IN (#{blumen.join(",")}) AND deleted_at IS NULL AND recurring_id IS NULL").should eq 4
+    E2E::Snapshot.count(world.app.db_path, "SELECT count(*) FROM expenses WHERE id IN (#{blumen.join(",")}) AND deleted_at IS NULL AND recurring_id IS NULL").should eq 4
     r = user.get(list)
     RY.texts(r, "//tbody/tr//strong").should eq ["Gemüsekiste", "Miete", "Strom", "Haftpflicht"]
   end
 end
 
 # The YNAB sync (/einstellungen/ynab): connection, plan/account/start date,
-# category mapping and what ends up in YNAB (the fake of every app keeps all
-# transactions). Faults are injected into the fake of every app, so diff
-# mode stays symmetric. Each sync runs 300 ms after a change.
+# category mapping and what ends up in YNAB (the fake keeps all
+# transactions). Each sync runs 300 ms after a change.
 describe "YNAB sync" do
   world = E2E::World.new("ynab")
   after_all { world.stop }
@@ -381,7 +380,7 @@ describe "YNAB sync" do
   status_texts = ->(r : E2E::Response) { RY.texts(r, %(//section[.//h2[.="Status"]]//p)) }
   sync_rows = -> { RY.rows(world, "SELECT expense_id, ynab_txn_id, synced_hash, last_error FROM ynab_sync ORDER BY expense_id") }
   config = ->(cols : String) { RY.rows(world, "SELECT #{cols} FROM ynab_config").first? }
-  fail = ->(status : Int32) { world.apps.each(&.ynab.fail(status)) }
+  fail = ->(status : Int32) { world.app.ynab.fail(status) }
 
   scenario "settings page without a connection, token validation and connecting", world do
     user = world.user
@@ -419,22 +418,22 @@ describe "YNAB sync" do
         r.error_message.should eq "Das sieht nicht wie ein YNAB-Token aus."
       end
     end
-    calls.each(&.should(be_empty))
+    calls.should(be_empty)
 
     calls = RY.ynab_calls(world, 1) do
       r = user.post("#{page}/token", {"token" => "falsch"})
       r.status.should eq 422
       r.error_message.should eq "YNAB kennt diesen Token nicht. Bitte prüfen und neu kopieren."
     end
-    calls.each(&.should(eq [get_plans]))
-    E2E::Snapshot.count(world.primary.db_path, "SELECT count(*) FROM ynab_config").should eq 0
+    calls.should(eq [get_plans])
+    E2E::Snapshot.count(world.app.db_path, "SELECT count(*) FROM ynab_config").should eq 0
 
     fail.call(503)
     r = user.post("#{page}/token", {"token" => "  #{token}  "})
     r.status.should eq 422
     r.error_message.should eq "YNAB ist gerade nicht erreichbar: YNAB-Fehler 503: Fehler 503 mit •••"
     r.body.should_not contain token
-    E2E::Snapshot.count(world.primary.db_path, "SELECT count(*) FROM ynab_config").should eq 0
+    E2E::Snapshot.count(world.app.db_path, "SELECT count(*) FROM ynab_config").should eq 0
 
     r = user.post("#{page}/token", {"token" => "  #{token}  "})
     r.status.should eq 303
@@ -479,7 +478,7 @@ describe "YNAB sync" do
         r.error_message.should eq "Bitte ein gültiges Startdatum angeben."
       end
     end
-    calls.each(&.should(be_empty))
+    calls.should(be_empty)
     config.call("budget_id, account_id, coalesce(start_date, 'NULL')").should eq ["", "", "NULL"]
     RY.activity(user).first.should eq "Anna: YNAB verbunden (Token gesetzt)"
   end
@@ -495,7 +494,7 @@ describe "YNAB sync" do
       r.location.should eq page
       r.flash.should eq "Gespeichert."
     end
-    calls.each(&.should(eq [get_plans, post_txns]))
+    calls.should(eq [get_plans, post_txns])
     config.call("budget_id, account_id, start_date, connected_at, summary, error")
       .should eq ["plan-1", "acc-geteilt", "2026-09-01", "2026-10-03T10:05:00Z", "2 neu · 0 geändert · 0 gelöscht", ""]
     # Not sent: before the start date, reimbursement, no share, in the future.
@@ -544,8 +543,8 @@ describe "YNAB sync" do
       r.status.should eq 422
       r.error_message.should eq "Unbekannte Kategorie."
     end
-    calls.each(&.should(be_empty))
-    E2E::Snapshot.count(world.primary.db_path, "SELECT count(*) FROM ynab_category_map").should eq 0
+    calls.should(be_empty)
+    E2E::Snapshot.count(world.app.db_path, "SELECT count(*) FROM ynab_category_map").should eq 0
 
     calls = RY.ynab_calls(world, 1) do
       r = user.post("#{page}/kategorien", {"kat-1" => "c-food", "kat-2" => "c-out", "kat-3" => "", "kat-x" => "c-rent", "andere" => "c-rent"})
@@ -553,7 +552,7 @@ describe "YNAB sync" do
       r.location.should eq page
       r.flash.should eq "Kategorie-Zuordnung gespeichert."
     end
-    calls.each(&.should(eq [patch_txns]))
+    calls.should(eq [patch_txns])
     RY.rows(world, "SELECT category_id, ynab_category_id FROM ynab_category_map ORDER BY 1").should eq [["1", "c-food"], ["2", "c-out"]]
     RY.live(world).map { |t| [t[2], t[4], t[1]] }.should eq [["Wocheneinkauf", "c-food", -21000], ["Pizza", "c-out", -18000]]
     config.call("summary").should eq ["0 neu · 2 geändert · 0 gelöscht"]
@@ -571,30 +570,30 @@ describe "YNAB sync" do
     calls = RY.ynab_calls(world, 1) do
       ids["nachtrag"] = RY.create(world, user, RY.form("Nachtrag", "2026-08-01", "10,00", anna, [anna, ben], category: 1))
     end
-    calls.each(&.should(eq [post_txns]))
+    calls.should(eq [post_txns])
     RY.live(world).last.should eq ["2026-08-01", -5000, "Nachtrag", "Gesamt 10,00 € · bezahlt von Anna · #{marker.call(ids["nachtrag"])}", "c-food", "cleared", true, "acc-geteilt"]
 
     calls = RY.ynab_calls(world) do
       ids["zukunft"] = RY.create(world, user, RY.form("Zukunft", "2026-10-04", "10,00", anna, [anna, ben]))
       ids["ohne"] = RY.create(world, user, RY.form("Ohne Anna", "2026-10-01", "10,00", ben, [ben]))
     end
-    calls.each(&.should(be_empty))
+    calls.should(be_empty)
 
     calls = RY.ynab_calls(world, 1) do
       RY.update(user, ids["einkauf"], RY.form("Wocheneinkauf", "2026-09-20", "50,00", anna, [anna, ben], category: 1))
     end
-    calls.each(&.should(eq [patch_txns]))
+    calls.should(eq [patch_txns])
     RY.live(world).first.should eq ["2026-09-20", -25000, "Wocheneinkauf", "Gesamt 50,00 € · bezahlt von Anna · #{marker.call(ids["einkauf"])}", "c-food", "cleared", true, "acc-geteilt"]
 
     # Anna no longer takes part: the transaction is deleted.
     calls = RY.ynab_calls(world, 1) do
       RY.update(user, ids["pizza"], RY.form("Pizza", "2026-09-28", "36,00", ben, [ben], category: 2))
     end
-    calls.each(&.should(eq ["DELETE /v1/plans/plan-1/transactions/t2"]))
+    calls.should(eq ["DELETE /v1/plans/plan-1/transactions/t2"])
     calls = RY.ynab_calls(world, 1) do
       user.post("/ausgaben/#{ids["nachtrag"]}/loeschen").status.should eq 303
     end
-    calls.each(&.should(eq ["DELETE /v1/plans/plan-1/transactions/t3"]))
+    calls.should(eq ["DELETE /v1/plans/plan-1/transactions/t3"])
     RY.txn_ids(world).should eq [{"t1", false}, {"t2", true}, {"t3", true}]
     sync_rows.call.map(&.first(2)).should eq [[ids["einkauf"].to_s, "t1"]]
 
@@ -602,12 +601,12 @@ describe "YNAB sync" do
     calls = RY.ynab_calls(world, 1) do
       user.post("#{page}/konto", {"ziel" => target, "start" => "2026-08-01"}).status.should eq 303
     end
-    calls.each(&.should(eq [post_txns]))
+    calls.should(eq [post_txns])
     RY.live(world).map { |t| [t[2], t[0], t[1], t[4]] }.should eq [["Wocheneinkauf", "2026-09-20", -25000, "c-food"], ["Kino", "2026-08-15", -15000, nil]]
     calls = RY.ynab_calls(world) do
       user.post("#{page}/konto", {"ziel" => target, "start" => "2026-09-25"}).status.should eq 303
     end
-    calls.each(&.should(be_empty))
+    calls.should(be_empty)
     RY.live(world).size.should eq 2
     config.call("start_date, connected_at").should eq ["2026-09-25", "2026-10-03T10:05:00Z"]
     activity = RY.activity(user)
@@ -621,7 +620,7 @@ describe "YNAB sync" do
       r.location.should eq page
       r.flash.should eq "Synchronisierung gestartet – Status unten aktualisiert sich nach dem Neuladen."
     end
-    calls.each(&.should(be_empty))
+    calls.should(be_empty)
     r = user.get(page)
     status_texts.call(r)[1..].should eq [
       "Synchronisierte Buchungen: 2",
@@ -636,7 +635,7 @@ describe "YNAB sync" do
     calls = RY.ynab_calls(world, 1) do
       ids["baecker"] = RY.create(world, user, RY.form("Bäcker", "2026-10-02", "8,00", anna, [anna, ben]))
     end
-    calls.each(&.should(eq [post_txns]))
+    calls.should(eq [post_txns])
     RY.live(world).size.should eq 2
     config.call("retry_at, backoff_seconds, error").should eq [
       "2026-10-03T10:10:00Z", "300", "Das YNAB-Anfragelimit ist erreicht. Nächster Versuch um 12:10 Uhr.",
@@ -648,11 +647,11 @@ describe "YNAB sync" do
     calls = RY.ynab_calls(world) do
       user.post("#{page}/sync").status.should eq 303
     end
-    calls.each(&.should(be_empty))
+    calls.should(be_empty)
 
     # After the pause the next run (here the one at startup) catches up.
     calls = RY.ynab_calls(world, 1) { world.restart("2026-10-03T10:11:00Z") }
-    calls.each(&.should(eq [post_txns]))
+    calls.should(eq [post_txns])
     RY.live(world).last[2].should eq "Bäcker"
     config.call("coalesce(retry_at, 'NULL'), backoff_seconds, error, summary").should eq ["NULL", "0", "", "1 neu · 0 geändert · 0 gelöscht"]
 
@@ -664,7 +663,7 @@ describe "YNAB sync" do
     calls = RY.ynab_calls(world, 1) do
       ids["getraenke"] = RY.create(world, user, RY.form("Getränke", "2026-10-03", "12,00", anna, [anna, ben]))
     end
-    calls.each(&.should(eq [post_txns]))
+    calls.should(eq [post_txns])
     RY.rows(world, "SELECT ynab_txn_id, synced_hash FROM ynab_sync WHERE expense_id = #{ids["getraenke"]}").should eq [["", "pending"]]
     config.call("retry_at, error").should eq ["2026-10-03T10:16:00Z", "YNAB-Fehler 500: Fehler 500 mit •••"]
     r = user.get(page)
@@ -672,7 +671,7 @@ describe "YNAB sync" do
     alerts.call(r).should eq ["YNAB-Fehler 500: Fehler 500 mit •••"]
     status_texts.call(r).last.should eq "Nächster Versuch ab 03.10.2026, 12:16."
     calls = RY.ynab_calls(world, 2) { world.restart("2026-10-03T10:17:00Z") }
-    calls.each(&.should(eq ["GET /v1/plans/plan-1/accounts/acc-geteilt/transactions", post_txns]))
+    calls.should(eq ["GET /v1/plans/plan-1/accounts/acc-geteilt/transactions", post_txns])
     RY.live(world).map(&.[2]).should eq ["Wocheneinkauf", "Kino", "Bäcker", "Getränke"]
 
     # YNAB unreachable while choosing the account or loading the page.
@@ -699,7 +698,7 @@ describe "YNAB sync" do
     calls = RY.ynab_calls(world, 2) do
       ids["ablehnen"] = RY.create(world, user, RY.form("Bitte ABLEHNEN", "2026-10-01", "6,00", anna, [anna, ben]))
     end
-    calls.each(&.should(eq [post_txns, post_txns]))
+    calls.should(eq [post_txns, post_txns])
     RY.rows(world, "SELECT ynab_txn_id, substr(synced_hash, 1, 6), last_error FROM ynab_sync WHERE expense_id = #{ids["ablehnen"]}")
       .should eq [["", "error:", "YNAB-Fehler 400: payee rejected"]]
     r = user.get(page)
@@ -716,16 +715,16 @@ describe "YNAB sync" do
     calls = RY.ynab_calls(world, 1) do
       ids["broetchen"] = RY.create(world, user, RY.form("Brötchen", "2026-10-03", "3,00", anna, [anna, ben]))
     end
-    calls.each(&.should(eq [post_txns]))
+    calls.should(eq [post_txns])
     RY.live(world).last[2].should eq "Brötchen"
     calls = RY.ynab_calls(world, 2) { user.post("#{page}/sync").status.should eq 303 }
-    calls.each(&.should(eq [post_txns, post_txns]))
+    calls.should(eq [post_txns, post_txns])
     config.call("summary").should eq ["0 neu · 0 geändert · 0 gelöscht · 1 fehlgeschlagen"]
 
     calls = RY.ynab_calls(world, 1) do
       RY.update(user, ids["ablehnen"], RY.form("Bitte annehmen", "2026-10-01", "6,00", anna, [anna, ben]))
     end
-    calls.each(&.should(eq [post_txns]))
+    calls.should(eq [post_txns])
     RY.live(world).last[2..3].should eq ["Bitte annehmen", "Gesamt 6,00 € · bezahlt von Anna · #{marker.call(ids["ablehnen"])}"]
     r = user.get(page)
     r.doc.xpath_nodes("//h3").size.should eq 0
@@ -741,7 +740,7 @@ describe "YNAB sync" do
       r.status.should eq 303
       r.flash.should eq "Token gespeichert. Der bisher gewählte Plan ist mit diesem Token nicht erreichbar – bitte Plan und Konto neu wählen."
     end
-    calls.each(&.should(eq [get_plans]))
+    calls.should(eq [get_plans])
     config.call("budget_id, account_id, start_date").should eq ["", "", "2026-09-25"]
     RY.rows(world, "SELECT DISTINCT ynab_txn_id, synced_hash FROM ynab_sync").should eq [["", "retarget"]]
     r = user.get(page)
@@ -754,14 +753,14 @@ describe "YNAB sync" do
     calls = RY.ynab_calls(world, 1) do
       user.post("#{page}/token", {"token" => token}).flash.should eq "Token gespeichert."
     end
-    calls.each(&.should(eq [get_plans]))
+    calls.should(eq [get_plans])
     RY.activity(user).first.should eq "Anna: YNAB-Token ersetzt"
 
     # Back in the old account the transactions are found by their marker.
     calls = RY.ynab_calls(world, 2) do
       user.post("#{page}/konto", {"ziel" => target, "start" => "2026-08-01"}).status.should eq 303
     end
-    calls.each(&.should(eq ["GET /v1/plans/plan-1/accounts/acc-geteilt/transactions", patch_txns]))
+    calls.should(eq ["GET /v1/plans/plan-1/accounts/acc-geteilt/transactions", patch_txns])
     RY.live(world).should eq before
     config.call("summary, connected_at").should eq ["0 neu · 6 geändert · 0 gelöscht", "2026-10-03T10:17:00Z"]
     RY.activity(user).first.should eq "Anna: YNAB: Konto „Geteilt“ im Plan „Haushalt“ gewählt, Startdatum 01.08.2026"
@@ -771,7 +770,7 @@ describe "YNAB sync" do
     calls = RY.ynab_calls(world, 1) do
       RY.update(user, ids["baecker"], RY.form("Bäcker", "2026-10-02", "9,00", anna, [anna, ben]))
     end
-    calls.each(&.should(eq [patch_txns]))
+    calls.should(eq [patch_txns])
     config.call("token_invalid, error").should eq ["1", "Der YNAB-Token ist ungültig oder abgelaufen. Bitte einen neuen Token eintragen."]
     r = user.get(page)
     h2.call(r).should eq ["Verbindung", "Kategorien", "Status"]
@@ -783,11 +782,11 @@ describe "YNAB sync" do
       ids["eis"] = RY.create(world, user, RY.form("Eis", "2026-10-03", "4,00", anna, [anna, ben]))
       user.post("#{page}/sync").status.should eq 303
     end
-    calls.each(&.should(be_empty))
+    calls.should(be_empty)
     calls = RY.ynab_calls(world, 3) do
       user.post("#{page}/token", {"token" => token}).flash.should eq "Token gespeichert."
     end
-    calls.each(&.should(eq [get_plans, post_txns, patch_txns]))
+    calls.should(eq [get_plans, post_txns, patch_txns])
     config.call("token_invalid, error, summary").should eq ["0", "", "1 neu · 1 geändert · 0 gelöscht"]
     RY.live(world).map { |t| [t[2], t[1]] }.should eq [
       ["Wocheneinkauf", -25000], ["Kino", -15000], ["Bäcker", -4500], ["Getränke", -6000], ["Brötchen", -1500],
@@ -804,7 +803,7 @@ describe "YNAB sync" do
       RY.create(world, user, RY.form("Nach der Trennung", "2026-10-03", "10,00", anna, [anna, ben]))
       user.post("#{page}/sync").status.should eq 422
     end
-    calls.each(&.should(be_empty))
+    calls.should(be_empty)
     RY.live(world).should eq live
     config.call("token, enabled, budget_id, account_id").should eq ["", "0", "plan-1", "acc-geteilt"]
     r = user.get(page)
@@ -824,14 +823,14 @@ describe "YNAB sync" do
     calls = RY.ynab_calls(world, 2) do
       user.post("#{page}/token", {"token" => token}).flash.should eq "Token gespeichert."
     end
-    calls.each(&.should(eq [get_plans, post_txns]))
+    calls.should(eq [get_plans, post_txns])
     RY.live(world).last.should eq ["2026-10-03", -5000, "Nach der Trennung", "Gesamt 10,00 € · bezahlt von Anna · #{marker.call(nach)}", nil, "cleared", true, "acc-geteilt"]
 
     calls = RY.ynab_calls(world, 1) do
       r = user.post("/einstellungen/wiederkehrend/neu", {"ausgabe" => ids["einkauf"].to_s, "haeufigkeit" => "weekly"})
       r.flash.should eq "„Wocheneinkauf“ wiederholt sich jetzt wöchentlich. 1 Ausgabe nachgetragen."
     end
-    calls.each(&.should(eq [post_txns]))
+    calls.should(eq [post_txns])
     rule = RY.value(world, "SELECT recurring_id FROM expenses WHERE id = #{ids["einkauf"]}")
     sept = RY.value(world, "SELECT id FROM expenses WHERE recurring_id = #{rule} AND date = '2026-09-27'").to_i64
     RY.live(world).last.should eq ["2026-09-27", -25000, "Wocheneinkauf", "Gesamt 50,00 € · bezahlt von Anna · #{marker.call(sept)}", "c-food", "cleared", true, "acc-geteilt"]
@@ -839,21 +838,21 @@ describe "YNAB sync" do
     # Next day: the job enters the occurrence at startup and the first run
     # sends it together with the expense that is no longer in the future.
     calls = RY.ynab_calls(world, 1) { world.restart("2026-10-04T10:00:00Z") }
-    calls.each(&.should(eq [post_txns]))
+    calls.should(eq [post_txns])
     oct = RY.value(world, "SELECT id FROM expenses WHERE recurring_id = #{rule} AND date = '2026-10-04'").to_i64
     RY.live(world).last(2).map { |t| [t[0], t[1], t[2], t[3]] }.should eq [
       ["2026-10-04", -5000, "Zukunft", "Gesamt 10,00 € · bezahlt von Anna · #{marker.call(ids["zukunft"])}"],
       ["2026-10-04", -25000, "Wocheneinkauf", "Gesamt 50,00 € · bezahlt von Anna · #{marker.call(oct)}"],
     ]
     config.call("summary, last_sync").should eq ["2 neu · 0 geändert · 0 gelöscht", "2026-10-04T10:00:00Z"]
-    E2E::Snapshot.count(world.primary.db_path, "SELECT count(*) FROM ynab_sync WHERE ynab_txn_id != ''").should eq 11
+    E2E::Snapshot.count(world.app.db_path, "SELECT count(*) FROM ynab_sync WHERE ynab_txn_id != ''").should eq 11
   end
 
   scenario "transactions deleted by hand in YNAB", world do
     user = world.user
     user.login("Anna")
     by_hand = ->(payee : String) do
-      world.apps.map { |a| a.ynab.all.find { |t| t.payee_name == payee && !t.deleted }.not_nil!.tap { |t| t.deleted = true }.id }.first
+      world.app.ynab.all.find { |t| t.payee_name == payee && !t.deleted }.not_nil!.tap { |t| t.deleted = true }.id
     end
     # Changed in the app: the PATCH answer says "deleted", the next run
     # creates it again.
@@ -861,7 +860,7 @@ describe "YNAB sync" do
     calls = RY.ynab_calls(world, 2) do
       RY.update(user, ids["baecker"], RY.form("Bäckerei", "2026-10-02", "9,00", anna, [anna, ben]))
     end
-    calls.each(&.should(eq [patch_txns, post_txns]))
+    calls.should(eq [patch_txns, post_txns])
     RY.live(world).last[1..3].should eq [-4500, "Bäckerei", "Gesamt 9,00 € · bezahlt von Anna · #{marker.call(ids["baecker"])}"]
     RY.value(world, "SELECT ynab_txn_id FROM ynab_sync WHERE expense_id = #{ids["baecker"]}").should_not eq old
 
@@ -871,8 +870,8 @@ describe "YNAB sync" do
     calls = RY.ynab_calls(world, 2) do
       user.post("/ausgaben/#{ids["kino"]}/loeschen").status.should eq 303
     end
-    calls.each(&.should(eq ["DELETE /v1/plans/plan-1/transactions/#{kino}", "GET /v1/plans/plan-1/accounts/acc-geteilt"]))
-    E2E::Snapshot.count(world.primary.db_path, "SELECT count(*) FROM ynab_sync WHERE expense_id = #{ids["kino"]}").should eq 0
+    calls.should(eq ["DELETE /v1/plans/plan-1/transactions/#{kino}", "GET /v1/plans/plan-1/accounts/acc-geteilt"])
+    E2E::Snapshot.count(world.app.db_path, "SELECT count(*) FROM ynab_sync WHERE expense_id = #{ids["kino"]}").should eq 0
     config.call("summary, error").should eq ["0 neu · 0 geändert · 1 gelöscht", ""]
   end
 end

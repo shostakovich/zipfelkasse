@@ -40,14 +40,13 @@ module E2E
       h
     end
 
-    # POSTs a raw body to the MCP endpoint of every app; the answers are
-    # compared.
+    # POSTs a raw body to the MCP endpoint.
     def self.post(user : User, body : String, extra = {} of String => String,
                   content_type = "application/json", path = PATH) : Response
       user.run { |b| b.post_raw(path, body, content_type, headers(extra)) }
     end
 
-    # Any request to every app, compared.
+    # Any request to the MCP endpoint.
     def self.request(user : User, method : String, extra = {} of String => String, body : String? = nil, path = PATH) : Response
       user.run { |b| b.request(method, path, headers(extra), body) }
     end
@@ -88,35 +87,6 @@ module E2E
       rpc(user, "tools/call", params)
     end
 
-    # Sends to every app without comparing the answers (for messages that
-    # carry Go-specific decoder texts); returns every app's answer.
-    def self.each_app(user : User, & : Browser -> Response) : Array(Response)
-      user.browsers.map { |b| yield b }
-    end
-
-    # Sends to every app at the same time and compares the answers.
-    def self.parallel(world : World, user : User, &block : Browser -> Response) : Response
-      ch = Channel({Int32, Response | Exception}).new
-      user.browsers.each_with_index do |b, i|
-        spawn do
-          ch.send({i, block.call(b)})
-        rescue ex
-          ch.send({i, ex})
-        end
-      end
-      results = Array(Response | Exception | Nil).new(user.browsers.size, nil)
-      user.browsers.size.times do
-        i, r = ch.receive
-        results[i] = r
-      end
-      responses = results.map do |r|
-        raise r if r.is_a?(Exception)
-        r.not_nil!
-      end
-      world.compare(responses)
-      responses.first
-    end
-
     # The JSON-RPC result of a successful answer.
     def self.result(r : Response) : JSON::Any
       raise "expected 200, got #{r.status}: #{r.body}" unless r.status == 200
@@ -151,19 +121,17 @@ module E2E
       data(call(user, name, arguments))
     end
 
-    # The message of a failed tool call (isError, compared across apps).
+    # The message of a failed tool call (isError).
     def self.fail(user : User, name : String, arguments : String) : String
       text(call(user, name, arguments), error: true)
     end
 
-    # A tool call refused by argument decoding: the message is the decoder's
-    # (not compared across apps); it must name the offending field.
+    # A tool call refused by argument decoding: the message must name the
+    # offending field.
     def self.decode_fail(user : User, name : String, arguments : String, field : String) : Nil
-      each_app(user) { |b| b.post_raw(PATH, body("tools/call", %({"name":#{name.to_json},"arguments":#{arguments}})), "application/json", headers) }.each do |r|
-        msg = text(r, error: true)
-        raise "#{name} #{arguments}: #{msg.inspect} does not mention #{field}" unless msg.includes?(field)
-        raise "#{name} #{arguments}: internal error #{msg.inspect}" if msg.includes?("Internal error")
-      end
+      msg = text(post(user, body("tools/call", %({"name":#{name.to_json},"arguments":#{arguments}}))), error: true)
+      raise "#{name} #{arguments}: #{msg.inspect} does not mention #{field}" unless msg.includes?(field)
+      raise "#{name} #{arguments}: internal error #{msg.inspect}" if msg.includes?("Internal error")
     end
 
     def self.json(text : String) : JSON::Any

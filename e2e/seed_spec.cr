@@ -1,7 +1,7 @@
 require "./e2e_helper"
 
-# Builds the test household (see E2E::Seed) through every app at once: in
-# diff mode every step of the seed must give the same answers and data.
+# Builds the test household (see E2E::Seed) through the app; every step
+# must succeed.
 describe "Seed" do
   world = E2E::World.new("seed", now: E2E::Seed::PHASE_A)
   after_all { world.stop }
