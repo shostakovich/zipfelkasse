@@ -98,6 +98,18 @@ module Zipfelkasse
       end
     end
 
+    # HTTP::Server has no timeouts of its own; without them a stalled
+    # client holds its connection forever.
+    class TimeoutServer < TCPServer
+      def accept? : TCPSocket?
+        super.try do |conn|
+          conn.read_timeout = 30.seconds
+          conn.write_timeout = 60.seconds
+          conn
+        end
+      end
+    end
+
     # ":8080" listens on all interfaces.
     private def self.listen(server : HTTP::Server, addr : String) : Nil
       host, _, port = addr.rpartition(':')
@@ -105,12 +117,12 @@ module Zipfelkasse
       port_num = port.to_i? || raise Exception.new("listen tcp #{addr}: address #{addr}: missing port in address")
       if host.empty?
         begin
-          server.bind_tcp("::", port_num)
+          server.bind(TimeoutServer.new("::", port_num))
         rescue Socket::Error
-          server.bind_tcp("0.0.0.0", port_num)
+          server.bind(TimeoutServer.new("0.0.0.0", port_num))
         end
       else
-        server.bind_tcp(host, port_num)
+        server.bind(TimeoutServer.new(host, port_num))
       end
     rescue ex : Socket::Error
       raise Exception.new("listen tcp #{addr}: #{ex.message}")

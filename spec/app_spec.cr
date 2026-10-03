@@ -92,4 +92,15 @@ describe Zipfelkasse::App do
     end
     expect_raises(Exception) { Zipfelkasse::CLI.health_url("broken") }
   end
+
+  it "drops connections that stall reading or writing" do
+    server = Zipfelkasse::CLI::TimeoutServer.new("127.0.0.1", 0)
+    client = TCPSocket.new("127.0.0.1", server.local_address.port)
+    conn = server.accept?.not_nil!
+    {conn.read_timeout, conn.write_timeout}.should eq({30.seconds, 60.seconds})
+  ensure
+    conn.try &.close
+    client.try &.close
+    server.try &.close
+  end
 end
