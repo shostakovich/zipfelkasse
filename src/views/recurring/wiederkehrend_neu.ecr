@@ -1,0 +1,55 @@
+
+<section class="card">
+  <div class="card-header">
+    <h1 class="card-title">Wiederkehrende Ausgabe anlegen</h1>
+    <%- if expense %>
+    <p class="card-description">Die Ausgabe dient als Vorlage und ist der erste Termin. Weitere Termine werden
+      automatisch mit denselben Angaben eingetragen.</p>
+    <%- end %>
+  </div>
+  <%- if e = expense %>
+  <div class="card-content stack">
+    <div class="table-wrap"><table><tbody>
+      <tr><th scope="row">Titel</th><td><strong><%= e.title %></strong></td></tr>
+      <tr><th scope="row">Betrag</th><td>
+        <%- if e.foreign? %><%= money e.original_amount_minor, e.original_currency %> (<%= eur e.amount_cents %>; künftig zum Kurs des jeweiligen Tages)
+        <%- else %><%= eur e.amount_cents %><% end %></td></tr>
+      <tr><th scope="row">Bezahlt von</th><td><%= e.paid_by_name %></td></tr>
+      <%- unless e.category_name.empty? %>
+      <tr><th scope="row">Kategorie</th><td><%= e.category_name %></td></tr>
+      <%- end %>
+      <tr><th scope="row">Aufteilung</th><td><%= e.split_mode.label %></td></tr>
+      <%- unless e.notes.empty? %>
+      <tr><th scope="row">Notiz</th><td><%= e.notes %></td></tr>
+      <%- end %>
+      <tr><th scope="row">Erster Termin</th><td><%= date e.date %></td></tr>
+    </tbody></table></div>
+  </div>
+  <%- end %>
+  <div class="card-content">
+  <%- if expense.nil? %>
+    <p class="muted">Öffne zuerst die Ausgabe, die sich wiederholen soll, und wähle dort „Wiederkehrend machen“.</p>
+    <p><a href="/">Zu den Ausgaben</a></p>
+  <%- elsif existing != 0 %>
+    <p>Diese Ausgabe gehört schon zu einer wiederkehrenden Ausgabe.</p>
+    <p><a href="/einstellungen/wiederkehrend">Zu den wiederkehrenden Ausgaben</a></p>
+  <%- else %>
+    <form class="form" method="post" action="/einstellungen/wiederkehrend/neu">
+      <input type="hidden" name="ausgabe" value="<%= expense.id %>">
+      <fieldset class="stack-sm">
+        <legend>Wie oft?</legend>
+        <%- options.each do |o| %>
+        <label class="row">
+          <input type="radio" name="haeufigkeit" value="<%= o.value %>" required<% if o.checked? %> checked<% end %>>
+          <span><%= o.label %> <span class="muted">– nächster Termin <%= date o.next_date %><% unless (note = o.note).empty? %>; <%= note %><% end %></span></span>
+        </label>
+        <%- end %>
+      </fieldset>
+      <div class="row">
+        <button class="btn btn-primary" type="submit">Wiederkehrend machen</button>
+        <a class="btn btn-ghost" href="/ausgaben/<%= expense.id %>">Abbrechen</a>
+      </div>
+    </form>
+  <%- end %>
+  </div>
+</section>

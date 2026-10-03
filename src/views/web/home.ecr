@@ -1,0 +1,96 @@
+
+<div class="stack">
+  <section class="card">
+    <div class="card-content my-balance">
+      <div>
+        <p class="card-description">Dein Saldo</p>
+        <p class="my-balance-amount <%= sign_class balance %>"><%= eur balance %></p>
+        <p class="help"><% if balance > 0 %>Du bekommst noch Geld.<% elsif balance < 0 %>Du schuldest noch Geld.<% else %>Alles ausgeglichen.<% end %></p>
+      </div>
+      <a class="btn btn-outline" href="/salden"><%= icon "scale" %> Salden</a>
+    </div>
+  </section>
+
+  <section class="card card-bleed">
+    <div class="card-header card-header-row">
+      <div>
+        <h1 class="card-title">Ausgaben</h1>
+        <p class="card-description">Alle Ausgaben und Rückzahlungen der Gruppe.</p>
+      </div>
+      <a class="btn btn-primary desktop-only" href="/ausgaben/neu"><%= icon "plus" %> Ausgabe hinzufügen</a>
+    </div>
+    <div class="card-list" data-more-list data-sync-url>
+      <form class="search" method="get" action="/" role="search">
+        <div class="search-input">
+          <%= icon "search" %>
+          <label class="sr-only" for="q">Suche</label>
+          <input id="q" type="search" name="q" value="<%= filter.text %>" placeholder="Nach einer Ausgabe suchen …" maxlength="200" enterkeyhint="search">
+        </div>
+        <div class="search-filters">
+          <label class="sr-only" for="kategorie">Kategorie</label>
+          <select id="kategorie" name="kategorie" data-autosubmit>
+            <option value="">Alle Kategorien</option>
+            <%- categories.each do |c| %>
+            <option value="<%= c.id %>"<% if c.id == filter.category_id %> selected<% end %>><%= c.name %></option>
+            <%- end %>
+          </select>
+          <label class="sr-only" for="person">Person</label>
+          <select id="person" name="person" data-autosubmit>
+            <option value="">Alle Personen</option>
+            <%- participants.each do |p| %>
+            <option value="<%= p.id %>"<% if p.id == filter.participant_id %> selected<% end %>><%= p.name %></option>
+            <%- end %>
+          </select>
+          <button class="btn btn-secondary" type="submit">Suchen</button>
+        </div>
+        <%- if filter.active? %>
+        <p class="help"><a href="/">Filter zurücksetzen</a></p>
+        <%- end %>
+      </form>
+
+      <%- groups.each do |label, rows| %>
+      <div class="expense-group" data-group="<%= label %>">
+        <h2 class="list-group-label"><%= label %></h2>
+        <%- rows.each do |row| %>
+        <a class="expense<% if row.reimbursement? %> reimbursement<% end %>" id="ausgabe-<%= row.id %>" href="/ausgaben/<%= row.id %>">
+          <span class="expense-icon"><% if row.reimbursement? %><%= icon "banknote" %><% else %><%= icon category_icon(row.category_name) %><% end %></span>
+          <span class="expense-main">
+            <span class="expense-title"><%= row.title %><% if row.recurring_id != 0 %> <span class="badge badge-muted" title="Wiederkehrend"><%= icon "repeat" %></span><% end %></span>
+            <span class="expense-meta">
+              <%- if row.reimbursement? -%>
+              <strong><%= row.paid_by_name %></strong> an <strong><%= row.for_names[0] %></strong>
+              <%- else -%>
+              Bezahlt von <strong><%= row.paid_by_name %></strong> für <% if row.everyone %><strong>alle</strong><% else %><% row.for_names.each_with_index do |n, i| %><% if i > 0 %>, <% end %><strong><%= n %></strong><% end %><% end %>
+              <%- end -%>
+            </span>
+            <span class="expense-meta">
+              <%- if row.involved %>Dein Saldo: <span class="<%= sign_class row.my_balance %>"><strong><%= eur row.my_balance %></strong></span><% else %>Du bist nicht beteiligt<% end -%>
+            </span>
+          </span>
+          <span class="expense-side">
+            <span class="expense-amount"><%= eur row.amount_cents %></span>
+            <%- if row.foreign? %>
+            <span class="expense-sub"><%= money row.original_amount_minor, row.original_currency %></span>
+            <%- end %>
+            <span class="expense-sub"><%= date row.date %></span>
+          </span>
+          <span class="expense-chevron"><%= icon "chevron-right" %></span>
+        </a>
+        <%- end %>
+      </div>
+      <%- end %>
+      <%- if groups.empty? %>
+      <%- if filter.active? %>
+      <p class="empty">Keine Ausgaben gefunden. <a href="/">Filter zurücksetzen</a></p>
+      <%- else %>
+      <p class="empty">Noch keine Ausgaben. <a class="btn-link" href="/ausgaben/neu">Erste Ausgabe anlegen</a></p>
+      <%- end %>
+      <%- end %>
+
+      <%- unless more.empty? %>
+      <div class="list-more"><a class="btn btn-outline" href="<%= more %>" data-more>Weitere anzeigen</a></div>
+      <%- end %>
+    </div>
+  </section>
+</div>
+<a class="fab" href="/ausgaben/neu" aria-label="Ausgabe hinzufügen"><%= icon "plus" %> Ausgabe</a>

@@ -37,6 +37,13 @@ private def insert_recurring(s : Store, template : String, start : String, next_
             "VALUES (?, 'monthly', ?, ?, 'x', 'x')", template, start, next_date).last_insert_id
 end
 
+private def leave_transaction_early(s : Store) : Nil
+  s.transaction do |tx|
+    tx.exec("UPDATE settings SET value = 'Weg' WHERE key = ?", Store::SETTING_GROUP_NAME)
+    return
+  end
+end
+
 describe Zipfelkasse::Store do
   it "migrates and seeds a new database" do
     with_store do |s|
@@ -642,6 +649,34 @@ describe Zipfelkasse::Store do
         b.list_participants.size.should eq 3
         b.close
       end
+    end
+  end
+
+  it "rotates only regular backup files" do
+    with_temp_dir do |dir|
+      other = File.join(dir, "elsewhere.db")
+      File.write(other, "x")
+      link = File.join(dir, "zipfelkasse-20000101-000000.db")
+      File.symlink(other, link)
+      %w(20260101 20260102).each { |d| File.write(File.join(dir, "zipfelkasse-#{d}-000000.db"), "x") }
+      Store.rotate_backups(dir, 1)
+      Dir.children(dir).sort.should eq ["elsewhere.db", "zipfelkasse-20000101-000000.db", "zipfelkasse-20260102-000000.db"]
+    end
+  end
+
+  it "parses stored dates strictly" do
+    Store.parse_date("2026-09-01").should eq Time.utc(2026, 9, 1)
+    ["2026-9-1", "2026-09-01x", "2026-09-01T00:00:00Z", " 2026-09-01", "2026-02-30"].each do |s|
+      expect_raises(Exception) { Store.parse_date(s) }
+    end
+  end
+
+  it "rolls back a transaction left early and stays usable" do
+    with_store do |s|
+      leave_transaction_early(s)
+      s.get_setting(Store::SETTING_GROUP_NAME).should eq "Zipfelkasse"
+      s.set_group_name(0_i64, "WG")
+      s.group_name.should eq "WG"
     end
   end
 

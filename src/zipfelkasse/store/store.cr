@@ -93,17 +93,20 @@ module Zipfelkasse
       @db.scalar("PRAGMA user_version").as(Int64).to_i32
     end
 
+    # Commits when the block finishes; an exception or a `return`/`break` out
+    # of the block rolls back.
     def transaction(& : DB::Connection -> T) : T forall T
       @write_lock.synchronize do
         @db.using_connection do |conn|
           conn.exec("BEGIN IMMEDIATE")
+          committed = false
           begin
             result = yield conn
             conn.exec("COMMIT")
+            committed = true
             result
-          rescue ex
-            conn.exec("ROLLBACK") rescue nil
-            raise ex
+          ensure
+            conn.exec("ROLLBACK") rescue nil unless committed
           end
         end
       end
@@ -151,7 +154,9 @@ module Zipfelkasse
       t.to_s("%Y-%m-%d")
     end
 
+    # Strict: Time.parse would accept "2026-9-1" and trailing text.
     def self.parse_date(s : String) : Time
+      raise Time::Format::Error.new("invalid date #{s.inspect}") unless s.matches?(/\A[0-9]{4}-[0-9]{2}-[0-9]{2}\z/)
       Time.parse(s, "%Y-%m-%d", Time::Location::UTC)
     end
 

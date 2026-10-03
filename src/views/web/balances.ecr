@@ -1,0 +1,52 @@
+
+<div class="stack">
+  <section class="card">
+    <div class="card-header">
+      <h1 class="card-title">Salden</h1>
+      <p class="card-description">So viel hat jede Person mehr (grün) oder weniger (rot) bezahlt, als ihr Anteil war.</p>
+    </div>
+    <div class="card-content">
+      <%- unless rows.empty? %>
+      <div class="balances">
+        <%- rows.each do |row| %>
+        <div class="balance-row<% if row.cents < 0 %> negative-row<% end %><% if me && me.id == row.participant.id %> me<% end %>">
+          <div class="balance-name"><%= row.participant.name %><% if row.participant.archived? %> <span class="muted">(archiviert)</span><% end %></div>
+          <div class="balance-cell">
+            <div class="balance-value amount"><%= eur row.cents %></div>
+            <%- if row.width != 0 %>
+            <div class="balance-bar" style="width: <%= row.width %>%"></div>
+            <%- end %>
+          </div>
+        </div>
+        <%- end %>
+      </div>
+      <%- else %>
+      <p class="muted small">Noch niemand da.</p>
+      <%- end %>
+    </div>
+  </section>
+
+  <section class="card">
+    <div class="card-header">
+      <h2 class="card-title">Vorgeschlagene Rückzahlungen</h2>
+      <p class="card-description">Mit diesen Zahlungen ist alles ausgeglichen. Nach dem Überweisen „Als erstattet markieren“ – dann wird die Rückzahlung eingetragen.</p>
+    </div>
+    <div class="card-content">
+      <%- unless transfers.empty? %>
+      <div class="transfers">
+        <%- transfers.each do |t| %>
+        <div class="transfer">
+          <div class="transfer-main">
+            <div><strong><%= t.from.name %></strong> schuldet <strong><%= t.to.name %></strong></div>
+            <a class="btn btn-link" href="<%= t.link %>">Als erstattet markieren</a>
+          </div>
+          <div class="amount"><%= eur t.cents %></div>
+        </div>
+        <%- end %>
+      </div>
+      <%- else %>
+      <p class="small">Alles ausgeglichen – niemand muss etwas zurückzahlen.</p>
+      <%- end %>
+    </div>
+  </section>
+</div>

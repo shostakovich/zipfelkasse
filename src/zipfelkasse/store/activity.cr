@@ -18,7 +18,9 @@ module Zipfelkasse
 
     # A changed property, already formatted for display (German field names,
     # formatted values).
-    record FieldChange, field : String, old : String, new : String
+    record FieldChange, field : String, old : String, new : String do
+      include JSON::Serializable
+    end
 
     # The content of activity.details_json. Empty fields are left out.
     record ActivityDetails,
@@ -31,19 +33,7 @@ module Zipfelkasse
           j.object do
             j.field "title", title unless title.empty?
             j.field "amount_cents", amount_cents unless amount_cents == 0
-            unless changes.empty?
-              j.field "changes" do
-                j.array do
-                  changes.each do |c|
-                    j.object do
-                      j.field "field", c.field
-                      j.field "old", c.old
-                      j.field "new", c.new
-                    end
-                  end
-                end
-              end
-            end
+            j.field "changes", changes unless changes.empty?
             j.field "text", text unless text.empty?
           end
         end

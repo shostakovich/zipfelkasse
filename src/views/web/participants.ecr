@@ -1,0 +1,65 @@
+
+<div class="stack">
+  <section class="card">
+    <div class="card-header">
+      <h1 class="card-title">Teilnehmer</h1>
+      <p class="card-description">Personen umbenennen oder archivieren. Archivierte Personen stehen bei neuen Ausgaben nicht mehr zur Wahl; ihre alten Ausgaben bleiben erhalten.</p>
+    </div>
+    <div class="card-content">
+      <ul class="rows">
+        <%- active.each do |row| %>
+        <li id="person-<%= row.id %>">
+          <form class="inline-form" method="post" action="/einstellungen/teilnehmer/<%= row.id %>">
+            <label class="sr-only" for="name-<%= row.id %>">Name</label>
+            <input id="name-<%= row.id %>" name="name" value="<%= row.name %>" required maxlength="60">
+            <button class="btn btn-outline btn-icon" type="submit" title="Umbenennen" aria-label="<%= row.name %> umbenennen"><%= icon "save" %></button>
+          </form>
+          <form method="post" action="/einstellungen/teilnehmer/<%= row.id %>/archivieren">
+            <button class="btn btn-ghost btn-icon" type="submit" title="Archivieren" aria-label="<%= row.name %> archivieren"
+              data-confirm="<%= row.name %> archivieren?"><%= icon "archive" %></button>
+          </form>
+          <p class="row-meta">
+            <%= row.expenses %> <% if row.expenses == 1 %>Ausgabe<% else %>Ausgaben<% end %> · Saldo <span class="amount <%= sign_class row.balance %>"><%= eur row.balance %></span>
+            <%- if me && me.id == row.id %> · <strong>das bist du</strong><% end %>
+          </p>
+        </li>
+        <%- end %>
+      </ul>
+    </div>
+  </section>
+
+  <section class="card">
+    <div class="card-header">
+      <h2 class="card-title">Person hinzufügen</h2>
+    </div>
+    <div class="card-content">
+      <form method="post" action="/einstellungen/teilnehmer" class="inline-form">
+        <label class="sr-only" for="neu-name">Name</label>
+        <input id="neu-name" name="name" value="<%= name %>" required maxlength="60" placeholder="Name" autocomplete="off">
+        <button class="btn btn-primary" type="submit"><%= icon "plus" %> Hinzufügen</button>
+      </form>
+    </div>
+  </section>
+
+  <%- unless archived.empty? %>
+  <section class="card">
+    <div class="card-header">
+      <h2 class="card-title">Archiviert</h2>
+    </div>
+    <div class="card-content">
+      <ul class="rows">
+        <%- archived.each do |row| %>
+        <li id="person-<%= row.id %>">
+          <span class="grow"><%= row.name %></span>
+          <form method="post" action="/einstellungen/teilnehmer/<%= row.id %>/reaktivieren">
+            <button class="btn btn-outline btn-sm" type="submit"><%= icon "undo" %> Zurückholen</button>
+          </form>
+          <p class="row-meta"><%= row.expenses %> <% if row.expenses == 1 %>Ausgabe<% else %>Ausgaben<% end %></p>
+        </li>
+        <%- end %>
+      </ul>
+    </div>
+  </section>
+  <%- end %>
+  <p class="small"><a href="/einstellungen">← Zurück zu den Einstellungen</a></p>
+</div>

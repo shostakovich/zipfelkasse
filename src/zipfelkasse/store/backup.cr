@@ -22,7 +22,8 @@ module Zipfelkasse
 
     def self.rotate_backups(dir : String, keep : Int32) : Nil
       names = Dir.children(dir).select do |n|
-        n.starts_with?(BACKUP_PREFIX) && n.ends_with?(BACKUP_SUFFIX) && File.file?(File.join(dir, n))
+        n.starts_with?(BACKUP_PREFIX) && n.ends_with?(BACKUP_SUFFIX) &&
+          File.info?(File.join(dir, n), follow_symlinks: false).try(&.file?)
       end
       # The timestamp in the name sorts correctly lexicographically.
       names.sort!

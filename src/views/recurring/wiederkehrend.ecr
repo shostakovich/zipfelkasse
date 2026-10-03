@@ -1,0 +1,63 @@
+
+<section class="card">
+  <div class="card-header">
+    <h1 class="card-title">Wiederkehrende Ausgaben</h1>
+    <p class="card-description">Eine wiederkehrende Ausgabe legst du bei einer bestehenden Ausgabe über
+      „Wiederkehrend machen“ an. Fällige Termine werden automatisch als Ausgaben eingetragen – auch verpasste.
+      Gibt es an einem Termin schon eine Ausgabe mit gleichem Titel, Betrag und Zahler, wird er übersprungen.
+      Pausierte Termine werden beim Fortsetzen nicht nachgeholt.</p>
+  </div>
+  <div class="card-content">
+    <%- unless rules.empty? %>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr><th>Ausgabe</th><th>Betrag</th><th>Nächster Termin</th><th><span class="sr-only">Aktionen</span></th></tr>
+        </thead>
+        <tbody>
+        <%- rules.each do |rule, paid_by_name| %>
+          <tr>
+            <td>
+              <div class="stack-sm">
+                <strong><%= rule.template.title %></strong>
+                <span class="muted"><%= rule.frequency.label %> seit <%= date rule.start_date %><% unless paid_by_name.empty? %> · zahlt <%= paid_by_name %><% end %></span>
+              </div>
+            </td>
+            <td class="amount">
+              <%- if rule.template.original_currency == "EUR" %><%= eur rule.template.amount_cents %>
+              <%- else %><%= money rule.template.original_amount_minor, rule.template.original_currency %><% end -%>
+            </td>
+            <td><% if rule.active? %><%= date rule.next_date %><% else %><span class="muted">pausiert</span><% end %></td>
+            <td>
+              <div class="row">
+                <%- if rule.active? %>
+                <form method="post" action="/einstellungen/wiederkehrend/<%= rule.id %>/pausieren">
+                  <button class="btn btn-outline btn-sm" type="submit">Pausieren</button>
+                </form>
+                <%- else %>
+                <form method="post" action="/einstellungen/wiederkehrend/<%= rule.id %>/fortsetzen">
+                  <button class="btn btn-outline btn-sm" type="submit">Fortsetzen</button>
+                </form>
+                <%- end %>
+                <form method="post" action="/einstellungen/wiederkehrend/<%= rule.id %>/vorlage">
+                  <button class="btn btn-ghost btn-sm" type="submit" title="Betrag, Aufteilung usw. der zuletzt eingetragenen Ausgabe dieser Wiederholung übernehmen">Vorlage aktualisieren</button>
+                </form>
+                <details>
+                  <summary class="btn btn-ghost btn-sm">Löschen…</summary>
+                  <form class="stack-sm" method="post" action="/einstellungen/wiederkehrend/<%= rule.id %>/loeschen">
+                    <p class="help">Bereits eingetragene Ausgaben bleiben erhalten.</p>
+                    <button class="btn btn-destructive btn-sm" type="submit">Wiederholung löschen</button>
+                  </form>
+                </details>
+              </div>
+            </td>
+          </tr>
+        <%- end %>
+        </tbody>
+      </table>
+    </div>
+    <%- else %>
+    <p class="muted">Noch keine wiederkehrenden Ausgaben.</p>
+    <%- end %>
+  </div>
+</section>
