@@ -925,7 +925,7 @@ describe "MCP tools" do
     text.should contain("SELECT coalesce(c.name, 'No category') AS category, sum(x.amount_cents) / 100.0 AS euros\n")
     text.should contain("GROUP BY 1 ORDER BY 2 DESC;\n\n#{people_line}\n")
     text.should end_with("CREATE INDEX activity_expense ON activity (expense_id);\n")
-    text.lines.select(&.starts_with?("CREATE TABLE ")).map(&.split[2]).should eq %w(participants categories recurring expenses expense_shares activity settings "fx_rates")
+    text.lines.select(&.starts_with?("CREATE TABLE ")).map(&.split[2]).should eq %w(participants categories recurring expenses expense_shares activity settings fx_rates)
     text.downcase.should_not contain("create table ynab")
     text.should contain("CREATE TABLE expenses (\n    id                    INTEGER PRIMARY KEY,\n")
     MK.decode_fail(user, "schema", %({"table":"expenses"}), "table")

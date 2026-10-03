@@ -145,7 +145,7 @@ describe "Store MCP queries" do
         rows = f.s.read_only_query(q).rows.to_s
         fail "#{q} reveals YNAB: #{rows}" if rows.includes?("SECRET") || rows.downcase.includes?("ynab")
       end
-      f.s.read_only_query("SELECT key FROM settings ORDER BY key").rows.should eq([["default_currency"], ["group_name"]])
+      f.s.read_only_query("SELECT key FROM settings ORDER BY key").rows.should eq([["group_name"]])
 
       # The schema via MCP shows no YNAB tables.
       objects = f.s.mcp_schema

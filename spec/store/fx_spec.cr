@@ -1,4 +1,3 @@
-require "file_utils"
 require "./expense_fixture"
 
 private alias Store = Zipfelkasse::Store
@@ -85,44 +84,14 @@ describe "Store exchange rates" do
     end
   end
 
-  it "keeps both rates when migrating to separate sources" do
-    dir = File.tempname("zipfelkasse")
-    path = File.join(dir, "zipfelkasse.db")
-    begin
-      s = Store.open(path)
-      [
-        "DROP TABLE fx_rates",
-        "CREATE TABLE fx_rates (
-          date     TEXT NOT NULL,
-          currency TEXT NOT NULL,
-          rate     REAL NOT NULL CHECK (rate > 0),
-          source   TEXT NOT NULL DEFAULT 'ezb',
-          PRIMARY KEY (currency, date)
-        ) WITHOUT ROWID",
-        "INSERT INTO fx_rates (date, currency, rate, source) VALUES ('2026-09-29', 'USD', 1.1, 'ezb'), ('2026-09-30', 'USD', 1.2, 'manuell')",
-        "PRAGMA user_version = 2",
-      ].each { |q| s.db.exec(q) }
-      s.close
-
-      s = Store.open(path)
-      begin
-        s.schema_version.should eq latest_schema_version
-        s.lookup_fx_rate("USD", Domain::FX_SOURCE_MANUAL, date("2026-10-01")).rate.should eq 1.2
-        s.lookup_fx_rate("USD", Domain::FX_SOURCE_ECB, date("2026-10-01")).rate.should eq 1.1
-        s.save_ecb_rates([rate("USD", "2026-09-30", 1.11)])
-        s.lookup_fx_rate("USD", Domain::FX_SOURCE_ECB, date("2026-09-30")).rate.should eq 1.11
-        expect_raises(SQLite3::Exception) do
-          s.db.exec("INSERT INTO fx_rates (date, currency, rate, source) VALUES ('2026-08-01', 'USD', 1, 'foo')")
-        end
-      ensure
-        s.close
+  it "keeps a manual and an ECB rate of the same day and rejects other sources" do
+    with_store do |s|
+      s.db.exec("INSERT INTO fx_rates (date, currency, rate, source) VALUES ('2026-09-30', 'USD', 1.1, 'ezb'), ('2026-09-30', 'USD', 1.2, 'manuell')")
+      s.lookup_fx_rate("USD", Domain::FX_SOURCE_MANUAL, date("2026-10-01")).rate.should eq 1.2
+      s.lookup_fx_rate("USD", Domain::FX_SOURCE_ECB, date("2026-10-01")).rate.should eq 1.1
+      expect_raises(SQLite3::Exception) do
+        s.db.exec("INSERT INTO fx_rates (date, currency, rate, source) VALUES ('2026-08-01', 'USD', 1, 'foo')")
       end
-    ensure
-      FileUtils.rm_rf(dir)
     end
   end
-end
-
-private def latest_schema_version : Int32
-  (Store::MIGRATION_FILES.map(&.[0]) + Store::DATA_MIGRATIONS.keys).max
 end

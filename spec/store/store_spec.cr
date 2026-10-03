@@ -4,10 +4,6 @@ require "./expense_fixture"
 private alias Store = Zipfelkasse::Store
 private alias Domain = Zipfelkasse::Domain
 
-private def latest_version : Int32
-  (Store::MIGRATION_FILES.map(&.[0]) + Store::DATA_MIGRATIONS.keys).max
-end
-
 private def with_temp_dir(&)
   dir = File.tempname("zipfelkasse-spec")
   Dir.mkdir_p(dir)
@@ -47,16 +43,33 @@ end
 describe Zipfelkasse::Store do
   it "migrates and seeds a new database" do
     with_store do |s|
-      v = s.schema_version
-      v.should eq latest_version
-      v.should be >= 4
+      s.schema_version.should eq Store::LATEST_VERSION
       s.list_activity.should be_empty
       cats = s.list_categories
       cats.size.should eq 10
       cats.first.name.should eq "Lebensmittel"
       cats.last.name.should eq "Sonstiges"
       s.group_name.should eq "Zipfelkasse"
-      s.get_setting(Store::SETTING_DEFAULT_CURRENCY).should eq "EUR"
+    end
+  end
+
+  it "rejects schema versions it cannot handle" do
+    with_store do |s|
+      [3, Store::LATEST_VERSION + 1].each do |version|
+        s.db.exec("PRAGMA user_version = #{version}")
+        expect_raises(Store::Error, /schema version #{version}/) { s.migrate }
+      end
+    end
+  end
+
+  it "applies migrations above the base version once" do
+    with_store do |s|
+      migrations = [{6, "ALTER TABLE settings ADD COLUMN note TEXT"}, {7, "UPDATE settings SET value = 'Neu'"}]
+      2.times do
+        s.migrate(migrations)
+        s.schema_version.should eq 7
+      end
+      s.group_name.should eq "Neu"
     end
   end
 
@@ -440,104 +453,6 @@ describe Zipfelkasse::Store do
         f.s.get_expense(id).share_of(want).should eq 251
       end
       extra.should eq({f.anna => 2, f.ben => 2})
-    end
-  end
-
-  # Migration 2 redistributes the leftover cents of existing expenses with the
-  # rotating rule, exactly once.
-  it "resplits shares in migration 2" do
-    with_temp_dir do |dir|
-      path = File.join(dir, "zipfelkasse.db")
-      f = ExpenseFixture.new(Store.open(path))
-      s = f.s
-      ids = Array.new(4) { f.must_create(f.equal("Kaffee", 301, "2026-09-01", f.anna, f.anna, f.ben)) }
-      fixed = f.equal("Fest", 301, "2026-09-01", f.anna, f.anna, f.ben)
-      fixed.split_mode = Domain::SPLIT_AMOUNT
-      fixed.parts = [Domain::Part.new(f.anna, 151), Domain::Part.new(f.ben, 150)]
-      fixed_id = f.must_create(fixed)
-      gone = f.must_create(f.equal("Gelöscht", 1000, "2026-09-01", f.anna, f.anna, f.ben, f.cleo))
-      s.delete_expense(f.anna, gone)
-      # Old state: extra cent to the smallest ID (for deleted expense 6 to
-      # Ben; under the new rule it belongs to index 6 mod 3 = Anna), schema
-      # version 1.
-      s.db.exec("UPDATE expense_shares SET amount_cents = 151 WHERE participant_id = 1 AND expense_id <= 4")
-      s.db.exec("UPDATE expense_shares SET amount_cents = 150 WHERE participant_id = 2 AND expense_id <= 4")
-      s.db.exec("UPDATE expense_shares SET amount_cents = CASE participant_id WHEN 2 THEN 334 ELSE 333 END WHERE expense_id = 6")
-      s.db.exec("PRAGMA user_version = 1")
-      before = s.list_activity.size
-      s.close
-
-      2.times do
-        s = Store.open(path)
-        s.schema_version.should eq latest_version
-        ids.each do |id|
-          s.get_expense(id).share_of([f.anna, f.ben][id % 2]).should eq 151
-        end
-        e = s.get_expense(fixed_id)
-        {e.share_of(f.anna), e.share_of(f.ben)}.should eq({151, 150})
-        e = s.get_expense(gone)
-        {e.share_of(f.anna), e.share_of(f.ben), e.share_of(f.cleo)}.should eq({334, 333, 333})
-        acts = s.list_activity
-        acts.size.should eq before + 1
-        {acts[0].action, acts[0].actor_id}.should eq({Store::ACTION_SHARES_RECALCULATED, 0})
-        acts[0].details.text.should contain "3 Ausgaben"
-        s.close
-      end
-    end
-  end
-
-  # Migration 4 converts the weights of "by amounts" in a foreign currency
-  # from euro cents to amounts in that currency (also in recurrence
-  # templates), keeping the euro shares, exactly once.
-  it "converts foreign amount weights in migration 4" do
-    with_temp_dir do |dir|
-      path = File.join(dir, "zipfelkasse.db")
-      f = ExpenseFixture.new(Store.open(path))
-      s = f.s
-      usd = ->(title : String, mode : Domain::SplitMode, ws : Array(Int64)) do
-        input = f.equal(title, 0, "2026-09-01", f.anna, f.anna, f.ben, f.cleo)
-        input.original_currency, input.original_amount_minor, input.fx_rate, input.fx_source = "USD", 1000_i64, 1.1, Domain::FX_SOURCE_ECB
-        input.split_mode = mode
-        input.parts = input.parts.map_with_index { |p, i| p.copy_with(weight: ws[i]? || 0_i64) }
-        input
-      end
-      hotel = f.must_create(usd.call("Hotel", Domain::SPLIT_AMOUNT, [333_i64, 333_i64, 334_i64]))
-      gone = f.must_create(usd.call("Gelöscht", Domain::SPLIT_AMOUNT, [500_i64, 250_i64, 250_i64]))
-      s.delete_expense(f.anna, gone)
-      equal = f.must_create(usd.call("Taxi", Domain::SPLIT_EQUAL, [] of Int64))
-      eur = f.equal("Fest", 301, "2026-09-01", f.anna, f.anna, f.ben)
-      eur.split_mode = Domain::SPLIT_AMOUNT
-      eur.parts = [Domain::Part.new(f.anna, 151), Domain::Part.new(f.ben, 150)]
-      eur_id = f.must_create(eur)
-      # Old state: the weights are the euro shares (cents); schema version 3.
-      s.db.exec("UPDATE expense_shares SET weight = amount_cents " \
-                "WHERE expense_id IN (SELECT id FROM expenses WHERE split_mode = 'amount')")
-      template = s.get_expense(hotel).input
-      template.date = nil
-      rule = insert_recurring(s, template.to_json, "2026-09-01", "2026-10-01")
-      old_shares = [hotel, gone, equal, eur_id].to_h { |id| {id, s.get_expense(id).shares} }
-      s.db.exec("PRAGMA user_version = 3")
-      before = s.list_activity.size
-      s.close
-
-      want = {hotel => [334_i64, 333_i64, 333_i64], gone => [500_i64, 250_i64, 250_i64], equal => [1_i64, 1_i64, 1_i64], eur_id => [151_i64, 150_i64]}
-      2.times do
-        s = Store.open(path)
-        s.schema_version.should eq latest_version
-        want.each do |id, w|
-          e = s.get_expense(id)
-          weights(e).should eq w
-          e.shares.should eq old_shares[id].map_with_index { |sh, i| sh.copy_with(weight: w[i]) }
-        end
-        t = Store::ExpenseInput.from_json(s.db.scalar("SELECT template_json FROM recurring WHERE id = ?", rule).as(String))
-        t.parts.map(&.weight).should eq [334, 333, 333]
-        t.amount_cents.should eq 909
-        acts = s.list_activity
-        acts.size.should eq before + 1
-        {acts[0].action, acts[0].actor_id}.should eq({Store::ACTION_WEIGHTS_CONVERTED, 0})
-        acts[0].details.text.should contain "2 Ausgaben und 1 wiederkehrende Ausgabe"
-        s.close
-      end
     end
   end
 

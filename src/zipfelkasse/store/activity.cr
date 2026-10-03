@@ -11,10 +11,6 @@ module Zipfelkasse
     # Settings changed (people, categories, rates, recurrences, YNAB …);
     # Details#text describes the change.
     ACTION_SETTINGS_UPDATED = "settings_updated"
-    # A migration recomputed the cent shares of existing expenses (system).
-    ACTION_SHARES_RECALCULATED = "shares_recalculated"
-    # A migration converted the weights of existing expenses (system).
-    ACTION_WEIGHTS_CONVERTED = "weights_converted"
 
     # A changed property, already formatted for display (German field names,
     # formatted values).

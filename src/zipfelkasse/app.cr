@@ -47,18 +47,23 @@ module Zipfelkasse
       end
       0
     rescue ex
-      STDERR.puts "zipfelkasse: #{ex.message}"
+      STDERR.puts "zipfelkasse: #{messages(ex).join(": ")}"
       1
+    end
+
+    private def self.messages(ex : Exception) : Array(String)
+      chain = [] of String
+      while ex
+        chain << (ex.message || ex.class.name)
+        ex = ex.cause
+      end
+      chain
     end
 
     def self.serve : Nil
       config = Config.from_env
       log = Logger.new(STDERR, location: config.location)
-      store = begin
-        Store.open(config.db_path)
-      rescue ex
-        raise Exception.new("database #{config.db_path}: #{ex.message}")
-      end
+      store = Store.open(config.db_path)
       if now = config.frozen_now
         store.clock = -> { now }
       end

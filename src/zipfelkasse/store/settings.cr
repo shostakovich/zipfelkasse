@@ -2,8 +2,7 @@ module Zipfelkasse
   class Store
     # Known keys in the settings table. Feature packages may use their own
     # prefixed keys (e.g. "fx.").
-    SETTING_GROUP_NAME       = "group_name"
-    SETTING_DEFAULT_CURRENCY = "default_currency"
+    SETTING_GROUP_NAME = "group_name"
 
     DEFAULT_GROUP_NAME = "Zipfelkasse"
 
