@@ -142,8 +142,7 @@ module Zipfelkasse::Web
     end
 
     def currency_code : String
-      code = (currency || currency_other).strip.upcase
-      code.empty? ? "EUR" : code
+      (currency || currency_other).strip.upcase
     end
 
     def checked_rows : Array(SplitRow)
@@ -193,7 +192,7 @@ module Zipfelkasse::Web
       end
 
       def currency : String
-        form.currency_code
+        form.currency_code.presence || "EUR"
       end
     end
   end
@@ -292,6 +291,7 @@ module Zipfelkasse::Web
       raise Domain::ValidationError.new("Bitte einen Titel angeben.") if form.title.strip.empty?
       date = Domain.parse_date(form.date)
       currency = form.currency_code
+      raise Domain::ValidationError.new("Bitte eine Währung angeben.") if currency.empty?
       unless Domain.valid_currency_code?(currency)
         raise Domain::ValidationError.new("Ungültige Währung „#{currency}“ – bitte einen dreistelligen ISO-Code wie USD angeben.")
       end
