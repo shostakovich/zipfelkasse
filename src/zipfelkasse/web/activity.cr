@@ -1,9 +1,7 @@
 module Zipfelkasse::Web
   ACTIVITY_PAGE_SIZE = 50
 
-  # An activity entry prepared for display. verb is nil for actions other
-  # than expense changes (shown with details.text); show_amount is set for
-  # created and deleted expenses (amount changes are listed in the changes).
+  # verb is nil for other actions than expense changes (they show details.text).
   record ActivityItem, activity : Store::Activity, verb : String?, show_amount : Bool do
     delegate id, at, action, expense_id, details, to: @activity
 
@@ -31,7 +29,6 @@ module Zipfelkasse::Web
   end
 
   module Views
-    # linked: the entry links to its expense (if it has one).
     record ActivityEntry, a : ActivityItem, linked : Bool do
       Web.view "web/activity_entry.ecr"
 
@@ -59,8 +56,7 @@ module Zipfelkasse::Web
         more = "/aktivitaet?vor=#{acts.last.id}"
       end
       today = @d.today
-      location = @d.config.location
-      groups = Web.activity_items(acts).chunks { |item| Web.activity_period(Domain.date_of(item.at.in(location)), today) }
+      groups = Web.activity_items(acts).chunks { |item| Web.period_label(Domain.date_of(item.at.in(@d.config.location)), today, activity: true) }
       page(env, Views::Activity.new(groups, more), "Aktivität", Nav::Activity)
     end
   end

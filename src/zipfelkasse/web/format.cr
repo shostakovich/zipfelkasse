@@ -54,17 +54,23 @@ module Zipfelkasse::Web
     "tag"
   end
 
-  # The period label of an expense date in the list; both are calendar
-  # dates, the week starts on Monday.
-  def self.expense_period(d : Time, today : Time) : String
-    last_month = first_of_last_month(today)
-    if d > today
-      "Bevorstehend"
-    elsif d >= week_start(today)
-      "Diese Woche"
-    elsif d.year == today.year && d.month == today.month
+  # The heading a list date falls under; the week starts on Monday. The
+  # activity counts back from today, expenses can lie ahead.
+  def self.period_label(d : Time, today : Time, activity = false) : String
+    week = today.shift(days: 1 - today.day_of_week.value)
+    last_month = Time.utc(today.year, today.month, 1).shift(months: -1)
+    if activity
+      return "Heute" if d >= today
+      return "Gestern" if d == today.shift(days: -1)
+      return "Früher in dieser Woche" if d >= week
+      return "Letzte Woche" if d >= week.shift(days: -7)
+    else
+      return "Bevorstehend" if d > today
+      return "Diese Woche" if d >= week
+    end
+    if {d.year, d.month} == {today.year, today.month}
       "Früher in diesem Monat"
-    elsif d.year == last_month.year && d.month == last_month.month
+    elsif {d.year, d.month} == {last_month.year, last_month.month}
       "Letzter Monat"
     elsif d.year == today.year
       "Früher in diesem Jahr"
@@ -73,38 +79,5 @@ module Zipfelkasse::Web
     else
       "Älter"
     end
-  end
-
-  # Like expense_period, but "Gestern" wins over the week.
-  def self.activity_period(d : Time, today : Time) : String
-    last_month = first_of_last_month(today)
-    ws = week_start(today)
-    if d >= today
-      "Heute"
-    elsif d == today - 1.day
-      "Gestern"
-    elsif d >= ws
-      "Früher in dieser Woche"
-    elsif d >= ws - 7.days
-      "Letzte Woche"
-    elsif d.year == today.year && d.month == today.month
-      "Früher in diesem Monat"
-    elsif d.year == last_month.year && d.month == last_month.month
-      "Letzter Monat"
-    elsif d.year == today.year
-      "Früher in diesem Jahr"
-    elsif d.year == today.year - 1
-      "Letztes Jahr"
-    else
-      "Älter"
-    end
-  end
-
-  def self.week_start(d : Time) : Time
-    d - (d.day_of_week.value - 1).days
-  end
-
-  private def self.first_of_last_month(today : Time) : Time
-    Time.utc(today.year, today.month, 1).shift(months: -1)
   end
 end

@@ -1,5 +1,5 @@
 module Zipfelkasse::Export
-  # The optional date range (?von=…&bis=…, both inclusive).
+  # ?von=…&bis=…, both inclusive.
   record Period, from : Time? = nil, to : Time? = nil do
     def self.parse(query : URI::Params) : Period
       from = date_param(query, "von")
@@ -16,7 +16,6 @@ module Zipfelkasse::Export
       Domain.parse_date(value) unless value.empty?
     end
 
-    # For file names: the date range or today's date.
     def suffix(today : Time) : String
       from, to = @from, @to
       if from && to
@@ -62,14 +61,11 @@ module Zipfelkasse::Export
       Download.new("zipfelkasse-ynab-#{period.suffix(@d.today)}.csv", "text/csv; charset=utf-8", body)
     end
 
-    # Non-deleted expenses in the range, oldest first.
     private def expenses(period : Period, participant_id : Int64? = nil) : Array(Store::Expense)
       @d.store.list_expenses(Store::ExpenseFilter.new(from: period.from, to: period.to, participant_id: participant_id)).reverse!
     end
 
-    # The participant's postings in the range, selected like the YNAB sync
-    # does (start date, entered later, already transferred, nothing in the
-    # future).
+    # Selected like the YNAB sync does.
     private def postings(participant_id : Int64, period : Period) : Array(YNAB::Posting)
       selection = YNAB::Selection.for_participant(@d.store, participant_id, YNAB.today(@d.now, @d.config.location))
       selection.postings(expenses(period, participant_id), participant_id)
@@ -95,7 +91,6 @@ module Zipfelkasse::Export
       get("/export/ynab.csv") { |env| with_period(env) { |period| download(env, @service.ynab_csv(env.me, period)) } }
     end
 
-    # Every route answers an invalid range with the page (422, empty fields).
     private def with_period(env : HTTP::Server::Context, & : Period -> String) : String
       yield Period.parse(env.params.query)
     rescue ex : Domain::ValidationError

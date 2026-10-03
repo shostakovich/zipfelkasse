@@ -1,18 +1,13 @@
 module Zipfelkasse
   class Store
-    # Tables whose data and schema are shown outside the app (the schema
-    # and sql_query tools). An allowlist on purpose: new tables only become
-    # visible once listed here; the YNAB tables (token!) stay out.
+    # An allowlist of the tables shown outside the app: the YNAB tables (token!) stay out.
     EXPOSED_TABLES = %w(participants categories expenses expense_shares recurring activity fx_rates settings)
 
-    # type is "table" or "index".
     record SchemaObject, type : String, name : String, sql : String
 
-    # Deleted expenses do not count; the dates are nil without any expense.
     record DataOverview, expenses : Int64, reimbursements : Int64, without_category : Int64,
       first_date : Time?, last_date : Time?, activity_actions : Array(String)
 
-    # CREATE statements of EXPOSED_TABLES and their indexes, tables first.
     def schema : Array(SchemaObject)
       Store.schema_objects(@db, "main")
     end

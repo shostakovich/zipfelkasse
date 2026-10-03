@@ -18,15 +18,14 @@ private def ecb_rate(currency : String, day : String) : Float64
   ecb.rate(currency, date(day)).to_f
 end
 
-# The service with the clock at Friday, 2026-10-02 12:00 in Berlin: the rates
-# of that day are not yet published, those of Thursday are.
+# The service with the clock at Friday, 2026-10-02 12:00 in Berlin; the fake
+# ECB has published up to Thursday.
 private def new_service(store : Store, ecb : FakeECB) : FX::Service
   config = Config.new
   config.location = BERLIN
   config.ecb_base_url = ecb.base_url
-  service = FX::Service.new(Web::Deps.new(config, store))
-  service.clock = -> { at("2026-10-02 12:00") }
-  service
+  config.now = at("2026-10-02 12:00")
+  FX::Service.new(Web::Deps.new(config, store))
 end
 
 private def service : FX::Service
@@ -60,45 +59,29 @@ describe FX::Service do
       end
     end
 
-    it "loads the daily file for yesterday and then answers from the cache" do
+    it "loads the 90-day file into an empty cache and then answers from the cache" do
       service = service()
 
       service.rate("usd", date("2026-10-01"))
         .should eq Domain::FXRate.new("USD", date("2026-10-01"), ecb_rate("USD", "2026-10-01"), Domain::FXSource::Ecb)
-      ecb.requests.should eq [FX::FILE_DAILY]
+      ecb.requests.should eq [FX::RECENT]
       ecb.agents.first.should start_with "zipfelkasse/"
 
+      rate = service.rate("JPY", date("2026-09-27"))
+      {rate.date, rate.rate}.should eq({date("2026-09-25"), ecb_rate("JPY", "2026-09-25")})
       service.rate("USD", date("2026-10-02")).date.should eq date("2026-10-01")
       service.rate("GBP", date("2026-12-24")).rate.should eq ecb_rate("GBP", "2026-10-01")
       ecb.requests.size.should eq 1
     end
 
-    it "loads the 90-day file for older dates and takes the Friday before a Sunday" do
-      service = service()
-
-      rate = service.rate("JPY", date("2026-09-27"))
-      {rate.date, rate.rate}.should eq({date("2026-09-25"), ecb_rate("JPY", "2026-09-25")})
-      service.rate("USD", date("2026-09-29")).rate.should eq ecb_rate("USD", "2026-09-29")
-      ecb.requests.should eq [FX::FILE_90D]
-    end
-
-    it "escalates from the daily file to the 90-day file when the daily file lacks the date" do
-      service = service()
-      service.clock = -> { at("2026-10-02 17:00") }
-      ecb.last_day = Time.utc(2026, 10, 2)
-
-      service.rate("USD", date("2026-10-01")).rate.should eq ecb_rate("USD", "2026-10-01")
-      service.rate("USD", date("2026-10-02")).rate.should eq ecb_rate("USD", "2026-10-02")
-      ecb.requests.should eq [FX::FILE_DAILY, FX::FILE_90D]
-    end
-
-    it "loads the complete history only once and answers from the cache afterwards" do
+    it "loads the full history for a date before the 90 days, once" do
       service = service()
 
       service.rate("USD", date("2024-01-03")).rate.should eq ecb_rate("USD", "2024-01-03")
       rate = service.rate("GBP", date("2024-03-02"))
       {rate.date, rate.rate}.should eq({date("2024-03-01"), ecb_rate("GBP", "2024-03-01")})
-      ecb.requests.should eq [FX::FILE_HIST]
+      service.rate("CHF", date("2026-09-30")).rate.should eq ecb_rate("CHF", "2026-09-30")
+      ecb.requests.should eq [FX::HISTORY]
     end
 
     it "explains whether the ECB does not know the currency or only the date" do
@@ -110,16 +93,16 @@ describe FX::Service do
       expect_invalid("Für RUB gibt es keinen EZB-Kurs – bitte Kurs von Hand eintragen.") do
         service.rate("RUB", date("2024-01-03"))
       end
-      ecb.requests.should eq [FX::FILE_HIST]
+      ecb.requests.should eq [FX::HISTORY]
     end
 
-    it "does not load the history again after a restart" do
+    it "answers from the cache after a restart" do
       service.rate("USD", date("2024-01-03"))
       other = FakeECB.new
       begin
         restarted = new_service(store, other)
         restarted.rate("USD", date("2024-01-02")).rate.should eq ecb_rate("USD", "2024-01-02")
-        expect_raises(Domain::ValidationError, "keinen EZB-Kurs") { restarted.rate("JPY", date("2023-11-01")) }
+        restarted.rate("USD", date("2026-10-01")).rate.should eq ecb_rate("USD", "2026-10-01")
         other.requests.should be_empty
       ensure
         other.close
@@ -131,7 +114,7 @@ describe FX::Service do
       message = "Für XYZ gibt es keinen EZB-Kurs – bitte Kurs von Hand eintragen."
 
       expect_invalid(message) { service.rate("XYZ", date("2026-10-01")) }
-      expect_invalid(message) { service.rate("XYZ", date("2026-10-01")) }
+      expect_invalid(message) { service.rate("XYZ", date("2026-10-02")) }
       ecb.requests.size.should eq 1
     end
 
@@ -149,58 +132,46 @@ describe FX::Service do
       {before.rate, before.source}.should eq({ecb_rate("USD", "2026-09-29"), Domain::FXSource::Ecb})
     end
 
-    it "waits for the cooldown before trying again after an error" do
+    it "repeats a failed download's error until the cooldown is over" do
       service = service()
       ecb.failure = :network
 
       expect_raises(FX::FetchError, /nicht geladen werden/) { service.rate("USD", date("2026-10-01")) }
+      ecb.failure = nil
       expect_raises(FX::FetchError) { service.rate("USD", date("2026-10-01")) }
       ecb.requests.size.should eq 1
-
-      service.clock = -> { at("2026-10-02 12:05") }
-      ecb.failure = 500
-      expect_raises(FX::FetchError, /500/) { service.rate("USD", date("2026-10-01")) }
-
-      service.clock = -> { at("2026-10-02 12:10") }
-      ecb.failure = :broken
-      expect_raises(FX::FetchError) { service.rate("USD", date("2026-10-01")) }
-      ecb.count(FX::FILE_DAILY).should eq 3
     end
 
-    it "loads a file only once for concurrent callers" do
-      service = service()
-      ecb.block
-      results = Channel(Domain::FXRate | Exception).new(5)
-      5.times do
-        spawn do
-          results.send(begin
-            service.rate("USD", date("2026-10-01"))
-          rescue ex
-            ex
-          end)
-        end
+    {500 => /HTTP status 500/, :broken => /xml: /, :empty => /file contains no rates/}.each do |failure, reason|
+      it "reports #{failure} as a failed download" do
+        ecb.failure = failure
+        expect_raises(FX::FetchError, reason) { service.rate("USD", date("2026-10-01")) }
       end
-      eventually { ecb.requests.size > 0 }
-      sleep 20.milliseconds
-      ecb.release
+    end
 
-      5.times do
-        result = results.receive
-        result.should be_a(Domain::FXRate)
-        result.as(Domain::FXRate).rate.should eq ecb_rate("USD", "2026-10-01")
-      end
-      ecb.requests.size.should eq 1
+    it "falls back to a cached rate when the download fails" do
+      service.rate("USD", date("2026-09-30"))
+      ecb.failure = 500
+
+      new_service(store, ecb).rate("USD", date("2026-10-02")).date.should eq date("2026-10-01")
+      ecb.requests.should eq [FX::RECENT, FX::RECENT]
     end
   end
 
   describe "#refresh" do
-    it "loads the 90-day file into an empty cache and the daily file into a current one" do
+    it "loads the 90-day file and returns the newest day" do
       service = service()
 
       service.refresh.should eq date("2026-10-01")
       service.refresh
-      service.refresh
-      ecb.requests.should eq [FX::FILE_90D, FX::FILE_DAILY, FX::FILE_DAILY]
+      ecb.requests.should eq [FX::RECENT, FX::RECENT]
+    end
+
+    it "loads the full history when the cache is older than the 90-day file" do
+      store.save_ecb_rates([Domain::FXRate.new("USD", date("2026-06-01"), 1.1, Domain::FXSource::Ecb)])
+
+      service.refresh.should eq date("2026-10-01")
+      ecb.requests.should eq [FX::HISTORY]
     end
   end
 

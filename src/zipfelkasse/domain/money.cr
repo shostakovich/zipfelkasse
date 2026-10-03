@@ -1,11 +1,9 @@
 module Zipfelkasse::Domain
   extend self
 
-  # Caps amounts so that multiplications during splitting cannot overflow
-  # (10 billion €).
+  # 10 billion €, so that multiplications during splitting cannot overflow.
   MAX_AMOUNT_CENTS = 1_000_000_000_000_i64
 
-  # The German message is shown to the user directly in the form.
   class ValidationError < Exception
     getter msg : String
 
@@ -15,21 +13,21 @@ module Zipfelkasse::Domain
   end
 
   def format_cents(c : Int64) : String
-    format_fixed(c, 2, true) + " €"
+    format_minor(c, 2, group: true) + " €"
   end
 
   def format_cents_input(c : Int64) : String
-    format_fixed(c, 2, false)
+    format_minor(c, 2)
   end
 
   def format_money(minor : Int64, currency : String) : String
     return format_cents(minor) if eur?(currency)
     currency = currency.strip.upcase
-    format_fixed(minor, currency_decimals(currency), true) + " " + currency
+    format_minor(minor, currency_decimals(currency), group: true) + " " + currency
   end
 
   def format_basis_points(bp : Int64) : String
-    format_fixed(bp, 2, false) + " %"
+    format_minor(bp, 2) + " %"
   end
 
   def parse_cents(s : String) : Int64
@@ -72,15 +70,9 @@ module Zipfelkasse::Domain
     neg ? -v : v
   end
 
-  # Splits a number with comma or dot as decimal separator and optional
-  # thousands separators into sign, integer digits and fraction digits
-  # (without separators; the integer part is at least "0"); nil if s is not
-  # such a number. If both separators occur, the last one is the decimal
-  # separator; repeated occurrences of the same kind are thousands
-  # separators. A single dot before exactly three digits counts as a
-  # thousands separator if dot_thousands is set ("17.000" = 17000), unless the
-  # digits before it are only zeros: then it is a decimal point ("0.856" =
-  # 0,856), since no number starts with a zero thousands group.
+  # Comma or dot as decimal separator, the other one (or a repeated one) for
+  # thousands. With dot_thousands a single dot before three digits groups
+  # thousands ("17.000"), unless only zeros precede it ("0.856").
   private def split_number(s : String, dot_thousands : Bool) : {Bool, String, String}?
     return if s.empty?
     neg = s.starts_with?('-')
@@ -126,7 +118,7 @@ module Zipfelkasse::Domain
     {neg, int_part, frac}
   end
 
-  # Exchange rate in units of the currency per 1 €; separators as in split_number.
+  # Units of the currency per 1 €.
   def parse_rate(s : String) : Float64
     s = s.strip.gsub(' ', "").gsub('\u{A0}', "")
     bad = ValidationError.new("Ungültiger Wechselkurs „#{s}“ – bitte eine Zahl größer als 0 angeben (Einheiten der Währung pro 1 €).")
@@ -139,16 +131,12 @@ module Zipfelkasse::Domain
     v
   end
 
-  private def format_fixed(v : Int64, decimals : Int32, group : Bool) : String
-    format_sep(v, decimals, ',', group)
-  end
-
   def format_decimal(v : Int64, decimals : Int32, sep : Char) : String
-    format_sep(v, decimals, sep, false)
+    format_minor(v, decimals, sep)
   end
 
   def format_minor_input(minor : Int64, currency : String) : String
-    format_decimal(minor, currency_decimals(currency), ',')
+    format_minor(minor, currency_decimals(currency))
   end
 
   def format_rate(rate : Float64) : String
@@ -172,14 +160,14 @@ module Zipfelkasse::Domain
     end
   end
 
-  private def format_sep(v : Int64, decimals : Int32, sep : Char, group : Bool) : String
+  # v in units of 10^-decimals; group puts dots between thousands.
+  def format_minor(v : Int64, decimals : Int32, sep = ',', group = false) : String
     whole, fraction = v.abs.divmod(10_i64 ** decimals)
     digits = group ? whole.format(delimiter: '.') : whole.to_s
     text = decimals > 0 ? "#{digits}#{sep}#{fraction.to_s.rjust(decimals, '0')}" : digits
     v < 0 ? "-" + text : text
   end
 
-  # Format only; whether the currency exists is not checked.
   def valid_currency_code?(s : String) : Bool
     s.bytesize == 3 && s.each_byte.all? { |b| 'A'.ord <= b <= 'Z'.ord }
   end
@@ -199,7 +187,6 @@ module Zipfelkasse::Domain
     end
   end
 
-  # rate is in ECB format: units of foreign currency per 1 EUR.
   def to_eur_cents(minor : Int64, currency : String, rate : Float64) : Int64
     raise ValidationError.new("Der Wechselkurs muss größer als 0 sein.") if rate <= 0 || rate.nan? || rate.infinite?
     scale = 10.0 ** currency_decimals(currency)

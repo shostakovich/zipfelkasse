@@ -32,13 +32,10 @@ end
 
 module Zipfelkasse
   class Store
-    # SQL function for text search, registered on every connection (the
-    # sandbox of sql_query included): lower-cased with ß as "ss", umlauts
-    # kept, so "bäcker" finds "BÄCKER" but not "baecker".
+    # Lower case with ß as "ss" and umlauts kept: "bäcker" finds "BÄCKER", not "baecker".
     FOLD_FUNC = "zipfelkasse_fold"
 
-    # Per connection: extended result codes (to tell UNIQUE from CHECK
-    # violations) and the fold function.
+    # Extended result codes tell UNIQUE from CHECK violations.
     def self.setup(conn : DB::Connection) : Nil
       handle = conn.as(SQLite3::Connection).to_unsafe
       LibSQLite3.extended_result_codes(handle, 1)
@@ -83,7 +80,6 @@ module Zipfelkasse
       raise ex
     end
 
-    # Timestamps are RFC 3339 in UTC, so they compare as text.
     def self.format_time(t : Time) : String
       t.to_utc.to_s(TIME_FORMAT)
     end
@@ -93,12 +89,16 @@ module Zipfelkasse
     end
 
     # Strict: Time.parse would accept "2026-9-1" and trailing text.
-    def self.parse_date(s : String) : Time
-      raise Time::Format::Error.new("invalid date #{s.inspect}") unless s.matches?(/\A[0-9]{4}-[0-9]{2}-[0-9]{2}\z/)
-      Time.parse(s, "%Y-%m-%d", Time::Location::UTC)
+    def self.parse_date?(s : String) : Time?
+      Time.parse(s, "%Y-%m-%d", Time::Location::UTC) if s.matches?(/\A[0-9]{4}-[0-9]{2}-[0-9]{2}\z/)
+    rescue Time::Format::Error | ArgumentError
+      nil
     end
 
-    # Column converters for DB::Field; NULL becomes nil.
+    def self.parse_date(s : String) : Time
+      parse_date?(s) || raise Time::Format::Error.new("invalid date #{s.inspect}")
+    end
+
     module TimeText
       def self.from_rs(rs : DB::ResultSet) : Time?
         rs.read(String?).try { |s| Time.parse_rfc3339(s) }
@@ -108,13 +108,6 @@ module Zipfelkasse
     module DateText
       def self.from_rs(rs : DB::ResultSet) : Time?
         rs.read(String?).try { |s| Store.parse_date(s) }
-      end
-    end
-
-    module EnumText(T)
-      def self.from_rs(rs : DB::ResultSet) : T
-        key = rs.read(String)
-        T.from_key?(key) || raise ArgumentError.new("unknown #{T} #{key.inspect}")
       end
     end
 

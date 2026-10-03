@@ -16,18 +16,13 @@ module Zipfelkasse::Web
       ""
     end
 
-    protected def or_404(env : HTTP::Server::Context, message : String, value : T?) : T forall T
-      value || raise HTTPError.new(env, 404, message)
-    end
-
     protected def or_404(env : HTTP::Server::Context, message : String, & : -> T) : T forall T
       yield
     rescue Store::NotFound
       raise HTTPError.new(env, 404, message)
     end
 
-    # Errors of the JSON API: statuses with an error handler are raised, the
-    # others answered here.
+    # Statuses with an error handler are raised, the others answered here.
     protected def api_error(env : HTTP::Server::Context, status : Int32, message : String) : String
       raise HTTPError.new(env, status, message) if ERROR_STATUSES.includes?(status)
       env.response.status_code = status
@@ -35,8 +30,9 @@ module Zipfelkasse::Web
       {error: message}.to_json
     end
 
-    protected def path_id(env : HTTP::Server::Context) : Int64?
-      Web.positive_id?(env.params.url["id"]?)
+    # Raises Store::NotFound unless the path ends in a positive number.
+    protected def path_id(env : HTTP::Server::Context) : Int64
+      Web.positive_id?(env.params.url["id"]?) || raise Store::NotFound.new
     end
   end
 end

@@ -10,34 +10,34 @@ module Zipfelkasse
     getter recurring : Recurring::Service
     getter ynab : YNAB::Service
     getter handlers : Array(HTTP::Handler)
-    # Background jobs: each runs in its own fiber until the stopper fires.
-    getter jobs : Array(Proc(Stopper, Nil))
 
     # Kemal keeps routes, filters and handlers in global state: build one App
-    # per process (specs reset it, see spec/web/web_helper.cr).
+    # per process (specs reset it, see spec/support/test_server.cr).
     def initialize(config : Config, store : Store)
-      Web.location = config.location
+      Time::Location.local = config.location
+      store.clock = -> { config.now }
       @deps = Web::Deps.new(config, store)
       @fx = FX::Service.new(@deps)
       @deps.fx = @fx
       @recurring = Recurring::Service.new(@deps)
       @ynab = YNAB::Service.new(@deps)
-      @jobs = [
-        ->(stopper : Stopper) { @fx.run(stopper) },
-        ->(stopper : Stopper) { @recurring.run(stopper) },
-        ->(stopper : Stopper) { @ynab.run(stopper) },
-      ]
       configure_kemal
+      Web.install_filters(store)
       mount_mcp
-      Web::Gate.new(@deps).install
       Web.install_errors(store)
       register_routes
       Kemal.config.setup
       @handlers = Kemal.config.handlers.dup
     end
 
+    def spawn_jobs(stopper : Stopper, wait_group : WaitGroup) : Nil
+      wait_group.spawn { @fx.run(stopper) }
+      wait_group.spawn { @recurring.run(stopper) }
+      wait_group.spawn { @ynab.run(stopper) }
+      wait_group.spawn { CLI.backup_loop(stopper, @deps.store, @deps.config) }
+    end
+
     private def configure_kemal : Nil
-      Kemal.config.app_name = "Zipfelkasse"
       Kemal.config.env = "production"
       Kemal.config.logging = false
       Kemal.config.serve_static = false
@@ -73,7 +73,6 @@ module Zipfelkasse
   end
 
   module CLI
-    # A failure the user can fix: it is printed without a backtrace.
     class Error < Exception
     end
 
@@ -107,7 +106,6 @@ module Zipfelkasse
       config = Config.from_env
       Zipfelkasse.setup_logging
       store = Store.open(config.db_path)
-      store.clock = -> { config.now }
       stopper = Stopper.new
       jobs = WaitGroup.new
       begin
@@ -115,19 +113,10 @@ module Zipfelkasse
         server = HTTP::Server.new(app.handlers)
         listen(server, config.addr)
         Kemal.config.server = server
-        (app.jobs + [->(s : Stopper) { backup_loop(s, store, config) }]).each do |job|
-          jobs.spawn { job.call(stopper) }
-        end
-        Process.on_terminate do
-          if Kemal.config.running
-            Log.info { "shutting down" }
-            Kemal.stop
-          else
-            exit
-          end
-        end
-        Log.info(&.emit("Zipfelkasse running", addr: config.addr, db: config.db_path, tz: config.location_name))
-        Kemal.run(args: [] of String, trap_signal: false)
+        app.spawn_jobs(stopper, jobs)
+        Log.info(&.emit("Zipfelkasse running", addr: config.addr, db: config.db_path, tz: config.location.name))
+        Kemal.run(args: [] of String)
+        Log.info { "shutting down" }
       ensure
         stopper.stop
         jobs.wait
@@ -165,26 +154,17 @@ module Zipfelkasse
       raise Error.new("cannot listen on #{addr}", cause: ex)
     end
 
-    # One backup a day at 03:00 local time, on the configured clock.
     def self.backup_loop(stopper : Stopper, store : Store, config : Config) : Nil
-      local = -> { config.now.in(config.location) }
-      due = next_backup(local.call)
-      while stopper.wait(due - local.call)
+      due = Domain.next_at_hour(config.now.in(config.location), 3)
+      while stopper.wait(due - config.now)
         begin
           path = store.backup(config.backup_dir, BACKUP_KEEP)
           Log.info(&.emit("backup written", path: path))
         rescue ex
           Log.error(exception: ex) { "backup failed" }
         end
-        due = next_backup(due)
+        due = Domain.next_at_hour(due, 3)
       end
-    end
-
-    def self.next_backup(now : Time) : Time
-      t = Time.local(now.year, now.month, now.day, 3, 0, 0, location: now.location)
-      return t if t > now
-      n = now.shift(days: 1)
-      Time.local(n.year, n.month, n.day, 3, 0, 0, location: now.location)
     end
 
     def self.healthcheck(addr : String) : Nil

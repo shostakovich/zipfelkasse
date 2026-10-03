@@ -1,19 +1,12 @@
-# Recurring expenses: a rule is always created from an existing expense,
-# which is the template and the first instance; its date is the anchor from
-# which all occurrences are computed (Domain.next_date).
+# A rule is created from an expense, its template and first instance.
 module Zipfelkasse::Recurring
   Log = ::Log.for(self)
 
-  # The preview counts missed occurrences up to this, beyond it says
-  # "mehr als 1000".
   MAX_MISSED_COUNT = 1000
 
-  # Occurrences created per rule and run (e.g. for a very old start date);
-  # the hourly runs catch up on the rest.
+  # Per rule and run; the hourly runs catch up on the rest.
   MAX_INSTANCES_PER_RUN = 400
 
-  # Raised by materialize when rules failed; created counts the instances
-  # that were created nevertheless.
   class Error < Exception
     getter created : Int32
 
@@ -22,9 +15,7 @@ module Zipfelkasse::Recurring
     end
   end
 
-  # What a frequency would do for an expense: the first occurrence after it
-  # and how many missed occurrences up to today would be created (counted up
-  # to MAX_MISSED_COUNT + 1) or skipped since an equal expense exists.
+  # missed counts up to MAX_MISSED_COUNT + 1; existing ones would be skipped.
   record Preview, frequency : Domain::Frequency, next_date : Time, missed : Int32, existing : Int32
 
   class Service
@@ -34,15 +25,7 @@ module Zipfelkasse::Recurring
     def initialize(@d : Web::Deps)
     end
 
-    def today : Time
-      @d.today
-    end
-
-    # Creates all instances due up to and including today (at most
-    # MAX_INSTANCES_PER_RUN per rule) and returns their count. Repeated calls
-    # create no duplicates; occurrences for which an equal expense exists are
-    # skipped. A failing rule does not stop the others; their errors are
-    # raised together afterwards.
+    # A failing rule does not stop the others; their errors are raised together.
     def materialize(today : Time, stopper : Stopper? = nil) : Int32
       @mutex.synchronize do
         today = Domain.date_of(today)
@@ -59,9 +42,6 @@ module Zipfelkasse::Recurring
       end
     end
 
-    # materialize for one rule only (right after it was created or resumed);
-    # other due rules are left to the next run. Unknown, paused or not yet due
-    # rules create nothing.
     def materialize_rule(id : Int64, today : Time) : Int32
       @mutex.synchronize do
         today = Domain.date_of(today)
@@ -78,7 +58,7 @@ module Zipfelkasse::Recurring
     end
 
     def previews(expense : Store::Expense) : Array(Preview)
-      today = self.today
+      today = @d.today
       existing = Set(Time).new
       if expense.date < today
         existing = @d.store.expense_dates_like(expense.to_input, expense.date.shift(days: 1), today)
@@ -128,7 +108,6 @@ module Zipfelkasse::Recurring
       {n, nil}
     end
 
-    # exists: an equal expense was entered by hand or by a deleted rule.
     private def create_occurrence(r : Store::Recurring, d : Time, exists : Bool) : Bool
       if exists
         Log.info(&.emit("recurring expense: an equal expense already exists, skipping the occurrence", rule: r.id, date: Store.format_date(d)))
@@ -140,11 +119,8 @@ module Zipfelkasse::Recurring
       false
     end
 
-    # A foreign currency gets the rate of the occurrence date. If that rate is
-    # only temporarily unavailable (ECB down, database), the occurrence fails
-    # and is retried in the next run rather than stored with a stale rate. If
-    # no rate exists for the date at all (ValidationError), the template's
-    # rate is kept: waiting would block the rule forever.
+    # The rate of the occurrence date. Temporarily unavailable, the occurrence
+    # is retried next run; missing for good, the template's rate is kept.
     private def instance(r : Store::Recurring, date : Time) : Store::ExpenseInput
       input = r.template
       input.date = date
@@ -165,21 +141,17 @@ module Zipfelkasse::Recurring
         return input
       end
       return input if amount <= 0 || amount > Domain::MAX_AMOUNT_CENTS
-      # For SPLIT_AMOUNT the weights stay amounts in cur; the store
-      # distributes the converted amount in proportion to them.
       input.amount_cents = amount
       input.fx_rate = rate.rate
       input.fx_source = rate.source
       input
     end
 
-    # Materializes right away and then on a fixed tick every hour from the
-    # start until the stopper fires.
     def run(stopper : Stopper, every : Time::Span = 1.hour) : Nil
       tick = Time.instant + every
       loop do
         begin
-          n = materialize(today, stopper)
+          n = materialize(@d.today, stopper)
           Log.info(&.emit("recurring expenses created", count: n)) if n > 0
         rescue ex
           Log.error(exception: ex) { "recurring expenses" } unless stopper.stopped?

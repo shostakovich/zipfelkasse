@@ -1,7 +1,6 @@
 require "uri"
 
 module Zipfelkasse::Web
-  # Expenses per "Weitere anzeigen" step on the home page.
   HOME_PAGE_SIZE =   100
   HOME_MAX_ROWS  = 5_000
 
@@ -14,16 +13,13 @@ module Zipfelkasse::Web
     end
   end
 
-  # A row of the expense list. everyone: all active people are involved
-  # (from 4 people on); involved: the current person pays or has a share.
+  # everyone: all active people are involved (from 4 people on).
   record ExpenseRow, expense : Store::Expense, for_names : Array(String), everyone : Bool, involved : Bool,
     my_balance : Int64 do
     delegate id, title, date, reimbursement?, category_name, paid_by_name, recurring_id, amount_cents,
       original_amount_minor, original_currency, foreign?, to: @expense
   end
 
-  # Splits the expenses (sorted by date, descending) into labelled periods.
-  # active holds the IDs of the active people.
   def self.group_expenses(es : Array(Store::Expense), today : Time, me_id : Int64, names : Hash(Int64, String),
                           active : Set(Int64)) : Array({String, Array(ExpenseRow)})
     rows = es.map do |e|
@@ -34,15 +30,12 @@ module Zipfelkasse::Web
       my_balance = (e.paid_by == me_id ? e.amount_cents : 0_i64) - e.share_of(me_id)
       ExpenseRow.new(e, e.shares.map { |sh| names[sh.participant_id]? || "" }, everyone, involved, my_balance)
     end
-    rows.chunks { |row| expense_period(row.date, today) }
+    rows.chunks { |row| period_label(row.date, today) }
   end
 
-  # A person in the split of the expense form. value holds shares, percent
-  # or an amount depending on the mode; cents is the computed share (saved
-  # expenses only).
+  # value holds shares, percent or an amount, depending on the mode.
   record SplitRow, id : Int64, name : String, archived : Bool, checked : Bool, value : String = "", cents : Int64? = nil
 
-  # Raised with the form as it is to be shown again.
   class InvalidForm < Domain::ValidationError
     getter form : ExpenseForm
 
@@ -51,8 +44,7 @@ module Zipfelkasse::Web
     end
   end
 
-  # The values as text, so that after an error they are shown again exactly
-  # as entered.
+  # Text, so that after an error the values are shown as entered.
   record ExpenseForm,
     id : Int64? = nil,
     title : String = "",
@@ -61,14 +53,14 @@ module Zipfelkasse::Web
     currency : String? = "EUR", # one of COMMON_CURRENCIES, nil = other
     currency_other : String = "",
     amount : String = "", # in the selected currency
-    rate : String = "",   # foreign currency per 1 EUR
+    rate : String = "",
     rate_source : Domain::FXSource? = nil,
     paid_by : Int64? = nil,
     notes : String = "",
     reimbursement : Bool = false,
     split_mode : Domain::SplitMode = Domain::SplitMode::Equal,
     rows : Array(SplitRow) = [] of SplitRow,
-    eur_cents : Int64? = nil do # converted amount for display
+    eur_cents : Int64? = nil do
     def self.from_expense(e : Store::Expense, people : Array(Store::Participant)) : ExpenseForm
       currency = e.original_currency
       common = COMMON_CURRENCIES.includes?(currency)
@@ -97,8 +89,7 @@ module Zipfelkasse::Web
       end
     end
 
-    # The empty form (all active people involved, I paid) or a prefilled
-    # reimbursement (?rueckzahlung=1&von=ID&an=ID&betrag=cents).
+    # Or a prefilled reimbursement (?rueckzahlung=1&von=ID&an=ID&betrag=cents).
     def self.blank(query : URI::Params, today : Time, me_id : Int64, people : Array(Store::Participant)) : ExpenseForm
       reimbursement = !query["rueckzahlung"]?.presence.nil?
       to = Web.positive_id?(query["an"]?, trim: true)
@@ -113,9 +104,7 @@ module Zipfelkasse::Web
         amount: reimbursement && cents && cents > 0 ? Domain.format_cents_input(cents) : "")
     end
 
-    # Reads a posted form without validating it. people are all people;
-    # archived ones are shown only if checked, in the existing expense or the
-    # payer.
+    # Archived people only show when checked, in the existing expense or paying.
     def self.from_post(body : URI::Params, existing : Store::Expense?, people : Array(Store::Participant)) : ExpenseForm
       paid_by = Web.positive_id?(body["bezahlt_von"]?, trim: true)
       checked = body.fetch_all("teil").compact_map { |v| Web.positive_id?(v, trim: true) }.to_set
@@ -134,7 +123,7 @@ module Zipfelkasse::Web
         amount: (body["betrag"]? || "").strip, rate: (body["kurs"]? || "").strip,
         rate_source: Domain::FXSource.from_key?(body["kurs_quelle"]? || ""), paid_by: paid_by,
         notes: body["notiz"]? || "", reimbursement: !body["rueckzahlung"]?.presence.nil?,
-        split_mode: Domain::SplitMode.from_key?(body["aufteilung"]? || "") || Domain::SplitMode::Equal, rows: rows)
+        split_mode: Domain::SplitMode.parse?(body["aufteilung"]? || "") || Domain::SplitMode::Equal, rows: rows)
     end
 
     def reimbursement? : Bool
@@ -142,15 +131,13 @@ module Zipfelkasse::Web
     end
 
     def currency_code : String
-      code = (currency || currency_other).strip.upcase
-      code.empty? ? "EUR" : code
+      (currency || currency_other).strip.upcase
     end
 
     def checked_rows : Array(SplitRow)
       rows.select(&.checked)
     end
 
-    # Weights of the checked people. Error messages name the person.
     def parts : Array(Domain::Part)
       checked = checked_rows
       if reimbursement?
@@ -193,7 +180,7 @@ module Zipfelkasse::Web
       end
 
       def currency : String
-        form.currency_code
+        form.currency_code.presence || "EUR"
       end
     end
   end
@@ -260,79 +247,53 @@ module Zipfelkasse::Web
       redirect(env, "/", "„#{expense.title}“ gelöscht.")
     end
 
-    # Deleted expenses too.
     private def find_expense(env : HTTP::Server::Context) : Store::Expense
-      id = path_id(env)
-      or_404(env, "Ausgabe nicht gefunden.", id && @d.store.get_expense?(id))
+      or_404(env, "Ausgabe nicht gefunden.") { @d.store.get_expense(path_id(env)) }
     end
 
     private def save(env : HTTP::Server::Context, existing : Store::Expense?) : String
       form = ExpenseForm.from_post(env.params.body, existing, @d.store.list_participants(true))
-      begin
-        input, form = build_input(form, existing)
-        if existing
-          @d.store.update_expense(env.me.id, existing.id, input)
-        else
-          @d.store.create_expense(env.me.id, input)
-        end
-      rescue ex : InvalidForm
-        return show_form(env, 422, ex.form, existing, ex.msg)
-      rescue ex : Domain::ValidationError
-        return show_form(env, 422, form, existing, ex.msg)
-      rescue Store::NotFound
-        raise HTTPError.new(env, 404, "Ausgabe nicht gefunden.")
-      end
+      input = save_form(env, form, existing)
       kind = input.reimbursement? ? Domain::REIMBURSEMENT_TITLE : "Ausgabe"
       redirect(env, "/", "#{kind} „#{Store.normalize_name(input.title)}“ #{existing ? "gespeichert" : "angelegt"}.")
+    rescue ex : InvalidForm
+      show_form(env, 422, ex.form, existing, ex.msg)
     end
 
-    # Validates the form and builds the store input. A missing or ECB rate
-    # for a foreign currency is looked up; the returned form shows it.
-    private def build_input(form : ExpenseForm, existing : Store::Expense?) : {Store::ExpenseInput, ExpenseForm}
-      raise Domain::ValidationError.new("Bitte einen Titel angeben.") if form.title.strip.empty?
+    # The store validates the rest. A missing or ECB rate for a foreign
+    # currency is looked up; the form of an error shows it.
+    private def save_form(env : HTTP::Server::Context, form : ExpenseForm, existing : Store::Expense?) : Store::ExpenseInput
       date = Domain.parse_date(form.date)
       currency = form.currency_code
+      raise Domain::ValidationError.new("Bitte eine Währung angeben.") if currency.empty?
       unless Domain.valid_currency_code?(currency)
         raise Domain::ValidationError.new("Ungültige Währung „#{currency}“ – bitte einen dreistelligen ISO-Code wie USD angeben.")
       end
-      amount_cents = 0_i64
-      original_minor = 0_i64
+      minor = Domain.parse_minor(form.amount, Domain.currency_decimals(currency))
+      raise Domain::ValidationError.new("Der Betrag muss größer als 0 sein.") if minor <= 0
       rate = source = nil
-      if Domain.eur?(currency)
-        amount_cents = Domain.parse_cents(form.amount)
-        raise Domain::ValidationError.new("Der Betrag muss größer als 0 sein.") if amount_cents <= 0
-      else
-        original_minor = Domain.parse_minor(form.amount, Domain.currency_decimals(currency))
-        raise Domain::ValidationError.new("Der Betrag muss größer als 0 sein.") if original_minor <= 0
+      unless Domain.eur?(currency)
         rate, source = resolve_rate(form, currency, date, existing)
         form = form.copy_with(rate: Domain.format_rate(rate), rate_source: source)
-        begin
-          form = form.copy_with(eur_cents: Domain.to_eur_cents(original_minor, currency, rate))
-        rescue ex : Domain::ValidationError
-          raise InvalidForm.new(ex.msg, form)
-        end
-      end
-      parts = begin
-        form.parts
-      rescue ex : Domain::ValidationError
-        raise InvalidForm.new(ex.msg, form)
+        form = form.copy_with(eur_cents: Domain.to_eur_cents(minor, currency, rate))
       end
       input = Store::ExpenseInput.new(title: form.title, date: date, category_id: form.category_id, paid_by: form.paid_by,
         notes: form.notes, reimbursement: form.reimbursement?,
-        split_mode: form.reimbursement? ? Domain::SplitMode::Equal : form.split_mode, amount_cents: amount_cents,
-        parts: parts, original_amount_minor: original_minor, original_currency: currency, fx_rate: rate, fx_source: source)
-      {input, form}
+        split_mode: form.reimbursement? ? Domain::SplitMode::Equal : form.split_mode, amount_cents: minor,
+        parts: form.parts, original_amount_minor: minor, original_currency: currency, fx_rate: rate, fx_source: source)
+      or_404(env, "Ausgabe nicht gefunden.") do
+        existing ? @d.store.update_expense(env.me.id, existing.id, input) : @d.store.create_expense(env.me.id, input)
+      end
+      input
+    rescue ex : Domain::ValidationError
+      raise ex.as?(InvalidForm) || InvalidForm.new(ex.msg, form)
     end
 
-    # Rate and source for a foreign currency expense:
-    # - no rate in the form: the ECB rate of the currency on date;
-    # - a rate marked as ECB (kurs_quelle, set by expense-form.js) is checked
-    #   against the ECB rate of that currency and date, since without JS a rate
-    #   fetched for another currency or date stays in the field. A differing
-    #   rate is replaced by the looked-up one. Saving with unchanged currency,
-    #   date and rate keeps the saved rate, so a later published rate does not
-    #   change it;
-    # - any other rate counts as entered by hand.
+    # Without a rate in the form, the ECB rate of the currency on date. A rate
+    # marked as ECB (kurs_quelle, set by expense-form.js) is looked up again,
+    # since without JS a rate fetched for another currency or date stays in the
+    # field; saving with unchanged currency, date and rate keeps the saved one.
+    # Any other rate counts as entered by hand.
     private def resolve_rate(form : ExpenseForm, currency : String, date : Time,
                              existing : Store::Expense?) : {Float64, Domain::FXSource}
       unless form.rate.empty?
@@ -343,25 +304,16 @@ module Zipfelkasse::Web
           return {rate, Domain::FXSource::Ecb}
         end
       end
-      looked = begin
-        lookup_rate(currency, date)
-      rescue ex : Domain::ValidationError
-        raise InvalidForm.new(ex.msg, form.copy_with(rate: "", rate_source: nil))
-      end
+      looked = lookup_rate(form, currency, date)
       {looked.rate, looked.source}
     end
 
-    private def lookup_rate(currency : String, date : Time) : Domain::FXRate
-      unavailable = Domain::ValidationError.new(
-        "Für #{currency} ist am #{Domain.format_date(date)} kein Wechselkurs verfügbar. Kurs bitte von Hand eintragen.")
-      rate = begin
-        @d.fx.rate(currency, date)
-      rescue ex
-        Log.info(exception: ex, &.emit("rate not available", currency: currency, date: Store.format_date(date)))
-        raise unavailable
-      end
-      raise unavailable unless rate.rate > 0
-      rate
+    private def lookup_rate(form : ExpenseForm, currency : String, date : Time) : Domain::FXRate
+      @d.fx.rate(currency, date)
+    rescue ex
+      Log.info(exception: ex, &.emit("rate not available", currency: currency, date: Store.format_date(date)))
+      raise InvalidForm.new("Für #{currency} ist am #{Domain.format_date(date)} kein Wechselkurs verfügbar. Kurs bitte von Hand eintragen.",
+        form.copy_with(rate: "", rate_source: nil))
     end
 
     private def show_form(env : HTTP::Server::Context, status : Int32, form : ExpenseForm, expense : Store::Expense?,
@@ -369,7 +321,6 @@ module Zipfelkasse::Web
       payers = @d.store.list_participants(true).select { |p| !p.archived? || p.id == form.paid_by }
       categories = @d.store.list_categories(true).select { |c| !c.archived? || c.id == form.category_id }
       history = expense ? Web.activity_items(@d.store.list_activity(Store::ActivityFilter.new(expense_id: expense.id, limit: 50))) : [] of ActivityItem
-      # The form preview distributes leftover cents by expense ID like the store.
       rotation = form.id || @d.store.next_expense_id
       suggest = Web.suggest_categories(@d.store.category_history).to_json
       view = Views::Expense.new(form, expense, categories, payers, suggest, rotation, history)

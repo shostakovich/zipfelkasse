@@ -1,7 +1,7 @@
 require "../spec_helper"
 
 private def d(s : String) : Time
-  Time.parse_utc(s, Domain::DATE_LAYOUT)
+  Time.parse_utc(s, "%F")
 end
 
 describe Domain::Period do
@@ -14,7 +14,7 @@ describe Domain::Period do
       {Domain::PeriodUnit::Week, "2020-W53", "2020-12-28"},
     ].each do |unit, label, first_day|
       got = Domain::Period.first_day(unit, label).not_nil!
-      got.to_s(Domain::DATE_LAYOUT).should eq first_day
+      got.to_s("%F").should eq first_day
       Domain::Period.label(unit, got).should eq label
     end
     Domain::Period.first_day(Domain::PeriodUnit::Month, "nonsense").should be_nil

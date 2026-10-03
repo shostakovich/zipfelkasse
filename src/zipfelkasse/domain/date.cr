@@ -1,11 +1,7 @@
+# Calendar dates (expense date, occurrences) are `Time` at 00:00 UTC, so they
+# compare and store without time-zone surprises.
 module Zipfelkasse::Domain
-  # Calendar dates (expense date, occurrences) are `Time` at 00:00 UTC, so
-  # they compare and store without time-zone surprises.
-
-  DATE_LAYOUT = "%Y-%m-%d"
-
-  # Plausible years for calendar dates. Guards against typos ("0026") and
-  # against huge loops for recurrences starting at an absurd date.
+  # Guards against typos ("0026") and huge loops for recurrences starting at an absurd date.
   MIN_YEAR = 2000
   MAX_YEAR = 2100
 
@@ -41,6 +37,11 @@ module Zipfelkasse::Domain
     t.to_s("%d.%m.%Y")
   end
 
+  def next_at_hour(now : Time, hour : Int32) : Time
+    t = Time.local(now.year, now.month, now.day, hour, location: now.location)
+    t > now ? t : t.shift(days: 1)
+  end
+
   enum Frequency
     Weekly
     Monthly
@@ -49,14 +50,9 @@ module Zipfelkasse::Domain
     def key : String
       to_s.underscore
     end
-
-    def self.from_key?(key : String) : self?
-      values.find { |member| member.key == key }
-    end
   end
 
-  # Occurrences are always computed from the anchor (n=0): an anchor on
-  # January 31 yields February 28/29, then March 31 again.
+  # Always from the anchor: January 31 yields February 28/29, then March 31 again.
   def occurrence(f : Frequency, anchor : Time, n : Int32) : Time
     anchor = date_of(anchor)
     case f

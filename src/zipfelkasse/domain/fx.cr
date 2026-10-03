@@ -29,10 +29,8 @@ module Zipfelkasse::Domain
     end
   end
 
-  # `date` is the day the rate applies to (for ECB rates possibly the last
-  # banking day before the requested date).
   record FXRate,
-    currency : String, # ISO 4217, upper case
+    currency : String,
     date : Time,
     rate : Float64, # foreign currency per 1 EUR
     source : FXSource

@@ -9,11 +9,7 @@
         <%- active.each do |row| %>
         <li id="kategorie-<%= row.id %>">
           <span class="muted"><%= icon category_icon(row.name) %></span>
-          <form class="inline-form" method="post" action="/einstellungen/kategorien/<%= row.id %>">
-            <label class="sr-only" for="name-<%= row.id %>">Name</label>
-            <input id="name-<%= row.id %>" name="name" value="<%= row.name %>" required maxlength="60">
-            <button class="btn btn-outline btn-icon" type="submit" title="Umbenennen" aria-label="<%= row.name %> umbenennen"><%= icon "save" %></button>
-          </form>
+          <%= RenameForm.new("/einstellungen/kategorien", row) %>
           <div class="row-actions">
             <form method="post" action="/einstellungen/kategorien/<%= row.id %>/hoch">
               <button class="btn btn-ghost btn-icon" type="submit" title="Nach oben" aria-label="<%= row.name %> nach oben"<% if row.first %> disabled<% end %>><%= icon "chevron-up" %></button>
@@ -25,7 +21,7 @@
               <button class="btn btn-ghost btn-icon" type="submit" title="Archivieren" aria-label="<%= row.name %> archivieren"><%= icon "archive" %></button>
             </form>
           </div>
-          <p class="row-meta"><%= row.expenses %> <% if row.expenses == 1 %>Ausgabe<% else %>Ausgaben<% end %></p>
+          <p class="row-meta"><%= expense_count row.expenses %></p>
         </li>
         <%- end %>
       </ul>
@@ -45,25 +41,6 @@
     </div>
   </section>
 
-  <%- unless archived.empty? %>
-  <section class="card">
-    <div class="card-header">
-      <h2 class="card-title">Archiviert</h2>
-    </div>
-    <div class="card-content">
-      <ul class="rows">
-        <%- archived.each do |row| %>
-        <li id="kategorie-<%= row.id %>">
-          <span class="grow"><%= row.name %></span>
-          <form method="post" action="/einstellungen/kategorien/<%= row.id %>/reaktivieren">
-            <button class="btn btn-outline btn-sm" type="submit"><%= icon "undo" %> Zurückholen</button>
-          </form>
-          <p class="row-meta"><%= row.expenses %> <% if row.expenses == 1 %>Ausgabe<% else %>Ausgaben<% end %></p>
-        </li>
-        <%- end %>
-      </ul>
-    </div>
-  </section>
-  <%- end %>
+  <%= ArchivedRows.new("/einstellungen/kategorien", "kategorie", archived) %>
   <p class="small"><a href="/einstellungen">← Zurück zu den Einstellungen</a></p>
 </div>

@@ -2,7 +2,7 @@ require "./e2e_helper"
 require "csv"
 
 # Exchange rates (ECB download, /api/kurs, manual rates, the rates page,
-# expenses in foreign currencies, the 16:30 schedule) and the exports (CSV,
+# expenses in foreign currencies, the daily refresh) and the exports (CSV,
 # JSON, OFX and CSV for YNAB). The CSV and JSON files are compared by value,
 # the OFX file by line.
 
@@ -67,14 +67,14 @@ module FxExportSpec
     rate = ->(cur : String, d : String) { world.ecb.rate(cur, day(d)) }
     count = ->(file : String) { world.ecb.requests.count(file) }
     nf = "eurofxref-hist-90d.xml"
-    zip = "eurofxref-hist.zip"
+    hist = "eurofxref-hist.xml"
     currencies = FakeECB::BASE.keys.sort
 
     scenario "downloads the 90-day file at startup and shows the latest rates", world do
       world.app
       # On an empty cache the app loads the 90-day file, nothing else.
       count.call(nf).should eq 1
-      count.call(zip).should eq 0
+      count.call(hist).should eq 0
       days = (0...90).map { |i| last - i.days }.select { |d| FakeECB.business_day?(d) }
       E2E::Database.open(world.app.db_path) do |db|
         db.query_one("SELECT count(*), count(DISTINCT currency), min(date), max(date) FROM fx_rates WHERE source = 'ezb'",
@@ -90,7 +90,7 @@ module FxExportSpec
       page.doc.xpath_node("//title").not_nil!.content.should contain("Wechselkurse")
       page.text.should contain("Noch keine manuellen Kurse.")
       page.text.should contain("Zwischengespeichert: #{days.size * 16} Kurse für 16 Währungen vom 06.07.2026 bis 02.10.2026. " \
-                               "Neue Kurse werden an Bankarbeitstagen nach 16:30 Uhr automatisch abgerufen.")
+                               "Neue Kurse werden täglich um 17 Uhr automatisch abgerufen.")
       table_rows(page, "EZB-Referenzkurse").should eq currencies.map { |c| [c, "02.10.2026", "#{german_rate(rate.call(c, "2026-10-02"))} #{c}"] }
       table_rows(page, "Manuelle Kurse").should be_empty
       page.text.should_not contain("Zuletzt verwendet")
@@ -103,7 +103,7 @@ module FxExportSpec
     scenario "/api/kurs answers from the cache: EUR, weekends, formats, errors", world do
       user = world.user
       user.login("Anna")
-      before = {count.call(nf), count.call(zip)}
+      before = {count.call(nf), count.call(hist)}
       {
         "waehrung=EUR"                           => kurs_json("EUR", "2026-10-03", "1", "fest"),
         "waehrung=%20eur%20&datum=2027-01-01"    => kurs_json("EUR", "2027-01-01", "1", "fest"),
@@ -143,7 +143,7 @@ module FxExportSpec
       r.status.should eq 400
       r.json["error"].should eq "Ungültige Währung „<b>“."
       # Everything came from the cache.
-      {count.call(nf), count.call(zip)}.should eq before
+      {count.call(nf), count.call(hist)}.should eq before
 
       anonymous = world.user
       r = anonymous.get("/api/kurs?waehrung=USD")
@@ -163,7 +163,7 @@ module FxExportSpec
       r = user.get("/api/kurs?waehrung=xyz")
       {r.status, r.json}.should eq({422, error_json("Für XYZ gibt es keinen EZB-Kurs – bitte Kurs von Hand eintragen.")})
       count.call(nf).should eq 1
-      count.call(zip).should eq 0
+      count.call(hist).should eq 0
     end
 
     scenario "/api/kurs: old dates load the history file once", world do
@@ -171,9 +171,8 @@ module FxExportSpec
       user.login("Anna")
       r = user.get("/api/kurs?waehrung=USD&datum=2024-05-19") # Sunday
       {r.status, r.json}.should eq({200, kurs_json("USD", "2024-05-17", rate.call("USD", "2024-05-17"), "ezb")})
-      count.call(zip).should eq 1
+      count.call(hist).should eq 1
       E2E::Database.open(world.app.db_path) do |db|
-        db.scalar("SELECT value FROM settings WHERE key = 'fx.ezb_hist_bis'").should eq "2026-10-02"
         db.scalar("SELECT min(date) FROM fx_rates WHERE source = 'ezb'").should eq "2023-12-01"
       end
       {
@@ -191,7 +190,7 @@ module FxExportSpec
       {r.status, r.json}.should eq({422, error_json("Für USD gibt es um den 15.11.2023 keinen EZB-Kurs – bitte Kurs von Hand eintragen.")})
       r = user.get("/api/kurs?waehrung=XAF&datum=2024-03-01")
       {r.status, r.json}.should eq({422, error_json("Für XAF gibt es keinen EZB-Kurs – bitte Kurs von Hand eintragen.")})
-      count.call(zip).should eq 1
+      count.call(hist).should eq 1
       count.call(nf).should eq 1
     end
 
@@ -323,19 +322,17 @@ module FxExportSpec
       activity.should contain("Manueller Kurs für USD ab 01.10.2026 gespeichert: 1 € = 1,25 USD")
       activity.should contain("Manueller Kurs für VND ab 03.09.2026 gespeichert: 1 € = 17000,5 VND")
       activity.should contain("Manueller Kurs für IDR ab 04.09.2026 gelöscht")
-      count.call(zip).should eq 1
+      count.call(hist).should eq 1
       count.call(nf).should eq 1
     end
 
     scenario "refreshing the ECB rates by hand", world do
       user = world.user
       user.login("Anna")
-      daily = count.call("eurofxref-daily.xml")
+      requests = {count.call(nf), count.call(hist)}
       r = user.post("/einstellungen/kurse/aktualisieren")
       {r.status, r.location, r.flash}.should eq({303, "/einstellungen/kurse", "EZB-Kurse aktualisiert (Stand 02.10.2026)."})
-      # A cache without gaps only needs the daily file.
-      count.call("eurofxref-daily.xml").should be >= daily + 1
-      count.call(nf).should eq 1
+      {count.call(nf), count.call(hist)}.should eq({requests[0] + 1, requests[1]})
       user.get("/einstellungen/kurse").text.should contain("EZB-Kurse aktualisiert (Stand 02.10.2026).")
     end
 
@@ -431,19 +428,26 @@ module FxExportSpec
       ]
       page.doc.xpath_nodes(%(//section[.//h2[normalize-space(.)="Zuletzt verwendet"]]//tbody/tr/td/a)).map(&.["href"])
         .should eq [stale, usd, pub, sat, nine, kwd, yen, half, thb].map { |id| "/ausgaben/#{id}" }
-      count.call(zip).should eq 1
+      count.call(hist).should eq 1
     end
 
-    scenario "after a restart nothing is downloaded again", world do
-      requests = {count.call(nf), count.call(zip)}
+    scenario "after a restart the cached rates need no download", world do
+      requests = {count.call(nf), count.call(hist)}
       world.restart(E2E::DEFAULT_NOW)
       sleep 250.milliseconds
       user = world.user
       user.login("Anna")
       user.get("/api/kurs?waehrung=JPY&datum=2024-05-17").json.should eq kurs_json("JPY", "2024-05-17", rate.call("JPY", "2024-05-17"), "ezb")
-      r = user.get("/api/kurs?waehrung=USD&datum=2023-11-20")
-      {r.status, r.json}.should eq({422, error_json("Für USD gibt es um den 20.11.2023 keinen EZB-Kurs – bitte Kurs von Hand eintragen.")})
-      {count.call(nf), count.call(zip)}.should eq requests
+      {count.call(nf), count.call(hist)}.should eq requests
+      # Dates outside the cache ask the ECB once per cooldown: today's rate
+      # may be new, and the history might reach further back (the real one
+      # starts in 1999, before any date the app accepts).
+      2.times do
+        user.get("/api/kurs?waehrung=GBP").json.should eq kurs_json("GBP", "2026-10-02", rate.call("GBP", "2026-10-02"), "ezb")
+        r = user.get("/api/kurs?waehrung=USD&datum=2023-11-20")
+        {r.status, r.json}.should eq({422, error_json("Für USD gibt es um den 20.11.2023 keinen EZB-Kurs – bitte Kurs von Hand eintragen.")})
+      end
+      {count.call(nf), count.call(hist)}.should eq({requests[0] + 1, requests[1] + 1})
     end
   end
 
@@ -466,11 +470,11 @@ module FxExportSpec
       # The cached rates still work.
       user.get("/api/kurs?waehrung=USD&datum=2026-10-01").status.should eq 200
 
-      zips = ecb.count("eurofxref-hist.zip")
+      hists = ecb.count("eurofxref-hist.xml")
       r = user.get("/api/kurs?waehrung=USD&datum=2024-05-17")
       {r.status, r.json}.should eq({502, error_json(failed.call("HTTP status 500"))})
       r.content_type.should eq "application/json; charset=utf-8"
-      ecb.count("eurofxref-hist.zip").should eq zips + 1
+      ecb.count("eurofxref-hist.xml").should eq hists + 1
       # Right after a failure the app does not ask again.
       ecb.failure = nil
       r = user.get("/api/kurs?waehrung=USD&datum=2024-05-17")
@@ -478,7 +482,7 @@ module FxExportSpec
       r = user.post("/ausgaben/neu", expense_form("Hotel", "2024-05-17", "100,00", user.me.not_nil!, {user.me.not_nil! => ""}, currency: "USD"))
       r.status.should eq 422
       r.error_message.should eq "Für USD ist am 17.05.2024 kein Wechselkurs verfügbar. Kurs bitte von Hand eintragen."
-      ecb.count("eurofxref-hist.zip").should eq zips + 1
+      ecb.count("eurofxref-hist.xml").should eq hists + 1
 
       ecb.failure = 404
       r = user.post("/einstellungen/kurse/aktualisieren")
@@ -492,8 +496,8 @@ module FxExportSpec
     end
   end
 
-  # The frozen clock does not advance, so the FX job's wait for the next 16:30
-  # never ends within a scenario and downloads can be counted exactly.
+  # The frozen clock does not advance, so the FX job's wait for the next
+  # 17:00 never ends within a scenario and downloads can be counted exactly.
   describe "ECB schedule" do
     fri = Time.utc(2036, 11, 7)
     mon = fri + 3.days
@@ -502,52 +506,59 @@ module FxExportSpec
     ecb = world.ecb
     ecb.last_day = fri
     after_all { world.stop }
+    nf = "eurofxref-hist-90d.xml"
     newest = -> { E2E::Database.open(world.app.db_path) { |db| db.scalar("SELECT max(date) FROM fx_rates WHERE source = 'ezb'").as(String) } }
     # Restarts at *now* (UTC) and checks which files the startup fetched.
     restart = ->(now : String, files : Array(String)) do
       before = ecb.requests.size
       world.restart(now)
-      expected = files
-      E2E.wait_until("startup downloads at #{now}", 10.seconds) { ecb.requests.size >= before + expected.size }
+      E2E.wait_until("startup downloads at #{now}", 10.seconds) { ecb.requests.size >= before + files.size }
       sleep 250.milliseconds # nothing else follows
-      ecb.requests[before..].sort.should eq expected.sort
+      ecb.requests[before..].should eq files
     end
 
-    scenario "loads at startup only when the cache is behind the last 16:30 (Berlin)", world do
+    scenario "loads at startup when the cache lacks the last 17:00 refresh (Berlin), and on demand", world do
       {fri.friday?, mon.monday?, later.friday?}.should eq({true, true, true})
       world.app
-      ecb.requests.should eq ["eurofxref-hist-90d.xml"]
+      ecb.requests.should eq [nf]
       newest.call.should eq "2036-11-07"
       user = world.user
       user.login("Anna")
-      # Unknown currency for today: the daily file is asked once, then the
-      # answer is reused (cooldown).
+      # Right after the download, today's rate is not asked for again.
       2.times do
         r = user.get("/api/kurs?waehrung=XAF")
         {r.status, r.json}.should eq({422, error_json("Für XAF gibt es keinen EZB-Kurs – bitte Kurs von Hand eintragen.")})
       end
-      ecb.count("eurofxref-daily.xml").should eq 1
+      ecb.requests.should eq [nf]
 
-      # Monday 16:29 in Berlin (CET): Friday's rates are the newest expected.
-      restart.call("2036-11-10T15:29:00Z", [] of String)
+      # Monday 16:59 in Berlin (CET): the cache lacks Sunday's refresh, the
+      # ECB has nothing newer yet.
+      restart.call("2036-11-10T15:59:00Z", [nf])
       user.get("/api/kurs?waehrung=USD").json.should eq kurs_json("USD", "2036-11-07", ecb.rate("USD", fri), "ezb")
-      # 16:30 in Berlin (15:30 UTC): Monday's rates are due, the daily file is
-      # enough.
+      # 17:00 in Berlin (16:00 UTC): Monday's rates.
       ecb.last_day = mon
-      restart.call("2036-11-10T15:30:00Z", ["eurofxref-daily.xml"])
+      restart.call("2036-11-10T16:00:00Z", [nf])
       newest.call.should eq "2036-11-10"
       user.get("/api/kurs?waehrung=USD").json.should eq kurs_json("USD", "2036-11-10", ecb.rate("USD", mon), "ezb")
       user.get("/einstellungen/kurse").text.should contain("bis 10.11.2036.")
-      # Tuesday morning: nothing new is expected yet.
+      # Tuesday morning: nothing due at startup; asking for today's rate
+      # downloads once, then the cooldown holds.
       restart.call("2036-11-11T07:00:00Z", [] of String)
-      # A week later, with gaps in the cache: the 90-day file.
+      2.times do
+        user.get("/api/kurs?waehrung=USD").json.should eq kurs_json("USD", "2036-11-10", ecb.rate("USD", mon), "ezb")
+      end
+      ecb.requests.should eq [nf] * 4
+      # A week later, with gaps in the cache: the 90-day file fills them.
       ecb.last_day = later
-      restart.call("2036-11-15T11:00:00Z", ["eurofxref-hist-90d.xml"])
+      restart.call("2036-11-15T11:00:00Z", [nf])
       newest.call.should eq "2036-11-14"
       E2E::Database.count(world.app.db_path, "SELECT count(DISTINCT date) FROM fx_rates WHERE source = 'ezb' AND date > '2036-11-10'").should eq 4
-      # Sunday evening: still Friday's rates.
-      restart.call("2036-11-16T19:00:00Z", [] of String)
       user.get("/api/kurs?waehrung=GBP&datum=2036-11-16").json.should eq kurs_json("GBP", "2036-11-14", ecb.rate("GBP", later), "ezb")
+      # After more than 85 days the 90-day file would leave a gap: the history.
+      ecb.last_day = Time.utc(2037, 2, 27)
+      restart.call("2037-03-01T11:00:00Z", ["eurofxref-hist.xml"])
+      E2E.wait_until("the history is stored", 10.seconds) { newest.call == "2037-02-27" }
+      E2E::Database.count(world.app.db_path, "SELECT count(DISTINCT date) FROM fx_rates WHERE source = 'ezb' AND date > '2036-11-14'").should eq 72
     end
   end
 

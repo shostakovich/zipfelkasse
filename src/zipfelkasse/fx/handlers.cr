@@ -46,31 +46,23 @@ module Zipfelkasse::FX
       raw = env.query("waehrung")
       currency = raw.strip.upcase
       return api_error(env, 400, "Bitte eine Währung angeben.") if currency.empty?
-      return api_error(env, 400, "Ungültige Währung „#{raw}“.") unless currency == "EUR" || Domain.valid_currency_code?(currency)
-      date = @service.today
-      unless (value = env.query("datum")).empty?
-        begin
-          date = Domain.parse_date(value)
-        rescue ex : Domain::ValidationError
-          return api_error(env, 400, ex.msg)
-        end
-      end
-      rate = begin
-        @service.rate(currency, date)
+      return api_error(env, 400, "Ungültige Währung „#{raw}“.") unless Domain.valid_currency_code?(currency)
+      date = begin
+        env.query("datum").empty? ? @d.today : Domain.parse_date(env.query("datum"))
       rescue ex : Domain::ValidationError
-        return api_error(env, 422, ex.msg)
-      rescue ex : FetchError
-        return api_error(env, 502, ex.message || "")
-      rescue ex
-        Log.error(exception: ex, &.emit("rate", currency: currency))
-        return api_error(env, 500, "Der Kurs konnte nicht ermittelt werden.")
+        return api_error(env, 400, ex.msg)
       end
+      rate = @service.rate(currency, date)
       env.response.content_type = "application/json; charset=utf-8"
       RateResponse.new(rate.currency, Store.format_date(rate.date), rate.rate, rate.source).to_json
+    rescue ex : Domain::ValidationError
+      api_error(env, 422, ex.msg)
+    rescue ex : FetchError
+      api_error(env, 502, ex.message || "")
     end
 
     private def show(env : HTTP::Server::Context, form : ManualForm, status = 200, error : String? = nil) : String
-      form = form.copy_with(date: Store.format_date(@service.today)) if form.date.empty?
+      form = form.copy_with(date: Store.format_date(@d.today)) if form.date.empty?
       store = @d.store
       used = store.recent_used_fx_rates(10).map do |u|
         RateRow.new(u.currency, u.date, Domain.format_rate(u.rate), FX.source_label(u.source), u.title, u.expense_id)
@@ -81,34 +73,30 @@ module Zipfelkasse::FX
     end
 
     private def save_manual(env : HTTP::Server::Context) : String
-      form = ManualForm.new(env.form("waehrung").strip.upcase, env.form("datum").strip, env.form("kurs").strip)
-      begin
-        @d.store.set_manual_fx_rate(env.me.id, form.currency, Domain.parse_date(form.date), Domain.parse_rate(form.rate))
-      rescue ex : Domain::ValidationError
-        return show(env, form, 422, ex.msg)
-      end
+      form = manual_form(env)
+      @d.store.set_manual_fx_rate(env.me.id, form.currency, Domain.parse_date(form.date), Domain.parse_rate(form.rate))
       redirect(env, "/einstellungen/kurse", "Kurs für #{form.currency} gespeichert.")
+    rescue ex : Domain::ValidationError
+      show(env, manual_form(env), 422, ex.msg)
+    end
+
+    private def manual_form(env : HTTP::Server::Context) : ManualForm
+      ManualForm.new(env.form("waehrung").strip.upcase, env.form("datum").strip, env.form("kurs").strip)
     end
 
     private def delete_manual(env : HTTP::Server::Context) : String
       currency = env.form("waehrung").strip.upcase
-      gone = "Diesen manuellen Kurs gibt es nicht (mehr)."
-      date = begin
-        Domain.parse_date(env.form("datum"))
-      rescue Domain::ValidationError
-        raise Web::HTTPError.new(env, 404, gone)
+      or_404(env, "Diesen manuellen Kurs gibt es nicht (mehr).") do
+        date = Domain.parse_date(env.form("datum")) rescue raise Store::NotFound.new
+        @d.store.delete_manual_fx_rate(env.me.id, currency, date)
       end
-      or_404(env, gone) { @d.store.delete_manual_fx_rate(env.me.id, currency, date) }
       redirect(env, "/einstellungen/kurse", "Manueller Kurs für #{currency} gelöscht.")
     end
 
     private def refresh_now(env : HTTP::Server::Context) : String
-      latest = begin
-        @service.refresh
-      rescue ex : FetchError
-        return show(env, ManualForm.new, 502, ex.message)
-      end
-      redirect(env, "/einstellungen/kurse", "EZB-Kurse aktualisiert (Stand #{Domain.format_date(latest)}).")
+      redirect(env, "/einstellungen/kurse", "EZB-Kurse aktualisiert (Stand #{Domain.format_date(@service.refresh)}).")
+    rescue ex : FetchError
+      show(env, ManualForm.new, 502, ex.message)
     end
   end
 end

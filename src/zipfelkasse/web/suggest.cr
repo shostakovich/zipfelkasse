@@ -1,18 +1,15 @@
 require "json"
 
 module Zipfelkasse::Web
-  # Only the most recent categorized expenses per title (or word) count, so
-  # newer habits win after a few expenses and single outliers do not matter.
+  # Newer habits win after a few expenses; single outliers do not matter.
   SUGGEST_WINDOW = 10
 
-  # They occur in all kinds of titles ("Zug und Hotel", "Geschenk für Anna").
   FILLER_WORDS = Set{"und", "oder", "für", "mit", "ohne", "bei", "von", "vom", "zu", "zum", "zur", "in", "im",
                      "an", "am", "auf", "aus", "nach", "über", "der", "die", "das", "den", "dem", "des", "ein",
                      "eine", "einen", "einem", "einer"}
 
-  # Learned category suggestions for expense-form.js: it looks up the title
-  # key in `titles`, otherwise each of its words in `words` (category and
-  # support) and takes the word with the most support.
+  # expense-form.js looks up the title key in `titles`, otherwise the word of
+  # the title with the most support in `words`.
   record CategorySuggestions,
     titles : Hash(String, Int64),
     words : Hash(String, {Int64, Int64}) do
@@ -24,9 +21,8 @@ module Zipfelkasse::Web
     @words : Hash(String, {Int64, Int64})
   end
 
-  # hist is newest first (Store#category_history). Per key the most frequent
-  # category among the SUGGEST_WINDOW most recent wins; on ties the most
-  # recent one.
+  # hist is newest first; per key the most frequent of the recent categories
+  # wins, on ties the most recent one.
   def self.suggest_categories(hist : Array(Store::TitleCategory)) : CategorySuggestions
     titles = Hash(String, Array(Int64)).new { |h, k| h[k] = [] of Int64 }
     words = Hash(String, Array(Int64)).new { |h, k| h[k] = [] of Int64 }
@@ -58,8 +54,7 @@ module Zipfelkasse::Web
     {best, count[best]}
   end
 
-  # Lower case, letters only, words separated by single spaces ("Miete
-  # 03/24" → "miete"). Must match titleKey in expense-form.js.
+  # Must match titleKey in expense-form.js.
   def self.title_key(title : String) : String
     title.downcase.scan(/\p{L}+/).join(" ", &.[0])
   end

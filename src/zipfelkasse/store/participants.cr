@@ -18,7 +18,6 @@ module Zipfelkasse
       @db.query_all("SELECT #{PARTICIPANT_COLS} FROM participants#{where} ORDER BY name COLLATE NOCASE, id", as: Participant)
     end
 
-    # Archived people too.
     def get_participant?(id : Int64, db : DB::QueryMethods = @db) : Participant?
       db.query_one?("SELECT #{PARTICIPANT_COLS} FROM participants WHERE id = ?", id, as: Participant)
     end
@@ -27,13 +26,11 @@ module Zipfelkasse
       get_participant?(id, db) || raise NotFound.new
     end
 
-    # Duplicate names (case-insensitive) raise a ValidationError.
     def create_participant(actor_id : Int64?, name : String) : Int64
       insert_participant(actor_id, false, name)
     end
 
-    # Creates a person who adds themselves (who page, before they have an
-    # identity): the activity entry names the new person as actor.
+    # The activity entry names the new person as actor.
     def join_as_participant(name : String) : Int64
       insert_participant(nil, true, name)
     end
@@ -51,34 +48,18 @@ module Zipfelkasse
 
     def rename_participant(actor_id : Int64?, id : Int64, name : String) : Nil
       name = Store.clean_name(name, "die Person")
-      transaction do |tx|
-        old = get_participant(id, tx)
-        Store.on_duplicate("„#{name}“ gibt es schon.") do
-          tx.exec("UPDATE participants SET name = ? WHERE id = ?", name, id)
-        end
-        log_settings(tx, actor_id, "Person „#{old.name}“ umbenannt in „#{name}“") unless old.name == name
-      end
+      rename_row(actor_id, "participants", "Person", id, name, "„#{name}“ gibt es schon.")
     end
 
-    # Archives or restores a person. A person with an open balance cannot be
-    # archived (ValidationError); otherwise they would disappear from forms
-    # while money is still owed. Check and archiving run in one transaction,
-    # so that no expense can come in between.
+    # A person with an open balance would disappear from the forms while money
+    # is still owed, so archiving refuses.
     def set_participant_archived(actor_id : Int64?, id : Int64, archived : Bool) : Nil
       transaction do |tx|
         p = get_participant(id, tx)
-        if archived
-          balance = tx.scalar(
-            "SELECT (SELECT coalesce(sum(amount_cents), 0) FROM expenses WHERE paid_by = ?1 AND deleted_at IS NULL) - " \
-            "(SELECT coalesce(sum(x.amount_cents), 0) FROM expense_shares x JOIN expenses e ON e.id = x.expense_id " \
-            "WHERE x.participant_id = ?1 AND e.deleted_at IS NULL)", id).as(Int64)
-          if balance != 0
-            raise Domain::ValidationError.new("#{p.name} hat noch einen Saldo von #{Domain.format_cents(balance)}. Bitte erst ausgleichen, dann archivieren.")
-          end
+        if archived && (balance = balances(tx).fetch(id, 0_i64)) != 0
+          raise Domain::ValidationError.new("#{p.name} hat noch einen Saldo von #{Domain.format_cents(balance)}. Bitte erst ausgleichen, dann archivieren.")
         end
-        verb, at = archived ? {"archiviert", now_string} : {"reaktiviert", nil}
-        tx.exec("UPDATE participants SET archived_at = ? WHERE id = ?", at, id)
-        log_settings(tx, actor_id, "Person „#{p.name}“ #{verb}")
+        archive_row(tx, actor_id, "participants", "Person", p.name, id, archived)
       end
     end
 
@@ -90,6 +71,21 @@ module Zipfelkasse
                     "SELECT x.participant_id, x.expense_id FROM expense_shares x " \
                     "JOIN expenses e ON e.id = x.expense_id WHERE e.deleted_at IS NULL" \
                     ") GROUP BY pid", as: {Int64, Int32}).to_h
+    end
+
+    private def rename_row(actor_id : Int64?, table : String, kind : String, id : Int64, name : String, duplicate : String) : Nil
+      transaction do |tx|
+        old = tx.query_one?("SELECT name FROM #{table} WHERE id = ?", id, as: String) || raise NotFound.new
+        Store.on_duplicate(duplicate) { tx.exec("UPDATE #{table} SET name = ? WHERE id = ?", name, id) }
+        log_settings(tx, actor_id, "#{kind} „#{old}“ umbenannt in „#{name}“") unless old == name
+      end
+    end
+
+    # Logs even when the state does not change.
+    private def archive_row(tx : DB::Connection, actor_id : Int64?, table : String, kind : String, name : String,
+                            id : Int64, archived : Bool) : Nil
+      tx.exec("UPDATE #{table} SET archived_at = ? WHERE id = ?", archived ? now_string : nil, id)
+      log_settings(tx, actor_id, "#{kind} „#{name}“ #{archived ? "archiviert" : "reaktiviert"}")
     end
   end
 end

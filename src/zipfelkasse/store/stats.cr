@@ -9,15 +9,6 @@ module Zipfelkasse
       Person
       CategoryMonth
 
-      def key : String
-        to_s.underscore
-      end
-
-      def self.from_key?(key : String) : self?
-        values.find { |member| member.key == key }
-      end
-
-      # Groupings whose rows are periods only.
       def time? : Bool
         year? || month? || week?
       end
@@ -32,8 +23,7 @@ module Zipfelkasse
         end
       end
 
-      # Periods look like "2026", "2026-09" and ISO week "2026-W40". The week
-      # format needs SQLite >= 3.46 (3.45 returns NULL).
+      # The ISO week format needs SQLite >= 3.46 (3.45 returns NULL).
       def period_sql : String?
         case self
         in .year?                    then "substr(e.date, 1, 4)"
@@ -45,20 +35,16 @@ module Zipfelkasse
       end
     end
 
-    # Reimbursements and deleted expenses never count.
     record StatsFilter,
       group_by : StatsGroup,
-      from : Time? = nil,            # inclusive
-      to : Time? = nil,              # inclusive
+      from : Time? = nil,
+      to : Time? = nil,
       participant_id : Int64? = nil, # only this person's share, otherwise the total amounts
       category_id : Int64? = nil,
       without_category : Bool = false,        # then category_id is ignored
       any_text : Array(String) = [] of String # title or notes contain one of them
 
-    # Depending on the grouping, category, title, period and/or person are
-    # set (category is nil for expenses without one). title is one of the
-    # group's titles (grouped case-insensitively); paid_cents is only set for
-    # person (paid by the person, while amount_cents is their share).
+    # Grouped by person, amount_cents is the share and paid_cents what the person paid.
     record StatRow,
       category : String? = nil,
       title : String? = nil,
@@ -68,8 +54,6 @@ module Zipfelkasse
       amount_cents : Int64 = 0_i64,
       paid_cents : Int64? = nil
 
-    # Time groupings are sorted by period, the others by amount (largest
-    # first); periods without expenses are missing (see `fill_periods`).
     def stats(f : StatsFilter) : Array(StatRow)
       where = ["e.deleted_at IS NULL", "e.is_reimbursement = 0"]
       args = [] of DB::Any
@@ -102,7 +86,6 @@ module Zipfelkasse
         amount = "x.amount_cents"
       end
       period = f.group_by.period_sql || "NULL"
-      # Columns: label (category or title), period, count, amount.
       label, group, order =
         case f.group_by
         when .category?       then {"c.name", "c.name", "4 DESC, c.name IS NULL, c.name"}
@@ -143,8 +126,7 @@ module Zipfelkasse
       rows.map { |name, count, cents, paid| StatRow.new(person: name, count: count, amount_cents: cents, paid_cents: paid) }
     end
 
-    # Adds a zero row for every period of a time grouping between first and
-    # last (inclusive) that has none. Rows outside that range stay.
+    # Rows outside first..last stay.
     def self.fill_periods(rows : Array(StatRow), group : StatsGroup, first : Time, last : Time) : Array(StatRow)
       unit = group.period_unit
       return rows if unit.nil? || !group.time? || last < first

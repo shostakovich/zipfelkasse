@@ -84,7 +84,7 @@ describe "Recurring expenses" do
     RY.attr(r, %(//a[normalize-space()="Abbrechen"]/@href)).should eq ["/ausgaben/#{miete}"]
 
     # Invalid frequencies re-render the form with the submitted choice.
-    {"taeglich", "", "Monthly"}.each do |freq|
+    {"taeglich", "", "monatlich"}.each do |freq|
       r = user.post(neu, {"ausgabe" => miete.to_s, "haeufigkeit" => freq})
       r.status.should eq 422
       r.error_message.should eq "Bitte eine Häufigkeit wählen."

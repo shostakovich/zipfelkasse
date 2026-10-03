@@ -16,22 +16,16 @@ module Zipfelkasse::Web
     Settings
   end
 
-  module FXRater
-    abstract def rate(currency : String, date : Time) : Domain::FXRate
-  end
-
   class Deps
     getter config : Config
     getter store : Store
-    property! fx : FXRater
+    property! fx : FX::Service
 
     delegate today, now, to: @config
 
     def initialize(@config, @store)
     end
   end
-
-  class_property location : Time::Location = Time::Location.local
 
   def self.positive_id?(value : String?, trim = false) : Int64?
     id = (trim ? value.try(&.strip) : value).try(&.to_i64?(whitespace: false))
@@ -45,11 +39,8 @@ module Zipfelkasse::Web
     ctx.response.print message, '\n'
   end
 
-  # Only local paths are allowed as a return target. Rejected are control
-  # characters and backslashes (browsers strip tabs/newlines or read "\" as
-  # "/", so "/\t/evil" would become "//evil"), anything with a scheme or
-  # host, paths that start with "//" (even only after decoding) and broken
-  # escapes in the path or fragment.
+  # Only local paths: browsers strip tabs and read "\" as "/", so "/\t/evil"
+  # would become "//evil"; "//" is refused even after decoding.
   def self.safe_return(target : String) : String
     return "/" if target.each_char.any? { |c| unsafe_char?(c) }
     return "/" unless target.starts_with?('/') && !target.starts_with?("//")

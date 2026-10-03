@@ -1,6 +1,4 @@
 module Zipfelkasse
-  # Shutdown signal for background jobs: `wait(span)` sleeps but returns
-  # early (false) once `stop` was called.
   class Stopper
     @channel = Channel(Nil).new
 

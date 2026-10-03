@@ -320,6 +320,7 @@ describe "Web: expenses" do
       {"Ungültiges Datum „morgen“.", {"datum" => "morgen"}},
       {"Das Datum „31.12.1999“ liegt nicht zwischen 2000 und 2100.", {"datum" => "31.12.1999"}},
       {"Ungültige Währung „EURO“ – bitte einen dreistelligen ISO-Code wie USD angeben.", {"waehrung" => "", "waehrung_andere" => "euro"}},
+      {"Bitte eine Währung angeben.", {"waehrung" => "", "waehrung_andere" => "  "}},
       {"Bitte einen Betrag eingeben.", {"betrag" => "  "}},
       {"Ungültiger Betrag „12,3,4“.", {"betrag" => "12,3,4"}},
       {"Ungültiger Betrag „abc“.", {"betrag" => "abc"}},

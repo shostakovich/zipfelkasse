@@ -1,7 +1,7 @@
 require "../spec_helper"
 
 private def d(s : String) : Time
-  Time.parse_utc(s, Domain::DATE_LAYOUT)
+  Time.parse_utc(s, "%F")
 end
 
 describe Domain do
@@ -23,7 +23,7 @@ describe Domain do
       {"yearly Feb 29 back in leap year", Domain::Frequency::Yearly, "2028-02-29", "2031-03-01", "2032-02-29"},
     }.each do |(name, freq, anchor, after, want)|
       it name do
-        Domain.next_date(freq, d(anchor), d(after)).to_s(Domain::DATE_LAYOUT).should eq want
+        Domain.next_date(freq, d(anchor), d(after)).to_s("%F").should eq want
       end
     end
 
@@ -36,7 +36,7 @@ describe Domain do
   it "computes monthly occurrences from the anchor day" do
     anchor = d("2026-01-31")
     ["2026-01-31", "2026-02-28", "2026-03-31", "2026-04-30", "2026-05-31"].each_with_index do |want, n|
-      Domain.occurrence(Domain::Frequency::Monthly, anchor, n).to_s(Domain::DATE_LAYOUT).should eq want
+      Domain.occurrence(Domain::Frequency::Monthly, anchor, n).to_s("%F").should eq want
     end
   end
 
@@ -51,17 +51,14 @@ describe Domain do
        25 => {"2028-02-29", "2051-01-31", "2026-07-25"},
         0 => {"2026-01-31", "2026-01-31", "2026-01-31"},
     }.each do |n, (monthly, yearly, weekly)|
-      Domain.occurrence(Domain::Frequency::Monthly, anchor, n).to_s(Domain::DATE_LAYOUT).should eq monthly
-      Domain.occurrence(Domain::Frequency::Yearly, anchor, n).to_s(Domain::DATE_LAYOUT).should eq yearly
-      Domain.occurrence(Domain::Frequency::Weekly, anchor, n).to_s(Domain::DATE_LAYOUT).should eq weekly
+      Domain.occurrence(Domain::Frequency::Monthly, anchor, n).to_s("%F").should eq monthly
+      Domain.occurrence(Domain::Frequency::Yearly, anchor, n).to_s("%F").should eq yearly
+      Domain.occurrence(Domain::Frequency::Weekly, anchor, n).to_s("%F").should eq weekly
     end
   end
 
   it "names the frequencies by their stored keys" do
     Domain::Frequency.values.map(&.key).should eq %w(weekly monthly yearly)
-    Domain::Frequency.from_key?("monthly").should eq Domain::Frequency::Monthly
-    Domain::Frequency.from_key?("Monthly").should be_nil
-    Domain::Frequency.from_key?("daily").should be_nil
   end
 
   describe ".parse_date" do
@@ -111,7 +108,22 @@ describe Domain do
   it "takes the calendar date of a moment in a time zone" do
     berlin = Time::Location.load("Europe/Berlin")
     got = Domain.date_of(Time.utc(2026, 10, 1, 23, 30).in(berlin))
-    got.to_s(Domain::DATE_LAYOUT).should eq "2026-10-02"
+    got.to_s("%F").should eq "2026-10-02"
     got.location.should eq Time::Location::UTC
+  end
+
+  describe ".next_at_hour" do
+    berlin = Time::Location.load("Europe/Berlin")
+
+    {
+      "2026-10-02 01:00" => "2026-10-02 03:00",
+      "2026-10-02 03:00" => "2026-10-03 03:00",
+      "2026-10-02 23:59" => "2026-10-03 03:00",
+      "2026-10-24 23:00" => "2026-10-25 03:00",
+    }.each do |now, due|
+      it "plans 03:00 after #{now} for #{due}" do
+        Domain.next_at_hour(Time.parse(now, "%F %R", berlin), 3).to_s("%F %R").should eq due
+      end
+    end
   end
 end

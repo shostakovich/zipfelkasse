@@ -40,7 +40,7 @@ module Zipfelkasse::YNAB
       delay = @d.config.ynab_delay
       @debounce = delay && delay.positive? ? delay : DEFAULT_DEBOUNCE
       @start_delay = delay && delay.positive? ? delay : DEFAULT_START_DELAY
-      @d.store.on_expense_change { trigger }
+      @d.store.on_change = -> { trigger }
     end
 
     def client(token : String) : Client

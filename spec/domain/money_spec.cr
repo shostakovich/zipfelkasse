@@ -193,15 +193,19 @@ describe Domain do
     end
   end
 
-  describe ".format_decimal" do
+  describe ".format_minor" do
     {
       {0_i64, 2, ','} => "0,00", {5_i64, 2, ','} => "0,05", {123456_i64, 2, ','} => "1234,56", {-42_i64, 2, ','} => "-0,42",
       {1500_i64, 0, ','} => "1500", {1234_i64, 3, ','} => "1,234", {-5_i64, 2, '.'} => "-0.05", {-300000_i64, 2, '.'} => "-3000.00",
       {-7_i64, 0, '.'} => "-7", {12345_i64, 3, '.'} => "12.345",
     }.each do |(value, decimals, separator), text|
       it "writes #{value} with #{decimals} decimals and #{separator.inspect} as #{text}" do
-        Domain.format_decimal(value, decimals, separator).should eq text
+        Domain.format_minor(value, decimals, separator).should eq text
       end
+    end
+
+    it "groups thousands with dots" do
+      Domain.format_minor(-123456789_i64, 2, group: true).should eq "-1.234.567,89"
     end
   end
 

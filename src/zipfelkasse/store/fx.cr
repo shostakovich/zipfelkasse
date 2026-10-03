@@ -1,7 +1,4 @@
-# Exchange rates live in fx_rates in ECB format (foreign currency per 1 EUR),
-# at most one per (currency, source, date): manual and ECB rates of the same
-# day sit side by side. The lookup in the fx service prefers manual rates, so
-# deleting one brings back the ECB rate of that day.
+# Rates are units of the currency per 1 EUR; manual and ECB rates of a day sit side by side.
 struct Zipfelkasse::Domain::FXRate
   include DB::Serializable
 
@@ -18,7 +15,6 @@ module Zipfelkasse
 
     FX_RATE_COLS = "currency, date, rate, source"
 
-    # The most recent rate of source with not_before <= date of rate <= date.
     def lookup_fx_rate?(currency : String, source : Domain::FXSource, date : Time, not_before : Time? = nil) : Domain::FXRate?
       q = "SELECT #{FX_RATE_COLS} FROM fx_rates WHERE currency = ? AND source = ? AND date <= ?"
       args = [currency, source.key, Store.format_date(date)] of DB::Any
@@ -29,7 +25,6 @@ module Zipfelkasse
       @db.query_one?(q + " ORDER BY date DESC LIMIT 1", args: args, as: Domain::FXRate)
     end
 
-    # Invalid rows are skipped silently; manual rates are left untouched.
     def save_ecb_rates(rates : Array(Domain::FXRate)) : Nil
       transaction do |tx|
         rates.each do |r|
@@ -39,7 +34,6 @@ module Zipfelkasse
       end
     end
 
-    # Valid from date on; replaces a manual rate of the same day.
     def set_manual_fx_rate(actor_id : Int64?, currency : String, date : Time?, rate : Float64) : Nil
       currency = currency.strip.upcase
       raise Domain::ValidationError.new("Für Euro braucht es keinen Kurs.") if currency == "EUR"
@@ -57,7 +51,6 @@ module Zipfelkasse
       end
     end
 
-    # Raises NotFound if there is no manual rate; an ECB rate of that day stays.
     def delete_manual_fx_rate(actor_id : Int64?, currency : String, date : Time) : Nil
       currency = currency.strip.upcase
       transaction do |tx|
@@ -72,7 +65,6 @@ module Zipfelkasse
         Domain::FXSource::Manual.key, as: Domain::FXRate)
     end
 
-    # The ECB rates of the most recent cached day; empty if nothing is cached.
     def latest_ecb_rates : Array(Domain::FXRate)
       @db.query_all("SELECT #{FX_RATE_COLS} FROM fx_rates WHERE source = ? " \
                     "AND date = (SELECT max(date) FROM fx_rates WHERE source = ?) ORDER BY currency",
@@ -93,7 +85,6 @@ module Zipfelkasse
                     "max(date) AS \"to\" FROM fx_rates WHERE source = ?", Domain::FXSource::Ecb.key, as: FXCacheStats)
     end
 
-    # Currencies with any rate, of either source.
     def list_fx_currencies : Array(String)
       @db.query_all("SELECT DISTINCT currency FROM fx_rates ORDER BY currency", as: String)
     end
@@ -103,7 +94,6 @@ module Zipfelkasse
         currency, Domain::FXSource::Ecb.key).as(Int64) > 0
     end
 
-    # The rate an expense used: date is the expense date, source its fx_source.
     record UsedFXRate, expense_id : Int64, title : String, currency : String, date : Time, rate : Float64,
       source : Domain::FXSource do
       include DB::Serializable
@@ -114,7 +104,6 @@ module Zipfelkasse
       @source : Domain::FXSource
     end
 
-    # The rates of the most recent non-deleted foreign-currency expenses.
     def recent_used_fx_rates(limit : Int32) : Array(UsedFXRate)
       @db.query_all("SELECT id AS expense_id, title, original_currency AS currency, date, fx_rate AS rate, " \
                     "fx_source AS source FROM expenses " \

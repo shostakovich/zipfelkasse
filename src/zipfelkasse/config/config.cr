@@ -1,7 +1,7 @@
 require "socket"
 
 module Zipfelkasse
-  struct Config
+  class Config
     class Error < Exception
     end
 
@@ -15,17 +15,16 @@ module Zipfelkasse
     property mcp_secret : String = ""
     property mcp_allowed_cidrs : Array(Prefix) = Prefix.parse_list(DEFAULT_MCP_ALLOWED_CIDRS)
     property trusted_proxies = [] of Prefix
-    property ecb_base_url : String = ""
-    property ynab_base_url : String = ""
+    property ecb_base_url : String?
+    property ynab_base_url : String?
     property ynab_delay : Time::Span? = nil
     setter backup_dir : String?
     setter now : Time?
 
-    getter location : Time::Location = Time::Location.local
-    getter location_name = "Local"
+    property location : Time::Location = Time::Location.load_local
 
-    def location=(@location : Time::Location)
-      @location_name = location.name
+    def location_name : String
+      location.name
     end
 
     def backup_dir : String
@@ -37,8 +36,7 @@ module Zipfelkasse
     end
 
     def today : Time
-      t = now.in(location)
-      Time.utc(t.year, t.month, t.day)
+      Domain.date_of(now.in(location))
     end
 
     def self.from_env(env = ENV) : Config
@@ -62,8 +60,8 @@ module Zipfelkasse
       if v = Config.value(env, "ZIPFELKASSE_TEST_NOW")
         @now = Config.parse("ZIPFELKASSE_TEST_NOW") { Time.parse_rfc3339(v) }
       end
-      @ecb_base_url = Config.value(env, "ZIPFELKASSE_TEST_ECB_URL") || ""
-      @ynab_base_url = Config.value(env, "ZIPFELKASSE_TEST_YNAB_URL") || ""
+      @ecb_base_url = Config.value(env, "ZIPFELKASSE_TEST_ECB_URL")
+      @ynab_base_url = Config.value(env, "ZIPFELKASSE_TEST_YNAB_URL")
       if v = Config.value(env, "ZIPFELKASSE_TEST_YNAB_DELAY_MS")
         @ynab_delay = Config.parse("ZIPFELKASSE_TEST_YNAB_DELAY_MS") do
           (v.to_i? || raise ArgumentError.new("not a whole number of milliseconds: #{v.inspect}")).milliseconds

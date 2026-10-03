@@ -21,6 +21,8 @@ module Zipfelkasse::Web
   end
 
   module Helpers
+    extend self
+
     def eur(cents : Int64) : String
       Domain.format_cents(cents)
     end
@@ -34,7 +36,11 @@ module Zipfelkasse::Web
     end
 
     def date_time(t : Time?) : String
-      t ? t.in(Web.location).to_s("%d.%m.%Y, %H:%M") : ""
+      t.try &.to_local.to_s("%d.%m.%Y, %H:%M") || ""
+    end
+
+    def expense_count(n : Int) : String
+      n == 1 ? "1 Ausgabe" : "#{n} Ausgaben"
     end
 
     def sign_class(v : Int64) : String
@@ -78,7 +84,6 @@ module Zipfelkasse::Web
     error : String? = nil,
     scripts : Array(String) = [] of String
 
-  # Not a View itself: it holds one.
   record Layout, page : Page, content : View, me : Store::Participant?, group_name : String, flash : String? do
     include Helpers
 
