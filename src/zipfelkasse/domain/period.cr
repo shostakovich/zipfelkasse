@@ -19,8 +19,6 @@ module Zipfelkasse::Domain
       end
     end
 
-    # The labels from the period containing first to the one containing last;
-    # empty if last is before first.
     def labels(unit : PeriodUnit, first : Time, last : Time) : Array(String)
       result = [] of String
       return result if last < first
@@ -35,12 +33,10 @@ module Zipfelkasse::Domain
       result
     end
 
-    # The last day of the period that contains day.
     def last_day(unit : PeriodUnit, day : Time) : Time
       next_start(unit, start_of(unit, day)) - 1.day
     end
 
-    # The first day of the period with this label; nil if it cannot be parsed.
     def first_day(unit : PeriodUnit, label : String) : Time?
       case unit
       in .year?

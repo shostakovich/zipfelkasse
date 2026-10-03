@@ -88,7 +88,6 @@ module Zipfelkasse
       t.to_utc.to_s(TIME_FORMAT)
     end
 
-    # Calendar dates are YYYY-MM-DD.
     def self.format_date(t : Time) : String
       t.to_s("%Y-%m-%d")
     end

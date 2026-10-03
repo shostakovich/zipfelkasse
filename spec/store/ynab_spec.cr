@@ -24,6 +24,8 @@ describe "Store YNAB" do
       s.set_ynab_token(f.anna, "tok").should be_false
       c = s.get_ynab_config(f.anna)
       {c.token, c.enabled?, c.ready?, c.start_date}.should eq({"tok", true, false, nil})
+      c.inspect.should_not contain "tok\""
+      c.inspect.should contain "[redacted]"
       s.set_ynab_target(f.anna, target("p", "a", "2026-09-01"))
       c = s.get_ynab_config(f.anna)
       {c.plan_id, c.account_id, c.start_date, c.ready?}.should eq({"p", "a", date("2026-09-01"), true})

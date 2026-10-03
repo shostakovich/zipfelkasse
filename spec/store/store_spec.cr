@@ -570,6 +570,23 @@ describe Zipfelkasse::Store do
     end
   end
 
+  it "writes backups readable by the owner only" do
+    with_expense_fixture do |f|
+      with_temp_dir do |dir|
+        File.info(f.s.backup(dir, 7)).permissions.should eq File::Permissions.new(0o600)
+      end
+    end
+  end
+
+  it "logs a failing expense-change hook and keeps the change" do
+    with_expense_fixture do |f|
+      f.s.on_expense_change { |_| raise "hook broke" }
+      id = f.must_create(f.equal("Kino", 1000, "2026-09-01", f.anna, f.anna))
+      f.s.get_expense(id).title.should eq "Kino"
+      SPEC_LOG.to_s.should contain %(level=ERROR msg="expense change hook failed" expense_id=#{id} err="hook broke")
+    end
+  end
+
   it "rotates only regular backup files" do
     with_temp_dir do |dir|
       other = File.join(dir, "elsewhere.db")

@@ -1,4 +1,3 @@
-# Everything except the entry point; specs require this file.
 require "json"
 require "./domain/*"
 require "./config/*"

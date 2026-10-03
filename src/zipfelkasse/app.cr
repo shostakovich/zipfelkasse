@@ -128,7 +128,7 @@ module Zipfelkasse
         server.bind(TimeoutServer.new(host, port_num))
       end
     rescue ex : Socket::Error
-      raise Exception.new("cannot listen on #{addr}: #{ex.message}")
+      raise Exception.new("cannot listen on #{addr}", cause: ex)
     end
 
     def self.backup_loop(stopper : Stopper, store : Store, config : Config) : Nil

@@ -2,7 +2,6 @@ module Zipfelkasse::Domain
   # Calendar dates (expense date, occurrences) are `Time` at 00:00 UTC, so
   # they compare and store without time-zone surprises.
 
-  # The storage and HTML <input type=date> format.
   DATE_LAYOUT = "%Y-%m-%d"
 
   # Plausible years for calendar dates. Guards against typos ("0026") and

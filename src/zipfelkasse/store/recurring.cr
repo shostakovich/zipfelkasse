@@ -1,6 +1,5 @@
 module Zipfelkasse
   class Store
-    # This recurrence already has an expense on this date.
     class RecurringExists < Exception
       def initialize(message = "expense for this occurrence already exists")
         super

@@ -21,7 +21,6 @@ module Zipfelkasse
     # wherever it has been moved to.
     OTHER_CATEGORY = "Sonstiges"
 
-    # In display order.
     def list_categories(include_archived = false, db : DB::QueryMethods = @db) : Array(Category)
       where = include_archived ? "" : " WHERE archived_at IS NULL"
       db.query_all("SELECT #{CATEGORY_COLS} FROM categories#{where} ORDER BY position, name COLLATE NOCASE, id", as: Category)
@@ -54,7 +53,6 @@ module Zipfelkasse
       end
     end
 
-    # Positions 10, 20, … in the order of ids.
     private def renumber_categories(tx : DB::Connection, ids : Array(Int64)) : Nil
       ids.each_with_index(1) do |id, i|
         tx.exec("UPDATE categories SET position = ? WHERE id = ?", i * 10, id)
