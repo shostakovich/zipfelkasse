@@ -1,15 +1,15 @@
 module Zipfelkasse::YNAB
-  CHUNK_SIZE        = 100 # transactions per POST/PATCH
-  MAX_DELETES       =  40 # each DELETE costs one request
+  CHUNK_SIZE        = 100
+  MAX_DELETES       =  40
   MAX_SINGLE        =  20 # single attempts after a rejected batch call
-  SYSTEMIC_FAILURES =   3 # this many single failures in a row without success: defer the rest
+  SYSTEMIC_FAILURES =   3 # single failures in a row without success before the rest waits for the full sync
 
   class SyncResult
     property created = 0
     property updated = 0
     property deleted = 0
     property failed = 0
-    property? again = false # work remains: run again soon
+    property? again = false
 
     def_equals created, updated, deleted, failed, again?
 
@@ -29,47 +29,53 @@ module Zipfelkasse::YNAB
 
   class Run
     getter result = SyncResult.new
-    @store : Store
     @target_confirmed = false
 
-    def initialize(@store, @client : Client, @connection : Store::YNABConnection, @now : Proc(Time))
+    def initialize(@d : Web::Deps, @client : Client, @participant_id : Int64,
+                   @connection : {token: String, plan_id: String, account_id: String})
     end
 
     def call(wants : Hash(Int64, Want), full : Bool) : Nil
       rows = resolve_unclear(load_rows, wants)
       plan = Plan.build(wants, rows, full)
-      @store.delete_ynab_sync(pid, plan.forget)
+      store.delete_ynab_sync(pid, plan.forget)
       create(plan.creates)
       update(plan.updates)
       remove(plan.deletes)
     end
 
     private def pid : Int64
-      @connection.participant_id
+      @participant_id
     end
 
     private def plan_id : String
-      @connection.plan_id
+      @connection[:plan_id]
+    end
+
+    private def account_id : String
+      @connection[:account_id]
+    end
+
+    private def store : Store
+      @d.store
     end
 
     private def load_rows : Hash(Int64, Store::YNABSync)
-      @store.list_ynab_sync(pid).to_h { |row| {row.expense_id, row} }
+      store.list_ynab_sync(pid).to_h { |row| {row.expense_id, row} }
     end
 
-    # Creations with an unknown outcome and rows after a change of the target
-    # (only the expenses that belong to the new account) are looked up via
-    # the memo marker in the account: one request for all of them, for the
-    # whole account, because the date of the expense may have moved since.
+    # Pending rows and, after a change of the target, the rows of expenses that belong there are looked up by the memo
+    # marker, with one request for the whole account: the date of the expense may have moved since.
     private def resolve_unclear(rows : Hash(Int64, Store::YNABSync), wants : Hash(Int64, Want)) : Hash(Int64, Store::YNABSync)
-      unclear = rows.values.select { |row| row.pending? || (row.retarget? && wants.has_key?(row.expense_id)) }
+      unclear = rows.values.select { |row| row.state.pending? || (row.state.retarget? && wants.has_key?(row.expense_id)) }
       return rows if unclear.empty?
       found = {} of Int64 => String
-      @client.account_transactions(plan_id, @connection.account_id).each do |txn|
+      @client.account_transactions(plan_id, account_id).each do |txn|
         next if txn.deleted
         YNAB.marker_id(txn.memo || "").try { |expense_id| found[expense_id] = txn.id }
       end
-      resolved = unclear.map { |row| row.unknown(found[row.expense_id]?) }
-      @store.put_ynab_sync(resolved)
+      resolved = unclear.map { |row| Store::YNABSync.new(row.expense_id, pid, found[row.expense_id]?) }
+      store.put_ynab_sync(resolved)
       rows.merge(resolved.to_h { |row| {row.expense_id, row} })
     end
 
@@ -77,12 +83,12 @@ module Zipfelkasse::YNAB
       wants.each_slice(CHUNK_SIZE) do |chunk|
         mark_pending(chunk)
         begin
-          created = @client.create_transactions(plan_id, chunk.map(&.new_txn(@connection.account_id)))
+          created = @client.create_transactions(plan_id, chunk.map(&.new_txn(account_id)))
         rescue ex
           failure = Failure.of(ex)
-          raise ex if failure.unclear? # stays pending, the next run resolves it
+          raise ex if failure.unclear?
           if failure.aborts_run?
-            unmark_pending(chunk) # certainly not created
+            unmark_pending(chunk)
             raise ex
           end
           create_each(chunk)
@@ -93,11 +99,11 @@ module Zipfelkasse::YNAB
     end
 
     private def mark_pending(wants : Array(Want)) : Nil
-      @store.put_ynab_sync(wants.map { |want| Store::YNABSync.pending(want.expense_id, pid) })
+      store.put_ynab_sync(wants.map { |want| Store::YNABSync.pending(want.expense_id, pid) })
     end
 
     private def unmark_pending(wants : Array(Want)) : Nil
-      @store.put_ynab_sync(wants.map { |want| Store::YNABSync.new(want.expense_id, pid) })
+      store.put_ynab_sync(wants.map { |want| Store::YNABSync.new(want.expense_id, pid) })
     rescue ex
       Log.warn(exception: ex, &.emit("ynab: undo pending mark", person: pid))
     end
@@ -105,7 +111,7 @@ module Zipfelkasse::YNAB
     private def apply_created(wants : Array(Want), created : Array(APITxn)) : Nil
       ids = {} of Int64 => String
       created.each { |txn| YNAB.marker_id(txn.memo || "").try { |expense_id| ids[expense_id] = txn.id } }
-      now = @now.call
+      now = @d.now
       rows = wants.map do |want|
         if txn_id = ids[want.expense_id]?
           @result.created += 1
@@ -116,7 +122,7 @@ module Zipfelkasse::YNAB
           Store::YNABSync.pending(want.expense_id, pid, "YNAB hat das Anlegen nicht bestätigt.")
         end
       end
-      @store.put_ynab_sync(rows)
+      store.put_ynab_sync(rows)
     end
 
     private def create_each(wants : Array(Want)) : Nil
@@ -127,20 +133,19 @@ module Zipfelkasse::YNAB
           return unmark_pending(wants[i..])
         end
         begin
-          created = @client.create_transactions(plan_id, [want.new_txn(@connection.account_id)])
+          created = @client.create_transactions(plan_id, [want.new_txn(account_id)])
         rescue ex
           failure = Failure.of(ex)
           if failure.unclear?
-            unmark_pending(wants[i + 1..]) # not tried yet
+            unmark_pending(wants[i + 1..])
             raise ex
           elsif failure.aborts_run?
             unmark_pending(wants[i..])
             raise ex
           end
           @result.failed += 1
-          @store.put_ynab_sync(failed_row(want, nil, ex))
-          # Everything fails the same way (e.g. account closed): do not try
-          # the rest one by one, defer it until the full sync.
+          store.put_ynab_sync(failed_row(want, nil, ex))
+          # Everything fails the same way (e.g. account closed): the rest waits for the full sync.
           return fail_all(wants[i + 1..].map { |w| {w, nil.as(String?)} }, ex) if !succeeded && i + 1 >= SYSTEMIC_FAILURES
           next
         end
@@ -165,14 +170,14 @@ module Zipfelkasse::YNAB
 
     private def apply_updated(updates : Array(Update), updated : Array(APITxn)) : Nil
       by_id = updated.to_h { |txn| {txn.id, txn} }
-      now = @now.call
+      now = @d.now
       rows = updates.map do |update|
         want, txn = update.want, by_id[update.txn_id]?
         if txn.nil?
           @result.failed += 1
           Store::YNABSync.failed(want.expense_id, pid, update.txn_id, want.fingerprint, "YNAB hat die Änderung nicht bestätigt.")
         elsif txn.deleted
-          # deleted by hand in YNAB: create it again (the app is authoritative)
+          # Deleted by hand in YNAB: the app is authoritative and creates it again.
           @result.again = true
           Store::YNABSync.new(want.expense_id, pid)
         else
@@ -180,7 +185,7 @@ module Zipfelkasse::YNAB
           Store::YNABSync.synced(want.expense_id, pid, update.txn_id, want.fingerprint, now)
         end
       end
-      @store.put_ynab_sync(rows)
+      store.put_ynab_sync(rows)
     end
 
     private def update_each(updates : Array(Update)) : Nil
@@ -199,12 +204,12 @@ module Zipfelkasse::YNAB
             confirm_target
             succeeded = true
             @result.again = true
-            @store.put_ynab_sync(Store::YNABSync.new(want.expense_id, pid))
+            store.put_ynab_sync(Store::YNABSync.new(want.expense_id, pid))
             next
           end
           raise ex if failure.aborts_run?
           @result.failed += 1
-          @store.put_ynab_sync(failed_row(want, update.txn_id, ex))
+          store.put_ynab_sync(failed_row(want, update.txn_id, ex))
           return fail_all(updates[i + 1..].map { |u| {u.want, u.txn_id.as(String?)} }, ex) if !succeeded && i + 1 >= SYSTEMIC_FAILURES
           next
         end
@@ -228,40 +233,37 @@ module Zipfelkasse::YNAB
         end
         if error && Failure.of(error).not_found?
           confirm_target
-          error = nil # already deleted in YNAB
+          error = nil
         end
         if error
           raise error if Failure.of(error).aborts_run?
           @result.failed += 1
-          @store.put_ynab_sync(row.delete_failed(YNAB.redact(error.message || "", @connection.token)))
+          store.put_ynab_sync(row.copy_with(state: Store::YNABSyncState::DeleteFailed,
+            last_error: YNAB.redact(error.message.to_s, @connection[:token])))
           next
         end
         @result.deleted += 1
-        @store.delete_ynab_sync(pid, row.expense_id)
+        store.delete_ynab_sync(pid, row.expense_id)
       end
     end
 
-    # Checks, once per run with one request, that plan and account exist
-    # before a 404 for a single transaction is taken as "the transaction is
-    # gone". YNAB answers 404 for every transaction as well if the whole plan
-    # is gone or invisible to the token (token of another YNAB user);
-    # dropping transaction IDs or counting DELETEs as done would then lead to
-    # duplicates and leftovers once the setup is corrected. Its error stops
-    # the run.
+    # YNAB also answers 404 for every transaction if the whole plan is gone or invisible to the token (another YNAB
+    # user); taking that as "transaction gone" would leave duplicates and leftovers once the setup is fixed. So, once
+    # per run, plan and account must exist before a 404 counts; otherwise the run stops.
     private def confirm_target : Nil
       return if @target_confirmed
-      raise APIError.new(404, detail: "Konto gelöscht") if @client.account(plan_id, @connection.account_id).deleted
+      raise APIError.new(404, "Konto gelöscht") if @client.account(plan_id, account_id).deleted
       @target_confirmed = true
     end
 
     private def fail_all(wants : Array({Want, String?}), error : Exception) : Nil
       @result.failed += wants.size
-      @store.put_ynab_sync(wants.map { |want, txn_id| failed_row(want, txn_id, error) })
+      store.put_ynab_sync(wants.map { |want, txn_id| failed_row(want, txn_id, error) })
     end
 
     private def failed_row(want : Want, txn_id : String?, error : Exception | String) : Store::YNABSync
-      message = error.is_a?(String) ? error : error.message || ""
-      Store::YNABSync.failed(want.expense_id, pid, txn_id, want.fingerprint, YNAB.redact(message, @connection.token))
+      message = error.is_a?(String) ? error : error.message.to_s
+      Store::YNABSync.failed(want.expense_id, pid, txn_id, want.fingerprint, YNAB.redact(message, @connection[:token]))
     end
   end
 end

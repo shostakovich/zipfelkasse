@@ -9,7 +9,6 @@ private LIST_GIRO    = "GET /v1/plans/plan-1/accounts/acc-giro/transactions"
 private module Fixture
   class_property! fake : FakeYNAB
   class_property! service : YNAB::Service
-  class_property now : Time = Time.utc(2026, 10, 2, 12)
 end
 
 private def fake : FakeYNAB
@@ -24,8 +23,12 @@ private def anna : Int64
   household.anna
 end
 
+private def now : Time
+  household.deps.config.now
+end
+
 private def advance(span : Time::Span) : Nil
-  Fixture.now += span
+  household.now = now + span
 end
 
 private def target(account : String, start : String) : Store::YNABTarget
@@ -97,10 +100,9 @@ describe YNAB::Service do
 
   around_each do |example|
     Fixture.fake = FakeYNAB.new
-    Fixture.now = Time.utc(2026, 10, 2, 12)
+    household.now = Time.utc(2026, 10, 2, 12)
     Fixture.service = YNAB::Service.new(household.deps)
     service.base_url = fake.base_url
-    service.now = -> { Fixture.now }
     begin
       example.run
     ensure
@@ -124,7 +126,7 @@ describe YNAB::Service do
         .should eq({-42000, "2026-09-15", "Einkauf Rewe", "c-food", FakeYNAB::ACCOUNT, "cleared", true})
       transaction.memo.should eq "Gesamt 84,00 € · bezahlt von Anna · zipfelkasse ##{id}"
       row = rows[id]
-      {row.txn_id, row.synced_hash.nil?, row.synced_at.nil?, row.last_error}.should eq({transaction.id, false, false, nil})
+      {row.txn_id, row.state, row.synced_at.nil?, row.last_error}.should eq({transaction.id, Store::YNABSyncState::Synced, false, nil})
     end
 
     it "sends nothing when nothing changed, not even in a full sync" do
@@ -170,7 +172,7 @@ describe YNAB::Service do
       create(shared("Einkauf", 8400, "2026-09-15"))
       sync!
 
-      {status.last_sync, status.error, status.summary}.should eq({Fixture.now, nil, "1 neu · 0 geändert · 0 gelöscht"})
+      {status.last_sync, status.error, status.summary}.should eq({now, nil, "1 neu · 0 geändert · 0 gelöscht"})
     end
 
     it "bundles all changes of one kind into a single request" do
@@ -311,7 +313,7 @@ describe YNAB::Service do
       id = create(shared("Kino", 2400, "2026-09-20"))
       fake.lost_post = true
       sync.failure.should eq YNAB::Failure::Unclear
-      rows[id].pending?.should be_true
+      rows[id].state.pending?.should be_true
 
       advance(6.minutes)
       requests
@@ -319,7 +321,7 @@ describe YNAB::Service do
 
       requests.should eq [LIST_SHARED, PATCH]
       fake.live.size.should eq 1
-      {rows[id].txn_id, rows[id].pending?}.should eq({fake.live.first.id, false})
+      {rows[id].txn_id, rows[id].state.pending?}.should eq({fake.live.first.id, false})
     end
 
     it "searches a lost creation from the date of its own expense" do
@@ -384,7 +386,7 @@ describe YNAB::Service do
 
       requests.should eq [LIST_SHARED]
       fake.live.size.should eq 1
-      rows[id].pending?.should be_true
+      rows[id].state.pending?.should be_true
 
       fake.bare_list = false
       advance(6.minutes)
@@ -443,7 +445,7 @@ describe YNAB::Service do
       end
 
       {status.error, status.retry_at}.should eq({nil, nil})
-      rows.values.map(&.pending?).should eq [true]
+      rows.values.map(&.state.pending?).should eq [true]
     end
   end
 
@@ -456,9 +458,9 @@ describe YNAB::Service do
       sync.failure.should eq YNAB::Failure::RateLimited
 
       requests.should eq [POST]
-      {status.retry_at, status.backoff}.should eq({Fixture.now + 5.minutes, 5.minutes})
+      {status.retry_at, status.backoff}.should eq({now + 5.minutes, 5.minutes})
       status.error.to_s.should contain "Anfragelimit"
-      {rows[id].pending?, rows[id].txn_id}.should eq({false, nil})
+      {rows[id].state.pending?, rows[id].txn_id}.should eq({false, nil})
       sync.skipped.should eq YNAB::Skip::BackedOff
       requests.should be_empty
     end

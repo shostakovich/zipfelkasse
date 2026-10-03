@@ -5,7 +5,7 @@ module Zipfelkasse::YNAB
 
   struct Want
     getter posting : Posting
-    getter category : String? # YNAB category ID, nil = uncategorized
+    getter category : String?
     getter fingerprint : String
 
     delegate expense_id, date, payee, memo, milliunits, to: @posting
@@ -19,9 +19,7 @@ module Zipfelkasse::YNAB
         category_id: category, cleared: "cleared", approved: true)
     end
 
-    # Changes the category only if mapped: without a mapping a category set
-    # by hand in YNAB is kept. cleared/approved are no longer touched after
-    # creation (e.g. reconciled transactions).
+    # Keeps a category set by hand in YNAB unless one is mapped, and cleared/approved (e.g. reconciled) as they are.
     def patch_txn(txn_id : String) : SaveTxn
       SaveTxn.new(date: date_text, amount: milliunits, payee_name: payee, memo: memo, id: txn_id, category_id: category)
     end
@@ -47,21 +45,18 @@ module Zipfelkasse::YNAB
       wants.each do |id, want|
         row = rows[id]?
         txn_id = row.try(&.txn_id)
-        if !full && row && row.failed_at?(want.fingerprint)
-          # failed and unchanged: retry only in the full sync
-        elsif row.nil? || txn_id.nil?
+        next if !full && row && row.at?(Store::YNABSyncState::Failed, want.fingerprint)
+        if row.nil? || txn_id.nil?
           creates << want
-        elsif !row.current?(want.fingerprint)
+        elsif !row.at?(Store::YNABSyncState::Synced, want.fingerprint)
           updates << Update.new(want, txn_id)
         end
       end
       rows.each do |id, row|
         next if wants.has_key?(id)
-        # Gone (deleted or share 0): delete, even if the last attempt (e.g. a
-        # PATCH) failed. Only a failed DELETE waits for the full sync.
         if row.txn_id.nil?
           forget << id
-        elsif full || !row.delete_failed?
+        elsif full || !row.state.delete_failed?
           deletes << row
         end
       end

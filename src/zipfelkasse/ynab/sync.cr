@@ -8,9 +8,9 @@ module Zipfelkasse::YNAB
   alias Status = Store::YNABStatus
 
   enum Skip
-    NotReady     # token, plan, account or start date missing, or changed in the meantime
-    TokenInvalid # YNAB refused the token before; a new one resets this
-    BackedOff    # rate limit or outage: YNAB is not asked until status.retry_at
+    NotReady
+    TokenInvalid
+    BackedOff
   end
 
   record Outcome, result : SyncResult, status : Status, error : Exception? = nil, skipped : Skip? = nil,
@@ -26,7 +26,7 @@ module Zipfelkasse::YNAB
 
   class Service
     def today : Time
-      YNAB.today(@now.call, location)
+      YNAB.today(@d.now, location)
     end
 
     def load_status(participant_id : Int64) : Status
@@ -50,17 +50,14 @@ module Zipfelkasse::YNAB
         next if outcome.skipped.try(&.not_ready?)
         next_run = Math.min(next_run, @debounce) if outcome.result.again?
         if retry_at = outcome.status.retry_at
-          wait = retry_at - @now.call
+          wait = retry_at - @d.now
           next_run = Math.min(next_run, wait + 1.second) if wait.positive?
         end
       end
       next_run
     end
 
-    # Syncs one person under the mutex with the connection as it is now. A
-    # sync uses the connection read at its start throughout, so token or
-    # target must not change while it runs (see change_connection). full also
-    # retries unchanged transactions that failed before.
+    # Token and target must not change during a sync, which uses them as read at its start (see change_connection).
     def sync_person(participant_id : Int64, full : Bool, manual : Bool = false) : Outcome
       @sync_mutex.synchronize do
         outcome = begin
@@ -77,13 +74,13 @@ module Zipfelkasse::YNAB
       config = @d.store.get_ynab_config?(participant_id) || return Outcome.skipped(Skip::NotReady)
       connection = config.connection || return Outcome.skipped(Skip::NotReady)
       status = load_status(participant_id)
-      now = @now.call
+      now = @d.now
       return Outcome.skipped(Skip::TokenInvalid, status) if status.token_invalid?
       if (retry_at = status.retry_at) && now < retry_at
         return Outcome.skipped(Skip::BackedOff, status)
       end
 
-      run = Run.new(@d.store, client(connection.token), connection, @now)
+      run = Run.new(@d, client(connection[:token]), participant_id, connection)
       error = begin
         connected_at = config.connected_at || @d.store.ensure_ynab_connected_at(participant_id)
         run.call(desired(config, connected_at), full)
@@ -91,7 +88,7 @@ module Zipfelkasse::YNAB
       rescue ex
         ex
       end
-      message = error.try { |ex| YNAB.redact(ex.message || ex.class.name, connection.token) }
+      message = error.try { |ex| YNAB.redact(ex.message || ex.class.name, connection[:token]) }
       status = status_after(status, now, run.result, error, message)
       # Aborted by the shutdown: no error and no pause for the next start.
       return Outcome.new(run.result, status, error, message: message) if error && @http.stopped?
@@ -126,8 +123,6 @@ module Zipfelkasse::YNAB
 
     private def desired(config : Store::YNABConfig, connected_at : Time?) : Hash(Int64, Want)
       selection = Selection.for_config(@d.store, config, connected_at, today)
-      # All of the person's expenses, not just from the start date: earlier
-      # ones can belong too (entered later or already in YNAB).
       expenses = @d.store.list_expenses(Store::ExpenseFilter.new(participant_id: config.participant_id))
       categories = @d.store.ynab_category_map(config.participant_id)
       selection.postings(expenses, config.participant_id).to_h do |posting|
@@ -135,8 +130,7 @@ module Zipfelkasse::YNAB
       end
     end
 
-    # Never logs the token. A skipped sync is not logged: the settings page
-    # shows the pause or the invalid token, and they recur on every run.
+    # A skipped sync recurs on every run and the settings page shows why, so it is not logged.
     private def log(participant_id : Int64, outcome : Outcome, manual : Bool) : Nil
       return if outcome.skipped
       how = manual ? " (now)" : ""
@@ -148,8 +142,7 @@ module Zipfelkasse::YNAB
     end
   end
 
-  # The last day that YNAB will certainly not reject as future: today in the
-  # app time zone, but at most today in UTC.
+  # YNAB rejects dates after today in UTC.
   def self.today(now : Time, location : Time::Location) : Time
     local, utc = Domain.date_of(now.in(location)), Domain.date_of(now.to_utc)
     utc < local ? utc : local

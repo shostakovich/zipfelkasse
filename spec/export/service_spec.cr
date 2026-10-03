@@ -49,7 +49,7 @@ describe Export::Service do
       store.clock = -> { connected_at }
       store.set_ynab_token(household.anna, "token")
       store.set_ynab_target(household.anna, Store::YNABTarget.new("plan", "account", start: date("2026-09-01")))
-      store.put_ynab_sync(Store::YNABSync.new(1_i64, household.anna, "t1", "hash"))
+      store.put_ynab_sync(Store::YNABSync.synced(1_i64, household.anna, "t1", "hash", Time.utc(2026, 9, 1)))
 
       payees(service.ynab_csv(store.get_participant(household.anna), everyone)).should eq ["Brötchen", "Käse"]
     end

@@ -261,7 +261,7 @@ describe "Seed invariants" do
 
   scenario "the YNAB fake holds exactly the transactions selected for the connected person", world do
     config = E2E::Database.open(world.app.db_path) do |db|
-      db.query_all("SELECT participant_id, account_id, start_date, connected_at FROM ynab_config WHERE account_id != ''",
+      db.query_all("SELECT participant_id, account_id, start_date, connected_at FROM ynab_config WHERE account_id IS NOT NULL",
         as: {Int64, String, String, String})
     end
     config.size.should eq 1
@@ -287,9 +287,9 @@ describe "Seed invariants" do
     actual.should eq expected
 
     E2E::Database.open(world.app.db_path) do |db|
-      db.query_all("SELECT expense_id, ynab_txn_id FROM ynab_sync WHERE participant_id = ? AND ynab_txn_id != ''", person, as: {Int64, String}).to_h
+      db.query_all("SELECT expense_id, ynab_txn_id FROM ynab_sync WHERE participant_id = ? AND ynab_txn_id IS NOT NULL", person, as: {Int64, String}).to_h
         .should eq live.to_h { |t| {t.memo.not_nil!.match(/zipfelkasse #(\d+)\z/).not_nil![1].to_i64, t.id} }
-      db.scalar("SELECT count(*) FROM ynab_sync WHERE last_error != '' OR participant_id != ?", person).should eq 0
+      db.scalar("SELECT count(*) FROM ynab_sync WHERE last_error IS NOT NULL OR participant_id != ?", person).should eq 0
     end
   end
 

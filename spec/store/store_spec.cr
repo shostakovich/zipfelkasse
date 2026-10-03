@@ -28,10 +28,11 @@ describe Store do
   end
 
   it "applies migrations above the base version once" do
-    migrations = [{6, "ALTER TABLE settings ADD COLUMN note TEXT"}, {7, "UPDATE settings SET value = 'Neu'"}]
+    latest = Store::LATEST_VERSION
+    migrations = Store::MIGRATIONS + [{latest + 1, "ALTER TABLE settings ADD COLUMN note TEXT"}, {latest + 2, "UPDATE settings SET value = 'Neu'"}]
     2.times do
       store.migrate(migrations)
-      store.schema_version.should eq 7
+      store.schema_version.should eq latest + 2
     end
     store.group_name.should eq "Neu"
   end

@@ -17,11 +17,11 @@ describe "Store YNAB" do
       expect_raises(Store::NotFound) { store.set_ynab_target(household.anna, target("p", "a", "2026-09-01")) }
     end
 
-    it "is enabled but not ready with a token alone" do
+    it "is not ready with a token alone" do
       store.set_ynab_token(household.anna, "tok").should be_false
 
       config = store.get_ynab_config(household.anna)
-      {config.token, config.enabled?, config.ready?, config.start_date}.should eq({"tok", true, false, nil})
+      {config.token, config.ready?, config.start_date}.should eq({"tok", false, nil})
     end
 
     it "is ready with token, plan, account and start date" do
@@ -48,13 +48,13 @@ describe "Store YNAB" do
       store.list_ynab_configs.map(&.participant_id).should eq [household.anna, household.ben]
     end
 
-    it "keeps plan and account when the token is removed, but is no longer enabled" do
+    it "keeps plan and account when the token is removed, but is no longer listed" do
       store.set_ynab_token(household.anna, "tok")
       store.set_ynab_target(household.anna, target("p", "a", "2026-09-01"))
       store.set_ynab_token(household.anna, nil)
 
       config = store.get_ynab_config(household.anna)
-      {config.token, config.enabled?, config.ready?, config.plan_id}.should eq({nil, false, false, "p"})
+      {config.token, config.ready?, config.plan_id}.should eq({nil, false, "p"})
       store.list_ynab_configs.should be_empty
     end
   end
@@ -102,13 +102,13 @@ describe "Store YNAB" do
       expense_id = household.create(household.equal("Kino", 1000, "2026-09-10", household.anna, household.anna, household.ben))
       store.set_ynab_token(household.anna, "tok")
       store.set_ynab_target(household.anna, target("p", "a", "2026-09-01"))
-      store.put_ynab_sync(Store::YNABSync.new(expense_id, household.anna, txn_id: "t1", synced_hash: "h", synced_at: synced_at))
+      store.put_ynab_sync(Store::YNABSync.synced(expense_id, household.anna, "t1", "h", synced_at))
     end
 
     it "is stored per expense" do
       rows = store.list_ynab_sync(household.anna)
 
-      {rows.size, rows[0].txn_id, rows[0].synced_at}.should eq({1, "t1", synced_at})
+      rows.should eq [Store::YNABSync.synced(expense_id, household.anna, "t1", "h", synced_at)]
     end
 
     it "is kept when only the start date changes" do
@@ -121,7 +121,7 @@ describe "Store YNAB" do
       store.set_ynab_target(household.anna, target("p", "b", "2026-08-01"))
 
       rows = store.list_ynab_sync(household.anna)
-      {rows.size, rows[0].txn_id, rows[0].synced_hash, rows[0].synced_at}.should eq({1, nil, Store::YNABSync::RETARGET, nil})
+      rows.should eq [Store::YNABSync.new(expense_id, household.anna, state: Store::YNABSyncState::Retarget)]
       store.ynab_sync_summary(household.anna)[0].should eq 0
     end
 
@@ -265,6 +265,51 @@ describe "Store YNAB" do
       store.set_ynab_status(household.anna, status)
       store.set_ynab_token(household.anna, "")
       store.get_ynab_status(household.anna).should eq without_token_state
+    end
+  end
+end
+
+describe "Migration 7" do
+  it "turns empty YNAB values into NULL and unpacks the sync state" do
+    with_temp_dir do |dir|
+      path = File.join(dir, "v5.db")
+      DB.open("sqlite3:#{path}") do |db|
+        db.using_connection do |connection|
+          Store.exec_script(connection, Store::SCHEMA_SQL)
+          Store.exec_script(connection, <<-SQL)
+            PRAGMA user_version = 5;
+            INSERT INTO participants (id, name, created_at) VALUES (1, 'Anna', 'x'), (2, 'Ben', 'x');
+            INSERT INTO expenses (id, title, date, paid_by, split_mode, amount_cents, original_amount_minor, created_at, updated_at)
+            WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 6)
+            SELECT i, 'E', '2026-09-01', 1, 'equal', 100, 100, 'x', 'x' FROM n;
+            INSERT INTO ynab_config (participant_id, token, budget_id, account_id, start_date, enabled, updated_at, summary, error)
+            VALUES (1, 'tok', 'p', 'a', '2026-09-01', 1, 'x', '1 neu', ''), (2, 'old', '', '', NULL, 0, 'x', '', 'kaputt');
+            INSERT INTO ynab_sync (expense_id, participant_id, ynab_txn_id, synced_hash, last_error) VALUES
+            (1, 1, 't1', 'fp1', ''), (2, 1, '', 'pending', ''), (3, 1, '', 'retarget', ''),
+            (4, 1, 't4', 'error:delete', 'kaputt'), (5, 1, 't5', 'error:fp5', 'kaputt'), (6, 1, '', '', '');
+          SQL
+        end
+      end
+
+      migrated = Store.open(path)
+      begin
+        anna, ben = migrated.get_ynab_config(1), migrated.get_ynab_config(2)
+        {anna.token, anna.plan_id, anna.account_id, anna.ready?}.should eq({"tok", "p", "a", true})
+        {ben.token, ben.plan_id, ben.account_id}.should eq({nil, nil, nil})
+        {migrated.get_ynab_status(1).summary, migrated.get_ynab_status(1).error}.should eq({"1 neu", nil})
+        {migrated.get_ynab_status(2).summary, migrated.get_ynab_status(2).error}.should eq({nil, "kaputt"})
+        migrated.list_ynab_configs.map(&.participant_id).should eq [1]
+        migrated.list_ynab_sync(1).should eq [
+          Store::YNABSync.new(1, 1, "t1", Store::YNABSyncState::Synced, "fp1"),
+          Store::YNABSync.new(2, 1, nil, Store::YNABSyncState::Pending),
+          Store::YNABSync.new(3, 1, nil, Store::YNABSyncState::Retarget),
+          Store::YNABSync.new(4, 1, "t4", Store::YNABSyncState::DeleteFailed, last_error: "kaputt"),
+          Store::YNABSync.new(5, 1, "t5", Store::YNABSyncState::Failed, "fp5", last_error: "kaputt"),
+          Store::YNABSync.new(6, 1),
+        ]
+      ensure
+        migrated.close
+      end
     end
   end
 end

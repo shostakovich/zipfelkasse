@@ -1,32 +1,22 @@
 require "wait_group"
 
-# Syncs each person's own share of every expense into a YNAB clearing
-# account "Geteilt" (per person, with their own token).
-#
-# Model: for each expense the app writes only the person's share as an
-# outflow with the mapped YNAB category. Bank payments for shared expenses and
-# reimbursements are marked in YNAB as transfers to/from "Geteilt". Then the
-# balance of "Geteilt" in YNAB equals the person's balance in the app.
+# Each person's share of every expense goes as an outflow into their clearing account "Geteilt" in YNAB; bank payments
+# and reimbursements are transfers to and from it there, so its balance equals the person's balance in the app.
 module Zipfelkasse::YNAB
   Log = ::Log.for(self)
 
-  DEFAULT_DEBOUNCE    = 5.seconds  # collect changes before a run
-  DEFAULT_START_DELAY = 15.seconds # first full sync after startup
+  DEFAULT_DEBOUNCE    = 5.seconds
+  DEFAULT_START_DELAY = 15.seconds
   FULL_INTERVAL       = 1.hour
-  CACHE_TTL           = 10.minutes # plans/accounts/categories for the settings page
+  CACHE_TTL           = 10.minutes
 
   class Service
     getter d : Web::Deps
     property base_url : String
-    # Status times, retry_at, today and the cache use this clock; scheduling
-    # uses the monotonic one.
-    property now : Proc(Time)
     property debounce : Time::Span
     property start_delay : Time::Span
 
     @wake = Channel(Nil).new(1)
-    # At most one sync at a time (worker or button); changes of token or
-    # target wait for it (see change_connection).
     @sync_mutex = Mutex.new
     @http = OutboundHTTP.new(HTTP_TIMEOUT, MAX_BODY)
     @bg_busy = Set(Int64).new
@@ -36,7 +26,6 @@ module Zipfelkasse::YNAB
 
     def initialize(@d : Web::Deps)
       @base_url = @d.config.ynab_base_url.presence || DEFAULT_BASE_URL
-      @now = -> { @d.now }
       delay = @d.config.ynab_delay
       @debounce = delay && delay.positive? ? delay : DEFAULT_DEBOUNCE
       @start_delay = delay && delay.positive? ? delay : DEFAULT_START_DELAY
@@ -51,13 +40,11 @@ module Zipfelkasse::YNAB
       @d.config.location
     end
 
-    # Never blocks. Every run compares the complete desired state with
-    # ynab_sync (without requests if nothing differs), so a signal is
-    # enough.
+    # Every run compares the complete desired state with ynab_sync, so a pending signal is enough.
     def trigger : Nil
       select
       when @wake.send(nil)
-      else # a run is already pending
+      else
       end
     end
 
@@ -88,10 +75,8 @@ module Zipfelkasse::YNAB
       stop
     end
 
-    # Runs a change of token or target under the sync mutex so that it never
-    # interleaves with a sync: otherwise the sync would write transaction IDs
-    # of the old account into the state for the new one, or overwrite the
-    # status just reset for a new token with its own result.
+    # A sync running meanwhile would write transaction IDs of the old account into the state for the new one, or
+    # overwrite the status just reset for a new token.
     def change_connection(&)
       @sync_mutex.synchronize { yield }
     end
@@ -126,17 +111,17 @@ module Zipfelkasse::YNAB
     end
 
     private def cached(cache : Hash(String, {Time, T}), key : String, refresh : Bool, & : -> T) : T forall T
-      if !refresh && (e = cache[key]?) && @now.call - e[0] < CACHE_TTL
+      if !refresh && (e = cache[key]?) && @d.now - e[0] < CACHE_TTL
         return e[1]
       end
       v = yield
-      cache[key] = {@now.call, v}
+      cache[key] = {@d.now, v}
       v
     end
   end
 
   protected def self.empty_config(participant_id : Int64) : Store::YNABConfig
-    Store::YNABConfig.new(participant_id, nil, nil, nil, nil, false, nil, nil)
+    Store::YNABConfig.new(participant_id, nil, nil, nil, nil, nil)
   end
 
   def self.redact(msg : String, token : String?) : String
