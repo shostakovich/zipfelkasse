@@ -2,7 +2,6 @@ module Zipfelkasse::Web
   # The primary color (Spliit green, --primary in light mode).
   THEME_COLOR = "#047756"
 
-  # Paths that work without a selected person.
   class PublicController < Controller
     def register : Nil
       get("/static/*path") do |env|

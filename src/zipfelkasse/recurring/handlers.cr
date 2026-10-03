@@ -125,7 +125,6 @@ module Zipfelkasse::Recurring
       redirect(env, LIST_PATH, "Wiederholung gelöscht. Bereits angelegte Ausgaben bleiben erhalten.")
     end
 
-    # The expense from the "ausgabe" parameter.
     private def find_expense(env : HTTP::Server::Context, value : String) : Store::Expense
       id = Web.positive_id?(value)
       expense = or_404(env, "Ausgabe nicht gefunden.", id && @d.store.get_expense?(id))

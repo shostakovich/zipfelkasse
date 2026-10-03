@@ -1,6 +1,4 @@
 module Zipfelkasse::Web
-  # Base of the HTTP side of a feature: each subclass registers its routes
-  # with Kemal's DSL; handlers return the body.
   abstract class Controller
     def initialize(@d : Deps)
     end

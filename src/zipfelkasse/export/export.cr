@@ -1,6 +1,3 @@
-# Downloads: all expenses as CSV/JSON, and one's own shares as OFX/CSV for
-# the YNAB file import. The YNAB files contain exactly the transactions the
-# YNAB sync writes too (YNAB::Selection).
 module Zipfelkasse::Export
   # The optional date range (?von=…&bis=…, both inclusive).
   record Period, from : Time? = nil, to : Time? = nil do

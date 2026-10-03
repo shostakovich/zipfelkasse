@@ -266,7 +266,6 @@ module Zipfelkasse::Web
       or_404(env, "Ausgabe nicht gefunden.", id && @d.store.get_expense?(id))
     end
 
-    # Creates the expense (existing nil) or updates it.
     private def save(env : HTTP::Server::Context, existing : Store::Expense?) : String
       form = ExpenseForm.from_post(env.params.body, existing, @d.store.list_participants(true))
       begin

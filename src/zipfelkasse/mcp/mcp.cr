@@ -1,21 +1,10 @@
 require "crypto/subtle"
 
-# An MCP server (JSON-RPC 2.0 over Streamable HTTP, JSON-only responses) at
-# /mcp/<MCP_SECRET>. Its tools read, and two of them add expenses and
-# reimbursements; nothing is changed or deleted.
-#
-# Access (see docs/MCP.md): wrong secret → 404, client IP not in
-# MCP_ALLOWED_CIDRS → 403 (behind TRUSTED_PROXIES, X-Forwarded-For counts),
-# Origin header set → 403. Without MCP_SECRET, MCP is disabled.
-#
-# Protocol: "dual era". Modern clients (2026-07-28, stateless, _meta in every
-# request, mandatory headers) and older clients with the initialize handshake
-# (2025-11-25, 2025-06-18, 2025-03-26) are served on the same endpoint.
-# There are no sessions and no SSE streams.
+# The MCP server at /mcp/<MCP_SECRET>: docs/MCP.md describes access and protocol.
 module Zipfelkasse::MCP
   Log = ::Log.for(self)
 
-  MAX_BODY = 1 << 20
+  MAX_BODY = Web::MAX_BODY_BYTES
 
   # What is logged about a request.
   class RequestInfo

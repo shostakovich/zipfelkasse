@@ -60,13 +60,10 @@ module Zipfelkasse::Web
     include Helpers
   end
 
-  # Expands the ECR template *path* (relative to src/views, e.g.
-  # "web/home.ecr") at this place, writing to *io*.
   macro template(io, path)
     \{{ run("{{__DIR__.id}}/ecr_process", "{{__DIR__.id}}/../../views/" + {{path}}, {{io.id.stringify}}) }}
   end
 
-  # Defines `to_s` of a view record from its template.
   macro view(path)
     include ::Zipfelkasse::Web::View
 
