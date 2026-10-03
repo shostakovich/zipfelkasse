@@ -3,8 +3,8 @@ require "digest/sha256"
 module Zipfelkasse::Web
   module Static
     FILES = {} of String => Bytes
-    {% for path in system("cd #{__DIR__}/../../../internal/web/static && find . -type f -not -name '.*' -not -name '_*' | sort").lines %}
-      FILES[{{ path[2..] }}] = {{ read_file("#{__DIR__}/../../../internal/web/static/#{path[2..].id}") }}.to_slice
+    {% for path in system("cd #{__DIR__}/../../static && find . -type f -not -name '.*' -not -name '_*' | sort").lines %}
+      FILES[{{ path[2..] }}] = {{ read_file("#{__DIR__}/../../static/#{path[2..].id}") }}.to_slice
     {% end %}
 
     HASHES = FILES.to_h { |name, bytes| {name, Digest::SHA256.hexdigest(bytes)[0, 10]} }

@@ -22,8 +22,8 @@ module Zipfelkasse
 
     # Embedded at compile time: {number, file name, SQL}.
     MIGRATION_FILES = [] of {Int32, String, String}
-    {% for name in system("ls #{__DIR__}/../../../internal/store/migrations").lines.sort %}
-      MIGRATION_FILES << Tuple.new({{ name.split("_")[0].to_i }}, {{ name }}, {{ read_file("#{__DIR__}/../../../internal/store/migrations/#{name.id}") }})
+    {% for name in system("ls #{__DIR__}/migrations").lines.sort %}
+      MIGRATION_FILES << Tuple.new({{ name.split("_")[0].to_i }}, {{ name }}, {{ read_file("#{__DIR__}/migrations/#{name.id}") }})
     {% end %}
 
     # Migrations written in Crystal for data fixes that SQL alone cannot do.
