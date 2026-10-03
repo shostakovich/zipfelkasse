@@ -70,7 +70,7 @@
     <p class="card-description">
       <%- if stats.count > 0 %>Zwischengespeichert: <%= stats.count %> Kurse für <%= stats.currencies %> Währungen vom <%= date(stats.from) %> bis <%= date(stats.to) %>.
       <%- else %>Noch keine EZB-Kurse zwischengespeichert – sie werden bei Bedarf automatisch geladen.<% end %>
-      Neue Kurse werden an Bankarbeitstagen nach 16:30 Uhr automatisch abgerufen.
+      Neue Kurse werden täglich um 17 Uhr automatisch abgerufen.
     </p>
   </div>
   <div class="card-content stack">

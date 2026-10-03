@@ -73,7 +73,7 @@ describe Config do
 
   it "reads the test variables from the environment only when compiled with -Dtest_hooks" do
     c = Config.from_env({"ZIPFELKASSE_TEST_YNAB_URL" => "http://127.0.0.1:9/v1"})
-    c.ynab_base_url.should eq(Config::TEST_HOOKS ? "http://127.0.0.1:9/v1" : "")
+    c.ynab_base_url.should eq(Config::TEST_HOOKS ? "http://127.0.0.1:9/v1" : nil)
   end
 
   it "masks and prints prefixes" do

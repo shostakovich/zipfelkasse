@@ -47,7 +47,7 @@ module Zipfelkasse::FX
       currency = raw.strip.upcase
       return api_error(env, 400, "Bitte eine Währung angeben.") if currency.empty?
       return api_error(env, 400, "Ungültige Währung „#{raw}“.") unless currency == "EUR" || Domain.valid_currency_code?(currency)
-      date = @service.today
+      date = @d.today
       unless (value = env.query("datum")).empty?
         begin
           date = Domain.parse_date(value)
@@ -70,7 +70,7 @@ module Zipfelkasse::FX
     end
 
     private def show(env : HTTP::Server::Context, form : ManualForm, status = 200, error : String? = nil) : String
-      form = form.copy_with(date: Store.format_date(@service.today)) if form.date.empty?
+      form = form.copy_with(date: Store.format_date(@d.today)) if form.date.empty?
       store = @d.store
       used = store.recent_used_fx_rates(10).map do |u|
         RateRow.new(u.currency, u.date, Domain.format_rate(u.rate), FX.source_label(u.source), u.title, u.expense_id)

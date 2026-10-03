@@ -8,10 +8,11 @@ class Household
   getter food : Int64
   getter restaurant : Int64
   getter deps : Web::Deps
-  getter fx = FakeFX.new
+  getter fx : FakeFX
 
   def initialize(@store : Store = Store.open(":memory:"))
     @deps = Web::Deps.new(Config.new, @store)
+    @fx = FakeFX.new(@deps)
     @deps.fx = @fx
     @anna = @store.create_participant(nil, "Anna")
     @ben = @store.create_participant(nil, "Ben")

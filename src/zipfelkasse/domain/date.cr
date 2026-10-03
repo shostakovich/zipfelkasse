@@ -41,6 +41,12 @@ module Zipfelkasse::Domain
     t.to_s("%d.%m.%Y")
   end
 
+  # Strictly after now, in now's location.
+  def next_at_hour(now : Time, hour : Int32) : Time
+    t = Time.local(now.year, now.month, now.day, hour, location: now.location)
+    t > now ? t : t.shift(days: 1)
+  end
+
   enum Frequency
     Weekly
     Monthly

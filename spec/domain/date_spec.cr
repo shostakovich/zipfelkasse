@@ -114,4 +114,19 @@ describe Domain do
     got.to_s(Domain::DATE_LAYOUT).should eq "2026-10-02"
     got.location.should eq Time::Location::UTC
   end
+
+  describe ".next_at_hour" do
+    berlin = Time::Location.load("Europe/Berlin")
+
+    {
+      "2026-10-02 01:00" => "2026-10-02 03:00",
+      "2026-10-02 03:00" => "2026-10-03 03:00",
+      "2026-10-02 23:59" => "2026-10-03 03:00",
+      "2026-10-24 23:00" => "2026-10-25 03:00",
+    }.each do |now, due|
+      it "plans 03:00 after #{now} for #{due}" do
+        Domain.next_at_hour(Time.parse(now, "%F %R", berlin), 3).to_s("%F %R").should eq due
+      end
+    end
+  end
 end

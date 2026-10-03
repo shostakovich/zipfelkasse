@@ -167,24 +167,16 @@ module Zipfelkasse
 
     # One backup a day at 03:00 local time, on the configured clock.
     def self.backup_loop(stopper : Stopper, store : Store, config : Config) : Nil
-      local = -> { config.now.in(config.location) }
-      due = next_backup(local.call)
-      while stopper.wait(due - local.call)
+      due = Domain.next_at_hour(config.now.in(config.location), 3)
+      while stopper.wait(due - config.now)
         begin
           path = store.backup(config.backup_dir, BACKUP_KEEP)
           Log.info(&.emit("backup written", path: path))
         rescue ex
           Log.error(exception: ex) { "backup failed" }
         end
-        due = next_backup(due)
+        due = Domain.next_at_hour(due, 3)
       end
-    end
-
-    def self.next_backup(now : Time) : Time
-      t = Time.local(now.year, now.month, now.day, 3, 0, 0, location: now.location)
-      return t if t > now
-      n = now.shift(days: 1)
-      Time.local(n.year, n.month, n.day, 3, 0, 0, location: now.location)
     end
 
     def self.healthcheck(addr : String) : Nil

@@ -1,181 +1,119 @@
-require "wait_group"
-
-# Exchange rates: ECB reference rates cached in SQLite, manual rates, and
-# GET /api/kurs for the expense form.
-#
-# Rules for Service#rate(currency, date):
-# - EUR gives 1 (source "fest").
-# - Manual rates take precedence: the most recent manual rate whose "valid
-#   from" <= date applies, until a newer manual rate is entered.
-# - Otherwise the ECB rate of that date or of the last business day before it
-#   (up to LOOKBACK_DAYS back). If it is missing from the cache, it is fetched:
-#   the daily file for today/yesterday, the 90-day file for recent dates,
-#   otherwise the complete history once (eurofxref-hist.zip).
+# Rules for Service#rate: EUR is 1; the newest manual rate valid on the date
+# wins; otherwise the ECB rate of the date or of the last business day before
+# it. The ECB cache is complete from its first to its last day: a date outside
+# loads the 90-day file, or the full history for older dates.
 module Zipfelkasse::FX
   Log = ::Log.for(self)
 
   # How far an ECB rate may lie before the requested date (weekends, holidays).
   LOOKBACK_DAYS = 10
+  # The 90-day file still reaches this far back.
+  RECENT_DAYS = 85
+  # After the ECB publishes, around 16:00 CET.
+  REFRESH_HOUR = 17
+  # A file is downloaded on demand at most this often.
+  COOLDOWN = 15.minutes
+
+  BERLIN = Time::Location.load("Europe/Berlin")
 
   class Service
-    include Web::FXRater
-
-    property clock : Proc(Time)
-    @berlin : Time::Location
-    @base_url : String
-    @mutex = Mutex.new
-    @loads = {} of String => Load
     @http = OutboundHTTP.new(60.seconds, MAX_BODY_SIZE)
-    @bg = WaitGroup.new
+    @attempts = {} of String => {Time::Instant, FetchError?}
 
     def initialize(@d : Web::Deps)
-      d = @d
-      @clock = -> { d.now }
-      @berlin = Time::Location.load("Europe/Berlin")
-      @base_url = d.config.ecb_base_url.presence || DEFAULT_BASE_URL
+      @base_url = d.config.ecb_base_url || DEFAULT_BASE_URL
     end
 
-    def today : Time
-      Domain.date_of(@clock.call.in(@d.config.location))
-    end
-
-    # The latest day <= date for which the ECB should already have published.
-    def expected_date(date : Time) : Time
-      now = @clock.call.in(@berlin)
-      today_berlin = Domain.date_of(now)
-      if date >= today_berlin
-        date = today_berlin
-        date = date.shift(days: -1) if now.hour * 60 + now.minute < PUBLISH_HOUR * 60 + PUBLISH_MINUTE
-      end
-      FX.last_business_day(date)
-    end
-
-    # The rate in ECB format (units of currency per 1 EUR). Raises
-    # Domain::ValidationError (invalid currency, no rate; the text can be
-    # shown as is), FetchError (ECB not reachable) or a database error.
+    # Raises Domain::ValidationError (shown as is), FetchError or a database error.
     def rate(currency : String, date : Time) : Domain::FXRate
-      cur = currency.strip.upcase
+      code = currency.strip.upcase
       date = Domain.date_of(date)
-      return Domain::FXRate.new("EUR", date, 1.0, Domain::FXSource::Fixed) if cur == "EUR"
-      unless Domain.valid_currency_code?(cur)
-        raise Domain::ValidationError.new("Bitte eine Währung angeben.") if cur.empty?
-        raise Domain::ValidationError.new("Ungültige Währung „#{currency}“.")
-      end
-      today = self.today
-      date = today if date > today # future: latest rate
-
-      if manual = @d.store.lookup_fx_rate?(cur, Domain::FXSource::Manual, date)
+      return Domain::FXRate.new("EUR", date, 1.0, Domain::FXSource::Fixed) if code == "EUR"
+      raise Domain::ValidationError.new("Bitte eine Währung angeben.") if code.empty?
+      raise Domain::ValidationError.new("Ungültige Währung „#{currency}“.") unless Domain.valid_currency_code?(code)
+      date = Math.min(date, @d.today)
+      if manual = @d.store.lookup_fx_rate?(code, Domain::FXSource::Manual, date)
         return manual
       end
-
-      window = date.shift(days: -LOOKBACK_DAYS)
-      cached = hist_covers?(date)
-      if r = lookup_ecb(cur, date, window)
-        return r if r.date >= expected_date(date) || cached
-      elsif cached
-        raise no_rate(cur, date)
-      end
-
-      result = nil
-      fetch_error = nil
-      FX.files_for(date, today).each do |file|
-        break if file == FILE_HIST && hist_covers?(date)
-        begin
-          result = fetch(file)
-        rescue ex : FetchError
-          fetch_error = ex
-          break
-        end
-        break if result.covers?(date)
-      end
-      if r = lookup_ecb(cur, date, window)
-        return r
-      end
-      raise fetch_error if fetch_error
-      raise no_rate(cur, date, result.try(&.currencies))
+      error = load_missing(date)
+      @d.store.lookup_fx_rate?(code, Domain::FXSource::Ecb, date, date.shift(days: -LOOKBACK_DAYS)) ||
+        raise error || no_rate(code, date)
     end
 
-    private def lookup_ecb(cur : String, date : Time, window : Time) : Domain::FXRate?
-      @d.store.lookup_fx_rate?(cur, Domain::FXSource::Ecb, date, window)
-    end
-
-    private def hist_covers?(date : Time) : Bool
-      hist = hist_until
-      !hist.nil? && date <= hist
-    end
-
-    # If the ECB does not know the currency at all, says so; otherwise only
-    # the rate for the date is missing.
-    private def no_rate(cur : String, date : Time, fetched : Set(String)? = nil) : Domain::ValidationError
-      known = fetched.try(&.includes?(cur)) || @d.store.has_ecb_currency?(cur)
-      unless known
-        return Domain::ValidationError.new("Für #{cur} gibt es keinen EZB-Kurs – bitte Kurs von Hand eintragen.")
+    private def load_missing(date : Time) : FetchError?
+      cache = @d.store.ecb_cache_stats
+      from, to = cache.from, cache.to
+      return if from && to && from <= date <= to
+      file = file_reaching(to && date > to ? to : date)
+      if (attempt = @attempts[file]?) && Time.instant - attempt[0] < COOLDOWN
+        return attempt[1]
       end
-      Domain::ValidationError.new("Für #{cur} gibt es um den #{Domain.format_date(date)} keinen EZB-Kurs – bitte Kurs von Hand eintragen.")
+      fetch(file)
+      nil
+    rescue ex : FetchError
+      ex
     end
 
-    # Loads the latest ECB rates (daily file; the 90-day file if the cache has
-    # gaps) and returns the most recent rate date.
+    private def file_reaching(day : Time) : String
+      day >= @d.today.shift(days: -RECENT_DAYS) ? RECENT : HISTORY
+    end
+
+    private def no_rate(code : String, date : Time) : Domain::ValidationError
+      if @d.store.has_ecb_currency?(code)
+        Domain::ValidationError.new("Für #{code} gibt es um den #{Domain.format_date(date)} keinen EZB-Kurs – bitte Kurs von Hand eintragen.")
+      else
+        Domain::ValidationError.new("Für #{code} gibt es keinen EZB-Kurs – bitte Kurs von Hand eintragen.")
+      end
+    end
+
+    # Loads the rates since the newest cached day and returns the newest day.
     def refresh : Time
-      to = @d.store.ecb_cache_stats.to
-      expected = expected_date(today)
-      file = to.nil? || to < FX.last_business_day(expected.shift(days: -1)) ? FILE_90D : FILE_DAILY
-      fetch(file, force: true).to
+      fetch(file_reaching(@d.store.ecb_cache_stats.to || @d.today))
     end
 
-    # Fetches missing rates on startup, then the new ones on every business
-    # day after 16:30 Europe/Berlin. Errors are only logged. Returns when the
-    # stopper fires, after running downloads have ended.
+    # Loads at startup when the cache lacks the last daily refresh, then daily
+    # at REFRESH_HOUR. Returns when the stopper fires.
     def run(stopper : Stopper) : Nil
       spawn do
         stopper.done.receive?
         @http.stop
       end
-      stats = @d.store.ecb_cache_stats rescue nil
-      if stats && ((to = stats.to).nil? || to < expected_date(today))
+      to = @d.store.ecb_cache_stats.to
+      refresh_logged(stopper) if to.nil? || to < Domain.date_of(@d.now.in(BERLIN) - REFRESH_HOUR.hours)
+      # Waits on the configured clock: a frozen test clock never reaches the next refresh.
+      while stopper.wait(Domain.next_at_hour(@d.now.in(BERLIN), REFRESH_HOUR) - @d.now)
         refresh_logged(stopper)
       end
-      retries = 0
-      loop do
-        # Measured with the service clock: under a frozen test clock, a
-        # publication time in the real past would fire again and again.
-        now = @clock.call
-        wait = retries > 0 ? 1.hour : FX.next_publish(now.in(@berlin)) - now
-        break unless stopper.wait(wait)
-        latest = refresh_logged(stopper)
-        # Not yet published or failed: retry hourly, up to three times.
-        if (latest.nil? || latest < expected_date(today)) && retries < 3
-          retries += 1
-        else
-          retries = 0
-        end
-      end
-    ensure
-      stop
     end
 
-    private def refresh_logged(stopper : Stopper) : Time?
+    private def refresh_logged(stopper : Stopper) : Nil
       refresh
     rescue ex
       Log.error(exception: ex) { "refresh ECB rates" } unless stopper.stopped?
-      nil
     end
 
-    private def stop : Nil
-      @http.stop
-      @bg.wait
+    private def fetch(file : String) : Time
+      rates = download(file)
+      @attempts[file] = {Time.instant, nil}
+      newest = rates.max_of(&.date)
+      Log.info(&.emit("ECB rates loaded", file: file, rates: rates.size,
+        from: Store.format_date(rates.min_of(&.date)), to: Store.format_date(newest)))
+      newest
+    rescue ex
+      Log.warn(exception: ex, &.emit("loading ECB rates failed", file: file))
+      error = ex.as?(FetchError) || FetchError.new(ex.message || ex.class.name)
+      @attempts[file] = {Time.instant, error}
+      raise error
     end
-  end
 
-  # The files that, in this order, may contain date.
-  def self.files_for(date : Time, today : Time) : Array(String)
-    age = (today - date).total_days.to_i
-    if age <= 1
-      [FILE_DAILY, FILE_90D, FILE_HIST]
-    elsif age < 85
-      [FILE_90D, FILE_HIST]
-    else
-      [FILE_HIST]
+    private def download(file : String) : Array(Domain::FXRate)
+      raise FetchError.new("shutting down") if @http.stopped?
+      res = @http.request("GET", @base_url + file, HTTP::Headers{"User-Agent" => USER_AGENT})
+      raise "HTTP status #{res.status}" unless res.status == 200
+      rates = FX.parse_xml(String.new(res.body))
+      raise "file contains no rates" if rates.empty?
+      @d.store.save_ecb_rates(rates)
+      rates
     end
   end
 end

@@ -57,13 +57,6 @@ describe Store do
     expect_invalid("Bitte einen Namen für die Gruppe angeben.") { store.set_group_name(nil, "   ") }
   end
 
-  it "stores settings" do
-    expect_raises(Store::NotFound) { store.get_setting("nix") }
-    store.set_setting(Store::SETTING_GROUP_NAME, "WG Sonnenallee")
-    store.set_setting(Store::SETTING_GROUP_NAME, "WG Sonnenallee 2")
-    store.group_name.should eq "WG Sonnenallee 2"
-  end
-
   it "parses stored dates strictly" do
     Store.parse_date("2026-09-01").should eq Time.utc(2026, 9, 1)
     ["2026-9-1", "2026-09-01x", "2026-09-01T00:00:00Z", " 2026-09-01", "2026-02-30"].each do |s|
@@ -73,7 +66,7 @@ describe Store do
 
   it "rolls back a transaction left early and stays usable" do
     leave_transaction_early(store)
-    store.get_setting(Store::SETTING_GROUP_NAME).should eq "Zipfelkasse"
+    store.group_name.should eq "Zipfelkasse"
     store.set_group_name(nil, "WG")
     store.group_name.should eq "WG"
   end

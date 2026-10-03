@@ -1,20 +1,6 @@
 require "./spec_helper"
 
 describe CLI do
-  describe ".next_backup" do
-    berlin = Time::Location.load("Europe/Berlin")
-
-    {
-      "2026-10-02 01:00" => "2026-10-02 03:00",
-      "2026-10-02 03:00" => "2026-10-03 03:00",
-      "2026-10-02 23:59" => "2026-10-03 03:00",
-    }.each do |now, backup|
-      it "plans the backup after #{now} for #{backup}" do
-        CLI.next_backup(Time.parse(now, "%F %R", berlin)).to_s("%F %R").should eq backup
-      end
-    end
-  end
-
   describe ".health_url" do
     {
       ""               => "http://127.0.0.1:8080/healthz",

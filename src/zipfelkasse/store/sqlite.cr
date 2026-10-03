@@ -93,9 +93,14 @@ module Zipfelkasse
     end
 
     # Strict: Time.parse would accept "2026-9-1" and trailing text.
+    def self.parse_date?(s : String) : Time?
+      Time.parse(s, "%Y-%m-%d", Time::Location::UTC) if s.matches?(/\A[0-9]{4}-[0-9]{2}-[0-9]{2}\z/)
+    rescue Time::Format::Error | ArgumentError
+      nil
+    end
+
     def self.parse_date(s : String) : Time
-      raise Time::Format::Error.new("invalid date #{s.inspect}") unless s.matches?(/\A[0-9]{4}-[0-9]{2}-[0-9]{2}\z/)
-      Time.parse(s, "%Y-%m-%d", Time::Location::UTC)
+      parse_date?(s) || raise Time::Format::Error.new("invalid date #{s.inspect}")
     end
 
     # Column converters for DB::Field; NULL becomes nil.

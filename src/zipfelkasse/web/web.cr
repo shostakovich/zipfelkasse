@@ -16,14 +16,10 @@ module Zipfelkasse::Web
     Settings
   end
 
-  module FXRater
-    abstract def rate(currency : String, date : Time) : Domain::FXRate
-  end
-
   class Deps
     getter config : Config
     getter store : Store
-    property! fx : FXRater
+    property! fx : FX::Service
 
     delegate today, now, to: @config
 

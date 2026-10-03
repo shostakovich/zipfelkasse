@@ -2,15 +2,14 @@
 # ValidationError of an unknown currency; `failure` is raised instead of any
 # rate (ECB not reachable); `on_call` runs on every call (e.g. to change a
 # rule meanwhile).
-class FakeFX
-  include Zipfelkasse::Web::FXRater
-
+class FakeFX < Zipfelkasse::FX::Service
   getter rates : Hash(String, Float64)
   getter calls = [] of Time
   property failure : Exception? = nil
   property on_call : Proc(Nil)? = nil
 
-  def initialize(@rates = {} of String => Float64)
+  def initialize(deps : Zipfelkasse::Web::Deps, @rates = {} of String => Float64)
+    super(deps)
   end
 
   def rate(currency : String, date : Time) : Zipfelkasse::Domain::FXRate
