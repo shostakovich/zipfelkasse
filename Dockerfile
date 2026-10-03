@@ -1,16 +1,18 @@
 # syntax=docker/dockerfile:1
 
-FROM golang:1.26-alpine AS build
-RUN apk add --no-cache ca-certificates
+FROM crystallang/crystal:1.21.1-alpine AS build
+RUN apk add --no-cache sqlite-static sqlite-dev ca-certificates tzdata
 WORKDIR /src
-COPY go.mod go.sum ./
-RUN go mod download
+COPY shard.yml shard.lock ./
+RUN shards install --production
 COPY . .
-RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/zipfelkasse . \
- && mkdir -p /out/data /out/tmp && chmod 1777 /out/tmp
+RUN mkdir -p /out/data /out/tmp && chmod 1777 /out/tmp \
+ && crystal build --release --static --no-debug -o /out/zipfelkasse src/zipfelkasse.cr
 
 FROM scratch
-COPY --from=build /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
+# The static OpenSSL looks for its CA bundle here.
+COPY --from=build /etc/ssl/certs/ca-certificates.crt /etc/ssl/cert.pem
+COPY --from=build /usr/share/zoneinfo /usr/share/zoneinfo
 COPY --from=build /out/zipfelkasse /zipfelkasse
 COPY --from=build /out/tmp /tmp
 COPY --from=build --chown=65532:65532 /out/data /data
