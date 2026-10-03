@@ -200,19 +200,6 @@ module Zipfelkasse::Web
     Domain.parse_weight(mode, cur, v)
   end
 
-  # Broken percent escapes and ";" separators make the expense form a bad
-  # request (400), although the parser silently accepts them.
-  def self.form_encoding_ok?(s : String) : Bool
-    return false if s.includes?(';')
-    b = s.to_slice
-    i = 0
-    while i = b.index('%'.ord.to_u8, i)
-      return false unless i + 2 < b.size && b[i + 1].unsafe_chr.hex? && b[i + 2].unsafe_chr.hex?
-      i += 3
-    end
-    true
-  end
-
   class Handlers
     def register_expenses : Nil
       Web.route(@d, "GET", "/") { |r| home(r) }
@@ -314,10 +301,13 @@ module Zipfelkasse::Web
       r.redirect("/")
     end
 
+    # Broken percent escapes and ";" separators make the expense form a bad
+    # request (400), although the parser silently accepts them.
     private def form_encoding_ok?(r : Request) : Bool
-      return false unless Web.form_encoding_ok?(r.request.query || "")
+      ok = ->(s : String) { !s.includes?(';') && Web.valid_escapes?(s) }
+      return false unless ok.call(r.request.query || "")
       type = (r.request.headers["Content-Type"]? || "").partition(';')[0].strip.downcase
-      type != "application/x-www-form-urlencoded" || Web.form_encoding_ok?(r.ctx.params.raw_body)
+      type != "application/x-www-form-urlencoded" || ok.call(r.ctx.params.raw_body)
     end
 
     # Validates the form and builds the store input. A missing or ECB rate

@@ -62,7 +62,7 @@ module Zipfelkasse::Web
 
     def who_select(r : Request) : Nil
       ret = Web.safe_return(r.form_value("zurueck"))
-      id = r.form_value("id").to_i64? || 0_i64
+      id = r.form_value("id").to_i64?(whitespace: false) || 0_i64
       p = begin
         @d.store.get_participant(id)
       rescue Store::NotFound

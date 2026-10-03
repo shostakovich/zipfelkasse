@@ -179,9 +179,7 @@ module Zipfelkasse::Web
 
   # Invalid or <= 0 gives 0.
   def self.form_id(v : String, trim = true) : Int64
-    v = v.strip if trim
-    return 0_i64 unless v.matches?(/\A[+-]?\d+\z/)
-    id = v.to_i64? || 0_i64
+    id = (trim ? v.strip : v).to_i64?(whitespace: false) || 0_i64
     id > 0 ? id : 0_i64
   end
 
@@ -202,7 +200,9 @@ module Zipfelkasse::Web
   def self.redirect(ctx : HTTP::Server::Context, url : String, status = 303) : Nil
     url = clean_redirect(url)
     res = ctx.response
-    res.headers["Location"] = url
+    res.headers["Location"] = String.build do |s|
+      url.each_byte { |b| b < 0x80 ? s.write_byte(b) : s << '%' << b.to_s(16) }
+    end
     res.status_code = status
     if ctx.request.method.in?("GET", "HEAD")
       res.content_type = "text/html; charset=utf-8"
@@ -212,13 +212,13 @@ module Zipfelkasse::Web
     end
   end
 
-  # Normalizes the path part; query, fragment and a trailing slash are kept.
+  # Normalizes everything before the query (a fragment too); a trailing
+  # slash is kept.
   def self.clean_redirect(url : String) : String
     return url unless url.starts_with?('/')
-    cut = url.index(/[?#]/) || url.size
-    path, rest = url[0, cut], url[cut..]
+    path, q, query = url.partition('?')
     cleaned = Path.posix(path).normalize.to_s
     cleaned += "/" if path.ends_with?('/') && !cleaned.ends_with?('/')
-    cleaned + rest
+    cleaned + q + query
   end
 end

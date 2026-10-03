@@ -133,7 +133,7 @@ module Zipfelkasse::Web
 
     def call(context : HTTP::Server::Context)
       req = context.request
-      if (c = req.cookies[IDENTITY_COOKIE]?) && (id = c.value.to_i64?)
+      if (c = req.cookies[IDENTITY_COOKIE]?) && (id = c.value.to_i64?(whitespace: false))
         begin
           p = @d.store.get_participant(id)
           unless p.archived?
@@ -162,19 +162,24 @@ module Zipfelkasse::Web
   # Only allows local paths as a return target. Rejected are control
   # characters and backslashes (browsers strip tabs/newlines or read "\" as
   # "/", so "/\t/evil" would become "//evil"), anything with a scheme or
-  # host, and paths that start with "//", even only after decoding.
+  # host, paths that start with "//" (even only after decoding) and broken
+  # escapes in the path or fragment.
   def self.safe_return(s : String) : String
     return "/" if s.each_char.any? { |c| unsafe_char?(c) }
     return "/" unless s.starts_with?('/') && !s.starts_with?("//")
-    path = s.partition(/[?#]/)[0]
+    rest, _, fragment = s.partition('#')
+    path = rest.partition('?')[0]
+    return "/" unless valid_escapes?(path) && valid_escapes?(fragment)
     decoded = URI.decode(path)
-    return "/" if !decoded.starts_with?('/') || decoded.starts_with?("//") || decoded.each_char.any? { |c| unsafe_char?(c) }
-    return "/" if decoded.starts_with?("/wer")
-    return "/" unless path.matches?(/\A[^%]*(%[0-9A-Fa-f]{2}[^%]*)*\z/) # reject broken escapes
+    return "/" if decoded.starts_with?("//") || decoded.starts_with?("/wer") || decoded.each_char.any? { |c| unsafe_char?(c) }
     s
   end
 
   private def self.unsafe_char?(c : Char) : Bool
     c == '\\' || c.control?
+  end
+
+  def self.valid_escapes?(s : String) : Bool
+    s.split('%').skip(1).all? { |e| e.size >= 2 && e[0].hex? && e[1].hex? }
   end
 end

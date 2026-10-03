@@ -152,4 +152,51 @@ describe "settings pages" do
       post(srv, "/einstellungen/kategorien/999/archivieren", me).status_code.should eq 404
     end
   end
+
+  it "serves the PWA manifest, service worker and icons" do
+    with_group do |srv, _, me|
+      srv.store.set_group_name(0_i64, "WG Süd")
+      res = srv.get("/manifest.webmanifest")
+      res.status_code.should eq 200
+      res.headers["Content-Type"].should start_with "application/manifest+json"
+      m = JSON.parse(res.body)
+      {m["name"], m["lang"], m["display"], m["start_url"], m["theme_color"]}.should eq({"WG Süd", "de", "standalone", "/", "#047756"})
+      purposes = m["icons"].as_a.map do |icon|
+        res = srv.get(icon["src"].as_s)
+        {res.status_code, res.headers["Content-Type"]}.should eq({200, "image/png"})
+        "#{icon["sizes"]} #{icon["purpose"]}"
+      end
+      purposes.should eq ["192x192 any", "512x512 any", "512x512 maskable"]
+
+      res = srv.get("/sw.js")
+      res.status_code.should eq 200
+      res.headers["Content-Type"].should start_with "text/javascript"
+      res.headers["Cache-Control"].should eq "no-cache"
+      res.body.should contain "addEventListener"
+      res.body.should_not contain "caches."
+      res = srv.get("/favicon.ico")
+      {res.status_code, res.headers["Content-Type"]}.should eq({200, "image/png"})
+      srv.get("/static/icons/apple-touch-icon.png").status_code.should eq 200
+      _, body = page(srv, "/", me)
+      [%(rel="manifest" href="/manifest.webmanifest"), %(rel="apple-touch-icon"), "/static/app.js?v="].each do |want|
+        body.should contain want
+      end
+    end
+  end
+
+  it "serves the scripts and icons, and the CSS has the promised classes" do
+    with_server do |srv|
+      ["/static/app.js", "/static/expense-form.js", "/static/icons.svg"].each do |path|
+        srv.get(path).status_code.should eq 200
+      end
+      css = srv.get("/static/app.css").body
+      %w(.container .main .site-header .site-header-inner .brand .whoami .tabs
+        .card .card-header .card-title .card-description .card-content .card-footer
+        .btn .btn-primary .btn-secondary .btn-outline .btn-ghost .btn-destructive .btn-sm .btn-lg .btn-block
+        .form .field .field-error .help .table-wrap .alert .alert-success .alert-destructive
+        .link-list .stack .stack-sm .row .muted .amount .positive .negative .sr-only).each do |cls|
+        {" ", ",", "{"}.any? { |c| css.includes?(cls + c) }.should be_true, "app.css: class #{cls} missing"
+      end
+    end
+  end
 end

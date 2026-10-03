@@ -282,7 +282,7 @@ return parseAddr(hops[0])                                     # all hops trusted
 - `decodeArgs(raw, &args)`:
   - Empty, whitespace-only or `null` arguments count as `{}`. A missing `arguments` key does too.
   - Otherwise a `json.Decoder` with `DisallowUnknownFields` decodes **one** value. A failure becomes the `ValidationError` `Invalid arguments: <go error>`.
-  - These Go-specific texts must be reproduced (see P7):
+  - Go's texts (the port does not reproduce them; it names the field and the expected type, e.g. `Invalid arguments: limit must be an integer.`, see PORTING.md "Deliberate deviations"):
     - `Invalid arguments: json: unknown field "x"`
     - `Invalid arguments: json: cannot unmarshal array into Go value of type struct {}`
     - `Invalid arguments: json: cannot unmarshal string into Go value of type struct {}`
@@ -294,7 +294,7 @@ return parseAddr(hops[0])                                     # all hops trusted
     - `Invalid arguments: json: cannot unmarshal string into Go struct field .moneyArgs.fx_rate of type float64`
     - `Invalid arguments: must be a string or a list of strings` (the `text` field)
     - `Invalid arguments: must be a string or a number` (`amount` or a `weights` value)
-  - **Go field matching is case-insensitive.** `{"LIMIT":2}` sets `limit`, `{"Name":"balances"}` works, and `{"Method":"ping"}` works at the envelope level. The **last duplicate key wins**.
+  - **Go field matching is case-insensitive** (not ported: keys match exactly). `{"LIMIT":2}` sets `limit`, `{"Name":"balances"}` works, and `{"Method":"ping"}` works at the envelope level. The **last duplicate key wins**.
   - `null` for a scalar field leaves its zero value. `"text": null` gives `[""]`, which means no filter.
 - `eur(c)` = `FormatDecimal(c, 2, '.')`. For example `123456` gives `"1234.56"`, `-5` gives `"-0.05"` and `-300000` gives `"-3000.00"`.
 - `money(minor, cur)` = `FormatDecimal(minor, CurrencyDecimals(upper(trim(cur))), '.') + " " + CUR`. For example `"23.40 USD"` and `"1500 JPY"`.

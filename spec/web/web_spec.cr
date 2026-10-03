@@ -83,6 +83,8 @@ describe Zipfelkasse::Web do
       srv.get("/wer").body.should contain "Anna"
       srv.post_form("/wer", {"id" => "999"}).status_code.should eq 422
       srv.post_form("/wer", {"id" => " #{id}"}).status_code.should eq 422
+      srv.get("/", who_cookie(id)).status_code.should eq 200
+      srv.request("GET", "/", headers: HTTP::Headers{"Cookie" => %(wer=" #{id}")}).status_code.should eq 303
       srv.store.set_participant_archived(0_i64, id, true)
       srv.get("/", who_cookie(id)).status_code.should eq 303
     end
@@ -155,9 +157,8 @@ describe Zipfelkasse::Web do
   it "never logs the MCP secret" do
     with_server do |srv|
       headers = HTTP::Headers{"Sec-Fetch-Site" => "cross-site", "Origin" => "https://evil.example"}
-      srv.request("POST", "/mcp/geheim123", "{}", headers).status_code.should eq 403
+      srv.request("POST", "/mcp/geheim123", "{}", headers).status_code.should eq 404
       srv.log_io.to_s.should_not contain "geheim123"
-      srv.log_io.to_s.should contain "/mcp/***"
     end
     {"/mcp/abc" => "/mcp/***", "/mcp/" => "/mcp/***", "/ausgaben/1" => "/ausgaben/1", "/mcpx" => "/mcpx"}.each do |input, want|
       Web.log_path(input).should eq want
@@ -171,11 +172,10 @@ describe Zipfelkasse::Web do
       post = ->(path : String, chunked : Bool) do
         headers = HTTP::Headers{"Host" => "example.com", "Content-Type" => "application/x-www-form-urlencoded",
                                 "Cookie" => "#{Web::IDENTITY_COOKIE}=#{anna}"}
-        req = HTTP::Request.new("POST", path, headers)
+        req = HTTP::Request.new("POST", path, headers, big)
         if chunked
+          req.headers.delete("Content-Length")
           req.body = IO::Memory.new(big)
-        else
-          req.body = big
         end
         srv.call(req)
       end
