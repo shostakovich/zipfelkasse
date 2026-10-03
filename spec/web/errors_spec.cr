@@ -11,7 +11,7 @@ describe "Web errors" do
 
     response.status_code.should eq 500
     response.body.should contain "Da ist etwas schiefgegangen."
-    response.body.should contain "Du bist <strong>Anna</strong>"
+    response.body.should match %r(Du bist <strong[^>]*>Anna</strong>)
     SPEC_LOG.to_s.should contain %(level=ERROR msg="Platte voll" err="Platte voll")
   end
 

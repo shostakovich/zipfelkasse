@@ -248,7 +248,7 @@ describe "Recurring expenses" do
 
     r = user.get(list)
     rows = r.doc.xpath_nodes("//tbody/tr").map do |tr|
-      [tr.xpath_node(".//strong").not_nil!.content, tr.xpath_node(".//span[@class='muted']").not_nil!.content,
+      [tr.xpath_node(".//strong").not_nil!.content, tr.xpath_node(".//span[#{RY.cls("text-body-secondary")}]").not_nil!.content,
        tr.xpath_node("./td[2]").not_nil!.content.strip, tr.xpath_node("./td[3]").not_nil!.content.strip,
        tr.xpath_nodes(".//button").map(&.content.strip).join("|")]
     end

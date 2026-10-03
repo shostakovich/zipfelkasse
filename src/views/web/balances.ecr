@@ -1,51 +1,51 @@
-<div class="stack">
+<div class="vstack gap-3">
   <section class="card">
     <div class="card-header">
-      <h1 class="card-title">Salden</h1>
-      <p class="card-description">So viel hat jede Person mehr (grün) oder weniger (rot) bezahlt, als ihr Anteil war.</p>
+      <h1 class="card-title h5 mb-0">Salden</h1>
+      <p class="card-text small fw-normal text-body-secondary mt-1 mb-0">So viel hat jede Person mehr (grün) oder weniger (rot) bezahlt, als ihr Anteil war.</p>
     </div>
-    <div class="card-content">
+    <div class="card-body">
       <%- unless rows.empty? %>
-      <div class="balances">
+      <div class="balances small">
         <%- rows.each do |row| %>
         <div class="balance-row<% if row.cents < 0 %> negative-row<% end %><% if me.try(&.id) == row.participant.id %> me<% end %>">
-          <div class="balance-name"><%= row.participant.name %><% if row.participant.archived? %> <span class="muted">(archiviert)</span><% end %></div>
+          <div class="balance-name"><%= row.participant.name %><% if row.participant.archived? %> <span class="text-body-secondary">(archiviert)</span><% end %></div>
           <div class="balance-cell">
-            <div class="balance-value amount"><%= eur row.cents %></div>
+            <div class="balance-value tabular-nums text-nowrap <%= sign_class row.cents %>"><%= eur row.cents %></div>
             <%- if row.width != 0 %>
-            <div class="balance-bar" data-width="<%= row.width %>"></div>
+            <div class="balance-bar <% if row.cents < 0 %>bg-danger-subtle border border-danger-subtle rounded-start<% else %>bg-success-subtle border border-success-subtle rounded-end<% end %>" data-width="<%= row.width %>"></div>
             <%- end %>
           </div>
         </div>
         <%- end %>
       </div>
       <%- else %>
-      <p class="muted small">Noch niemand da.</p>
+      <p class="small text-body-secondary mb-0">Noch niemand da.</p>
       <%- end %>
     </div>
   </section>
 
   <section class="card">
     <div class="card-header">
-      <h2 class="card-title">Vorgeschlagene Rückzahlungen</h2>
-      <p class="card-description">Mit diesen Zahlungen ist alles ausgeglichen. Nach dem Überweisen „Als erstattet markieren“ – dann wird die Rückzahlung eingetragen.</p>
+      <h2 class="card-title h5 mb-0">Vorgeschlagene Rückzahlungen</h2>
+      <p class="card-text small fw-normal text-body-secondary mt-1 mb-0">Mit diesen Zahlungen ist alles ausgeglichen. Nach dem Überweisen „Als erstattet markieren“ – dann wird die Rückzahlung eingetragen.</p>
     </div>
-    <div class="card-content">
-      <%- unless transfers.empty? %>
-      <div class="transfers">
-        <%- transfers.each do |t| %>
-        <div class="transfer">
-          <div class="transfer-main">
-            <div><strong><%= t.from.name %></strong> schuldet <strong><%= t.to.name %></strong></div>
-            <a class="btn btn-link" href="<%= t.link %>">Als erstattet markieren</a>
-          </div>
-          <div class="amount"><%= eur t.cents %></div>
+    <%- unless transfers.empty? %>
+    <div class="list-group list-group-flush">
+      <%- transfers.each do |t| %>
+      <div class="list-group-item transfer d-flex align-items-start align-items-sm-center justify-content-between gap-3">
+        <div class="d-flex flex-column flex-sm-row align-items-start align-items-sm-center gap-2 gap-sm-3">
+          <div><strong><%= t.from.name %></strong> schuldet <strong><%= t.to.name %></strong></div>
+          <a class="btn btn-sm btn-outline-primary" href="<%= t.link %>">Als erstattet markieren</a>
         </div>
-        <%- end %>
+        <div class="fw-bold tabular-nums text-nowrap"><%= eur t.cents %></div>
       </div>
-      <%- else %>
-      <p class="small">Alles ausgeglichen – niemand muss etwas zurückzahlen.</p>
       <%- end %>
     </div>
+    <%- else %>
+    <div class="card-body">
+      <p class="small mb-0">Alles ausgeglichen – niemand muss etwas zurückzahlen.</p>
+    </div>
+    <%- end %>
   </section>
 </div>

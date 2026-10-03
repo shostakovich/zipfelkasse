@@ -1,6 +1,6 @@
 module Zipfelkasse::Web
-  # The primary color (Spliit green, --primary in light mode).
-  THEME_COLOR = "#047756"
+  # The light page colour of each look (installed app's splash screen and title bar).
+  PAGE_COLORS = {Look::Felt => "#ece4d4", Look::Clean => "#f6f7f9"}
 
   class PublicController < Controller
     def register : Nil
@@ -9,7 +9,7 @@ module Zipfelkasse::Web
         Static.send(env, name, env.query("v").empty? ? "public, max-age=300" : "public, max-age=31536000, immutable")
       end
       get("/sw.js") { |env| Static.send(env, "sw.js", "no-cache") }
-      get("/favicon.ico") { |env| Static.send(env, "icons/favicon-32.png", "public, max-age=86400") }
+      get("/favicon.ico") { |env| Static.send(env, "icons/favicon-felt-light.png", "public, max-age=86400") }
       get("/manifest.webmanifest") { |env| manifest(env) }
       get("/healthz") { |env| healthz(env) }
     end
@@ -27,6 +27,8 @@ module Zipfelkasse::Web
 
     private def manifest(env : HTTP::Server::Context) : String
       name = @d.store.group_name
+      look = env.look
+      name_of_look = look.to_s.downcase
       env.response.content_type = "application/manifest+json; charset=utf-8"
       env.response.headers["Cache-Control"] = "no-cache"
       {
@@ -39,13 +41,13 @@ module Zipfelkasse::Web
         start_url:        "/",
         scope:            "/",
         display:          "standalone",
-        background_color: "#ffffff",
-        theme_color:      THEME_COLOR,
+        background_color: PAGE_COLORS[look],
+        theme_color:      PAGE_COLORS[look],
         icons:            {
-          {file: "icons/icon-192.png", sizes: "192x192", purpose: "any"},
-          {file: "icons/icon-512.png", sizes: "512x512", purpose: "any"},
-          {file: "icons/maskable-512.png", sizes: "512x512", purpose: "maskable"},
-        }.map { |icon| {src: Static.url(icon[:file]), sizes: icon[:sizes], type: "image/png", purpose: icon[:purpose]} },
+          {file: "icons/icon-#{name_of_look}-192.webp", sizes: "192x192", purpose: "any"},
+          {file: "icons/icon-#{name_of_look}-512.webp", sizes: "512x512", purpose: "any"},
+          {file: "icons/maskable-#{name_of_look}-512.webp", sizes: "512x512", purpose: "maskable"},
+        }.map { |icon| {src: Static.url(icon[:file]), sizes: icon[:sizes], type: "image/webp", purpose: icon[:purpose]} },
         shortcuts: [
           {name: "Ausgabe hinzufügen", url: "/ausgaben/neu"},
           {name: "Salden", url: "/salden"},

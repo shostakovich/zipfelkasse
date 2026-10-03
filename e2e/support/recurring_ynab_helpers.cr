@@ -89,6 +89,11 @@ module E2E
       r.doc.xpath_node("//h1").try(&.content.gsub(/\s+/, " ").strip) || ""
     end
 
+    # XPath predicate for "has the CSS class *name*".
+    def cls(name : String) : String
+      %(contains(concat(" ", normalize-space(@class), " "), " #{name} "))
+    end
+
     # Normalized text of every node matching *xpath*.
     def texts(r : Response, xpath : String) : Array(String)
       r.doc.xpath_nodes(xpath).map(&.content.gsub(/\s+/, " ").strip)

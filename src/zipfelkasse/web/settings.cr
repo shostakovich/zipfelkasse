@@ -2,7 +2,7 @@ module Zipfelkasse::Web
   module Views
     record ListRow, id : Int64, name : String, expenses : Int32, balance : Int64 = 0, first : Bool = false, last : Bool = false
 
-    record RenameForm, action : String, row : ListRow do
+    record RenameForm, action : String, row : ListRow, icon_name : String? = nil do
       Web.view "web/rename_form.ecr"
     end
 
@@ -11,7 +11,7 @@ module Zipfelkasse::Web
     end
 
     # group_name is the input as entered (after an error).
-    record Settings, group_name : String do
+    record Settings, group_name : String, look : Look, theme : Theme do
       Web.view "web/settings.ecr"
     end
 
@@ -33,6 +33,7 @@ module Zipfelkasse::Web
     def register : Nil
       get("/einstellungen") { |env| show_settings(env, @d.store.group_name) }
       post("/einstellungen") { |env| save_settings(env) }
+      post("/einstellungen/darstellung") { |env| save_appearance(env) }
 
       get(PARTICIPANTS) { |env| show_participants(env) }
       post(PARTICIPANTS) { |env| create_participant(env) }
@@ -50,7 +51,12 @@ module Zipfelkasse::Web
     end
 
     private def show_settings(env : HTTP::Server::Context, group_name : String, status = 200, error : String? = nil) : String
-      page(env, Views::Settings.new(group_name), "Einstellungen", Nav::Settings, status, error)
+      page(env, Views::Settings.new(group_name, env.look, env.theme), "Einstellungen", Nav::Settings, status, error)
+    end
+
+    private def save_appearance(env : HTTP::Server::Context) : String
+      env.remember_appearance(Look.parse?(env.form("look")) || env.look, Theme.parse?(env.form("theme")) || env.theme)
+      redirect(env, "/einstellungen#darstellung")
     end
 
     private def save_settings(env : HTTP::Server::Context) : String

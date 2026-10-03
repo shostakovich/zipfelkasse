@@ -1,22 +1,22 @@
 <section class="card card-bleed">
   <div class="card-header">
-    <h1 class="card-title">Aktivität</h1>
-    <p class="card-description">Wer hat wann was angelegt, geändert oder gelöscht.</p>
+    <h1 class="card-title h5 mb-0">Aktivität</h1>
+    <p class="card-text small fw-normal text-body-secondary mt-1 mb-0">Wer hat wann was angelegt, geändert oder gelöscht.</p>
   </div>
-  <div class="card-content" data-more-list>
+  <div data-more-list>
     <%- groups.each do |label, items| %>
-    <div class="activity-group" data-group="<%= label %>">
-      <h2 class="list-group-label"><%= label %></h2>
+    <div class="activity-group list-group list-group-flush" data-group="<%= label %>">
+      <h2 class="list-group-label small text-uppercase fw-bold text-body-secondary px-3 pt-3 pb-2 mb-0"><%= label %></h2>
       <%- items.each do |item| %>
       <%= Views::ActivityEntry.new(item, true) %>
       <%- end %>
     </div>
     <%- end %>
     <%- if groups.empty? %>
-    <p class="small">Noch keine Aktivität.</p>
+    <p class="card-body small mb-0">Noch keine Aktivität.</p>
     <%- end %>
     <%- if more %>
-    <div class="list-more"><a class="btn btn-outline" href="<%= more %>" data-more>Ältere anzeigen</a></div>
+    <div class="list-more card-body border-top text-center"><a class="btn btn-light" href="<%= more %>" data-more>Ältere anzeigen</a></div>
     <%- end %>
   </div>
 </section>

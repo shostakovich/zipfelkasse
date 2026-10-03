@@ -88,7 +88,7 @@ describe "Web: identity" do
     W.current_tab(r).should eq "/salden"
     W.page_title(r).should eq "Salden · Zipfelkasse"
     W.attr(r, "//body", "class").should eq "has-tabbar"
-    W.texts(r, %(//nav[@aria-label="Hauptnavigation"]/a)).should eq ["Ausgaben", "Salden", "Aktivität", "Einstellungen"]
+    W.texts(r, %((//nav[@aria-label="Hauptnavigation"])[1]//a)).should eq ["Ausgaben", "Salden", "Aktivität", "Einstellungen"]
     r = user.get("/salden")
     W.shown_flash(r).should be_nil
     W.cookie(r, "flash").should be_nil
@@ -200,7 +200,7 @@ end
 
 # Rows of the split card: {id, checked?, value, shown share}.
 private def split_rows(r : E2E::Response) : Array({String, Bool, String, String})
-  r.doc.xpath_nodes(%(//div[@class="split-row"])).map do |row|
+  r.doc.xpath_nodes(%(//div[#{W.cls("split-row")}])).map do |row|
     {
       row["data-id"],
       !row.xpath_node(%(.//input[@name="teil"][@checked])).nil?,
@@ -396,7 +396,7 @@ describe "Web: expenses" do
     r.status.should eq 200
     W.page_title(r).should eq "Gleich 1 · Zipfelkasse"
     W.h1(r).should eq "Ausgabe bearbeiten"
-    W.text_of(r, "//div[@class='card-header']/p[@class='card-description']").should eq "Angelegt am 03.10.2026, 12:00"
+    W.text_of(r, %(//div[#{W.cls("card-header")}]/p[#{W.cls("card-text")}])).should eq "Angelegt am 03.10.2026, 12:00"
     W.attr(r, "//form[@id='expense-form']", "action").should eq "/ausgaben/1"
     W.attr(r, "//form[@id='expense-form']", "data-rotation").should eq "1"
     W.input(r, "titel").should eq "Gleich 1"
@@ -407,7 +407,7 @@ describe "Web: expenses" do
     W.attr(r, %(//button[@formaction="/ausgaben/1/loeschen"]), "data-confirm").should eq(
       "Diese Ausgabe wirklich löschen? Sie verschwindet aus Liste und Salden; im Aktivitätsprotokoll bleibt sie sichtbar.")
     W.text_of(r, %(//a[@href="/einstellungen/wiederkehrend/neu?ausgabe=1"])).should eq "Als wiederkehrend einrichten"
-    W.texts(r, %(//div[@class="activity-item"])).should eq ["Anna hat „Gleich 1“ angelegt (10,00 €). 03.10.2026, 12:00"]
+    W.texts(r, %(//div[#{W.cls("activity-item")}])).should eq ["Anna hat „Gleich 1“ angelegt (10,00 €). 03.10.2026, 12:00"]
     W.attr(r, "//time", "datetime").should eq "2026-10-03T10:00:00Z"
 
     form = W.expense(titel: "Gleich groß", betrag: "45", teil: [anna, ben], aufteilung: "shares",
@@ -419,10 +419,10 @@ describe "Web: expenses" do
     W.page_title(r).should eq "Gleich groß · Zipfelkasse"
     split_rows(r).should eq [{"1", true, "1", "15,00 €"}, {"2", true, "2", "30,00 €"}, {"3", false, "", ""}]
     W.input(r, "datum").should eq "2026-10-02"
-    W.texts(r, %(//div[@class="activity-item"]//div[@class="activity-main"]/div[1])).should eq [
+    W.texts(r, %(//div[#{W.cls("activity-item")}]//div[#{W.cls("activity-main")}]/div[1])).should eq [
       "Anna hat „Gleich groß“ geändert.", "Anna hat „Gleich 1“ angelegt (10,00 €).",
     ]
-    W.texts(r, %(//ul[@class="changes"]/li)).should eq [
+    W.texts(r, %(//ul[#{W.cls("changes")}]/li)).should eq [
       "Titel: Gleich 1 → Gleich groß",
       "Betrag: 10,00 € → 45,00 €",
       "Originalbetrag: 10,00 € → 45,00 €",
@@ -431,8 +431,8 @@ describe "Web: expenses" do
       "Notiz: – → neu",
       "Aufteilung: Gleichmäßig: Anna 3,33 €, Ben 3,34 €, Cleo 3,33 € → Nach Anteilen: Anna 15,00 €, Ben 30,00 €",
     ]
-    W.text_of(r, %(//ul[@class="changes"]/li[2]/del)).should eq "10,00 €"
-    W.text_of(r, %(//ul[@class="changes"]/li[2]/ins)).should eq "45,00 €"
+    W.text_of(r, %(//ul[#{W.cls("changes")}]/li[2]/del)).should eq "10,00 €"
+    W.text_of(r, %(//ul[#{W.cls("changes")}]/li[2]/ins)).should eq "45,00 €"
 
     # Saving unchanged changes nothing (no history entry).
     acts = W.count(world, "SELECT count(*) FROM activity")
@@ -441,7 +441,7 @@ describe "Web: expenses" do
     W.count(world, "SELECT count(*) FROM activity").should eq acts
     # Only the weights change: listed as Anteile.
     user.post("/ausgaben/1", change(form, {"wert_1" => "2", "wert_2" => "4"} of String => String | Array(String))).status.should eq 303
-    W.texts(user.get("/ausgaben/1"), %(//ul[@class="changes"]/li)).first.should eq "Anteile: Anna 1, Ben 2 → Anna 2, Ben 4"
+    W.texts(user.get("/ausgaben/1"), %(//ul[#{W.cls("changes")}]/li)).first.should eq "Anteile: Anna 1, Ben 2 → Anna 2, Ben 4"
 
     # Errors while editing keep the edit page.
     r = user.post("/ausgaben/1", change(form, {"betrag" => ""} of String => String | Array(String)))
@@ -450,13 +450,13 @@ describe "Web: expenses" do
     W.h1(r).should eq "Ausgabe bearbeiten"
     W.page_title(r).should eq "Gleich groß · Zipfelkasse"
     W.attr(r, "//form[@id='expense-form']", "action").should eq "/ausgaben/1"
-    W.texts(r, %(//h2[@class="card-title"])).should contain "Verlauf"
+    W.texts(r, %(//h2[#{W.cls("card-title")}])).should contain "Verlauf"
     W.count(world, "SELECT amount_cents FROM expenses WHERE id = 1").should eq 4500
 
     # Turned into a reimbursement.
     r = user.post("/ausgaben/1", change(form, {"rueckzahlung" => "1", "teil" => ["2"]} of String => String | Array(String)))
     {r.status, r.flash}.should eq({303, "Rückzahlung „Gleich groß“ gespeichert."})
-    W.texts(user.get("/ausgaben/1"), %(//ul[@class="changes"]/li)).first.should eq "Art: Ausgabe → Rückzahlung"
+    W.texts(user.get("/ausgaben/1"), %(//ul[#{W.cls("changes")}]/li)).first.should eq "Art: Ausgabe → Rückzahlung"
   end
 
   scenario "deleting an expense", world do
@@ -475,11 +475,11 @@ describe "Web: expenses" do
     W.h1(r).should eq "Gelöschte Ausgabe"
     W.page_title(r).should eq "Gleich 2 · Zipfelkasse"
     r.doc.xpath_node(%(//fieldset[@disabled])).should_not be_nil
-    W.text_of(r, %(//p[@class="alert alert-destructive"])).should eq(
+    W.text_of(r, %(//form//p[#{W.cls("alert-danger")}])).should eq(
       "Diese Ausgabe wurde am 03.10.2026, 12:00 gelöscht und zählt nicht mehr zu den Salden.")
     r.doc.xpath_node(%(//form[@id="expense-form"]//button[@type="submit"])).should be_nil
     r.doc.xpath_node(%(//a[contains(@href, "/einstellungen/wiederkehrend/neu")])).should be_nil
-    W.texts(r, %(//div[@class="activity-item"]//div[@class="activity-main"]/div[1])).first.should eq "Anna hat „Gleich 2“ gelöscht (10,00 €)."
+    W.texts(r, %(//div[#{W.cls("activity-item")}]//div[#{W.cls("activity-main")}]/div[1])).first.should eq "Anna hat „Gleich 2“ gelöscht (10,00 €)."
 
     r = user.post("/ausgaben/2", W.expense(titel: "Wieder da", teil: all))
     r.status.should eq 409
@@ -493,8 +493,8 @@ describe "Web: expenses" do
       {p, r.status, W.h1(r)}.should eq({p, 404, "Ausgabe nicht gefunden."})
       W.page_title(r).should eq "Ausgabe nicht gefunden. · Zipfelkasse"
       r.headers["Cache-Control"].should eq "no-store"
-      W.attr(r, %(//main//a[@class="btn btn-outline"]), "href").should eq "/"
-      W.text_of(r, %(//main//a[@class="btn btn-outline"])).should eq "Zur Startseite"
+      W.attr(r, %(//main//a[#{W.cls("btn")}]), "href").should eq "/"
+      W.text_of(r, %(//main//a[#{W.cls("btn")}])).should eq "Zur Startseite"
       W.whoami(r).should eq "Anna"
       W.current_tab(r).should be_nil
     end
@@ -591,21 +591,21 @@ describe "Web: expenses" do
 
     # The list shows the original amount below the euro amount.
     home = user.get("/")
-    row_text = W.text_of(home, %(//a[@id="ausgabe-#{id}"]//span[@class="expense-side"])).not_nil!
+    row_text = W.text_of(home, %(//a[@id="ausgabe-#{id}"]//span[#{W.cls("expense-side")}])).not_nil!
     row_text.should eq "6,67 € 10,00 USD 01.10.2026"
-    W.text_of(home, %(//a[@id="ausgabe-#{surf}"]//span[@class="expense-side"])).should eq "73,53 € 1.250.000 IDR 01.10.2026"
+    W.text_of(home, %(//a[@id="ausgabe-#{surf}"]//span[#{W.cls("expense-side")}])).should eq "73,53 € 1.250.000 IDR 01.10.2026"
   end
 end
 
 # The rows of the home page: {id, title, payer line, balance line, side}.
 private def home_rows(r : E2E::Response) : Array({String, String, String, String, String})
   r.doc.xpath_nodes(%(//a[starts-with(@id, "ausgabe-")])).map do |a|
-    metas = a.xpath_nodes(%(.//span[@class="expense-meta"])).map { |m| W.squish(m.content) }
+    metas = a.xpath_nodes(%(.//span[#{W.cls("expense-meta")}])).map { |m| W.squish(m.content) }
     {
       a["id"].lchop("ausgabe-"),
-      W.squish(a.xpath_node(%(.//span[@class="expense-title"])).not_nil!.content),
+      W.squish(a.xpath_node(%(.//span[#{W.cls("expense-title")}])).not_nil!.content),
       metas[0], metas[1],
-      W.squish(a.xpath_node(%(.//span[@class="expense-side"])).not_nil!.content),
+      W.squish(a.xpath_node(%(.//span[#{W.cls("expense-side")}])).not_nil!.content),
     }
   end
 end
@@ -632,18 +632,18 @@ describe "Web: home page" do
     W.page_title(r).should eq "Ausgaben · Zipfelkasse"
     W.current_tab(r).should eq "/"
     W.text_of(r, %(//p[contains(@class, "my-balance-amount")])).should eq "0,00 €"
-    W.attr(r, %(//p[contains(@class, "my-balance-amount")]), "class").not_nil!.split.should eq ["my-balance-amount"]
+    (W.attr(r, %(//p[contains(@class, "my-balance-amount")]), "class").not_nil!.split & %w(text-success text-danger)).should be_empty
     r.text.should contain "Dein Saldo 0,00 € Alles ausgeglichen."
-    W.text_of(r, %(//p[@class="empty"])).should eq "Noch keine Ausgaben. Erste Ausgabe anlegen"
-    W.attr(r, %(//p[@class="empty"]/a), "href").should eq "/ausgaben/neu"
-    W.attr(r, %(//a[@class="fab"]), "aria-label").should eq "Ausgabe hinzufügen"
+    W.text_of(r, %(//p[#{W.cls("empty")}])).should eq "Noch keine Ausgaben. Erste Ausgabe anlegen"
+    W.attr(r, %(//p[#{W.cls("empty")}]/a), "href").should eq "/ausgaben/neu"
+    W.attr(r, %(//a[#{W.cls("fab")}]), "aria-label").should eq "Ausgabe hinzufügen"
     W.texts(r, %(//select[@name="kategorie"]/option)).first(2).should eq ["Alle Kategorien", "Lebensmittel"]
     W.texts(r, %(//select[@name="person"]/option)).should eq ["Alle Personen", "Anna", "Ben", "Cleo", "Dora"]
     r.doc.xpath_node(%(//a[text()="Filter zurücksetzen"])).should be_nil
     r.doc.xpath_node(%(//a[@data-more])).should be_nil
     r.doc.xpath_node(%(//div[@data-more-list][@data-sync-url])).should_not be_nil
     r = user.get("/?q=nothing")
-    W.text_of(r, %(//p[@class="empty"])).should eq "Keine Ausgaben gefunden. Filter zurücksetzen"
+    W.text_of(r, %(//p[#{W.cls("empty")}])).should eq "Keine Ausgaben gefunden. Filter zurücksetzen"
     W.input(r, "q").should eq "nothing"
     suggest(user.get("/ausgaben/neu")).should eq JSON.parse(%({"t":{},"w":{}}))
   end
@@ -665,7 +665,7 @@ describe "Web: home page" do
 
     r = user.get("/")
     W.groups(r).should eq ["Bevorstehend", "Diese Woche", "Früher in diesem Monat", "Letzter Monat", "Früher in diesem Jahr", "Letztes Jahr", "Älter"]
-    W.texts(r, %(//h2[@class="list-group-label"])).should eq W.groups(r)
+    W.texts(r, %(//h2[#{W.cls("list-group-label")}])).should eq W.groups(r)
     home_rows(r).should eq [
       {"1", "Kino mit Freunden", "Bezahlt von Anna für alle", "Dein Saldo: 30,00 €", "40,00 € 25.10.2026"},
       {"8", "Bäckerei Ölmühle", "Bezahlt von Anna für Anna", "Dein Saldo: 0,00 €", "5,00 € 20.10.2026"},
@@ -676,18 +676,18 @@ describe "Web: home page" do
       {"6", "Rewe Einkauf", "Bezahlt von Anna für Anna", "Dein Saldo: 0,00 €", "10,00 € 01.06.2025"},
       {"7", "Altes Zeug", "Bezahlt von Ben für Ben, Dora", "Du bist nicht beteiligt", "8,00 € 01.01.2024"},
     ]
-    W.texts(r, %(//div[@data-group="Diese Woche"]//span[@class="expense-title"])).should eq ["Bäckerei Ölmühle", "Rewe Einkauf"]
+    W.texts(r, %(//div[@data-group="Diese Woche"]//span[#{W.cls("expense-title")}])).should eq ["Bäckerei Ölmühle", "Rewe Einkauf"]
     W.attr(r, %(//a[@id="ausgabe-1"]), "href").should eq "/ausgaben/1"
-    W.attr(r, %(//a[@id="ausgabe-1"]), "class").should eq "expense"
-    W.attr(r, %(//a[@id="ausgabe-3"]//span[@class="expense-meta"]/span[strong]), "class").should eq "negative"
-    W.attr(r, %(//a[@id="ausgabe-4"]//span[@class="expense-meta"]/span[strong]), "class").should eq "positive"
-    W.attr(r, %(//a[@id="ausgabe-6"]//span[@class="expense-meta"]/span[strong]), "class").should eq ""
+    W.attr(r, %(//a[@id="ausgabe-1"]), "class").not_nil!.split.should_not contain "reimbursement"
+    W.attr(r, %(//a[@id="ausgabe-3"]//span[#{W.cls("expense-meta")}]/span[strong]), "class").should eq "text-danger"
+    W.attr(r, %(//a[@id="ausgabe-4"]//span[#{W.cls("expense-meta")}]/span[strong]), "class").should eq "text-success"
+    W.attr(r, %(//a[@id="ausgabe-6"]//span[#{W.cls("expense-meta")}]/span[strong]), "class").should eq ""
     icons = {"1" => "ticket", "8" => "cart", "4" => "utensils", "5" => "car", "6" => "home", "7" => "tag"}
     icons.each do |id, icon|
-      W.attr(r, %(//a[@id="ausgabe-#{id}"]//span[@class="expense-icon"]//use), "href").not_nil!.should end_with "##{icon}"
+      W.attr(r, %(//a[@id="ausgabe-#{id}"]//span[#{W.cls("expense-icon")}]/span), "class").should eq "plush plush-#{icon}"
     end
     W.text_of(r, %(//p[contains(@class, "my-balance-amount")])).should eq "40,50 €"
-    W.attr(r, %(//p[contains(@class, "my-balance-amount")]), "class").not_nil!.split.should eq ["my-balance-amount", "positive"]
+    W.attr(r, %(//p[contains(@class, "my-balance-amount")]), "class").not_nil!.split.should contain "text-success"
     r.text.should contain "Du bekommst noch Geld."
     ben = world.user
     ben.login("Ben")
@@ -721,7 +721,7 @@ describe "Web: home page" do
     W.selected(r, "person").should eq "3"
     W.attr(r, %(//a[text()="Filter zurücksetzen"]), "href").should eq "/"
     r = user.get("/?q=nonexistent")
-    W.text_of(r, %(//p[@class="empty"])).should eq "Keine Ausgaben gefunden. Filter zurücksetzen"
+    W.text_of(r, %(//p[#{W.cls("empty")}])).should eq "Keine Ausgaben gefunden. Filter zurücksetzen"
     r = user.get("/?kategorie=abc")
     W.selected(r, "kategorie").should be_nil
     r.doc.xpath_node(%(//a[text()="Filter zurücksetzen"])).should be_nil
@@ -758,9 +758,9 @@ describe "Web: home page" do
     user.post("/einstellungen/kategorien/2/reaktivieren").status.should eq 303
     # A reimbursement shows as such in the list.
     r = user.get("/")
-    W.attr(r, %(//a[@id="ausgabe-9"]), "class").should eq "expense reimbursement"
+    W.attr(r, %(//a[@id="ausgabe-9"]), "class").not_nil!.split.should contain "reimbursement"
     home_rows(r).find { |row| row[0] == "9" }.should eq({"9", "Rewe Rückzahlung", "Ben an Anna", "Dein Saldo: -1,00 €", "1,00 € 20.10.2026"})
-    W.attr(r, %(//a[@id="ausgabe-9"]//span[@class="expense-icon"]//use), "href").not_nil!.should end_with "#banknote"
+    W.attr(r, %(//a[@id="ausgabe-9"]//span[#{W.cls("expense-icon")}]/span), "class").should eq "plush plush-banknote"
   end
 
   scenario "paging with Weitere anzeigen", world do
@@ -800,9 +800,9 @@ end
 private def balance_rows(r : E2E::Response) : Array({String, String, String?, Array(String)})
   r.doc.xpath_nodes(%(//div[contains(@class, "balance-row")])).map do |row|
     {
-      W.squish(row.xpath_node(%(.//div[@class="balance-name"])).not_nil!.content),
+      W.squish(row.xpath_node(%(.//div[#{W.cls("balance-name")}])).not_nil!.content),
       W.squish(row.xpath_node(%(.//div[contains(@class, "balance-value")])).not_nil!.content),
-      row.xpath_node(%(.//div[@class="balance-bar"])).try(&.["data-width"]),
+      row.xpath_node(%(.//div[#{W.cls("balance-bar")}])).try(&.["data-width"]),
       row["class"].split,
     }
   end
@@ -810,7 +810,7 @@ end
 
 # Settlement suggestions: {text, link}.
 private def transfers(r : E2E::Response) : Array({String, String})
-  r.doc.xpath_nodes(%(//div[@class="transfer"])).map do |t|
+  r.doc.xpath_nodes(%(//div[#{W.cls("transfer")}])).map do |t|
     {W.squish(t.content), t.xpath_node(".//a").not_nil!["href"]}
   end
 end
@@ -882,7 +882,7 @@ describe "Web: balances" do
     W.selected(r, "bezahlt_von").should eq "5"
     W.text_of(r, %(//select[@name="bezahlt_von"]/option[@selected])).should eq "Emil (archiviert)"
     split_rows(r).map(&.[0]).should eq ["1", "2", "3", "4", "5"]
-    W.text_of(r, %(//div[@data-id="5"]//label[@class="check"]/span[1])).should eq "Emil (archiviert)"
+    W.text_of(r, %(//div[@data-id="5"]//label[#{W.cls("form-check-label")}]/span[1])).should eq "Emil (archiviert)"
     W.checked(r).should eq ["1"]
     # Nonsense parameters give an empty reimbursement.
     r = user.get("/ausgaben/neu?rueckzahlung=1&von=x&an=&betrag=-3")
@@ -898,7 +898,7 @@ describe "Web: balances" do
     W.count(world, "SELECT count(*) FROM expenses WHERE id = #{id} AND is_reimbursement = 1 AND split_mode = 'equal' AND paid_by = 3").should eq 1
     W.shares(world, id).should eq({1_i64 => 1001_i64})
     r = user.get("/")
-    W.attr(r, %(//a[@id="ausgabe-#{id}"]), "class").should eq "expense reimbursement"
+    W.attr(r, %(//a[@id="ausgabe-#{id}"]), "class").not_nil!.split.should contain "reimbursement"
     home_rows(r).first.should eq({id.to_s, "Rückzahlung", "Cleo an Anna", "Dein Saldo: -10,01 €", "10,01 € 02.10.2026"})
     r = user.get("/ausgaben/#{id}")
     r.doc.xpath_node(%(//input[@name="rueckzahlung"][@checked])).should_not be_nil
@@ -927,7 +927,7 @@ describe "Web: settings" do
     W.page_title(r).should eq "Einstellungen · Zipfelkasse"
     W.current_tab(r).should eq "/einstellungen"
     W.input(r, "gruppenname").should eq "Zipfelkasse"
-    r.doc.xpath_nodes(%(//ul[@class="link-list"]//a)).map { |a| {a["href"], W.squish(a.content)} }.should eq [
+    r.doc.xpath_nodes(%(//*[#{W.cls("link-list")}]//a)).map { |a| {a["href"], W.squish(a.content)} }.should eq [
       {"/einstellungen/teilnehmer", "Teilnehmer"}, {"/einstellungen/kategorien", "Kategorien"},
       {"/einstellungen/wiederkehrend", "Wiederkehrende Ausgaben"}, {"/einstellungen/kurse", "Wechselkurse"},
       {"/einstellungen/ynab", "YNAB"}, {"/export", "Export"},
@@ -940,7 +940,7 @@ describe "Web: settings" do
     W.shown_flash(r).should eq "Gespeichert."
     W.page_title(user.get("/salden")).should eq "Salden · WG Süd"
     W.attr(r, %(//meta[@name="apple-mobile-web-app-title"]), "content").should eq "WG Süd"
-    W.text_of(r, %(//a[@class="brand"])).should eq "Zipfelkasse"
+    W.text_of(r, %(//a[#{W.cls("app-brand")}])).should eq "Zipfelkasse"
     manifest = user.get("/manifest.webmanifest").json
     {manifest["name"], manifest["short_name"]}.should eq({"WG Süd", "WG Süd"})
 
@@ -967,7 +967,7 @@ describe "Web: settings" do
     W.current_tab(r).should eq "/einstellungen"
     r.doc.xpath_nodes(%(//li[starts-with(@id, "person-")])).map { |li| {li["id"], li.xpath_node(".//input[@name='name']").not_nil!["value"]} }
       .should eq [{"person-1", "Anna"}, {"person-2", "Ben"}, {"person-3", "Cleo"}]
-    W.text_of(r, %(//li[@id="person-1"]//p[@class="row-meta"])).should eq "0 Ausgaben · Saldo 0,00 € · das bist du"
+    W.text_of(r, %(//li[@id="person-1"]//p[#{W.cls("row-meta")}])).should eq "0 Ausgaben · Saldo 0,00 € · das bist du"
     W.attr(r, %(//li[@id="person-2"]//button[@title="Archivieren"]), "data-confirm").should eq "Ben archivieren?"
     W.attr(r, %(//li[@id="person-2"]//form[1]), "action").should eq "/einstellungen/teilnehmer/2"
     r.doc.xpath_node(%(//h2[text()="Archiviert"])).should be_nil
@@ -1002,10 +1002,10 @@ describe "Web: settings" do
     {r.status, r.error_message}.should eq({422, "Ben hat noch einen Saldo von -10,00 €. Bitte erst ausgleichen, dann archivieren."})
     W.page_title(r).should eq "Teilnehmer · WG Süd"
     r = user.get("/einstellungen/teilnehmer")
-    W.text_of(r, %(//li[@id="person-1"]//p[@class="row-meta"])).should eq "1 Ausgabe · Saldo 20,00 € · das bist du"
-    W.text_of(r, %(//li[@id="person-2"]//p[@class="row-meta"])).should eq "1 Ausgabe · Saldo -10,00 €"
-    W.attr(r, %(//li[@id="person-2"]//span[contains(@class, "amount")]), "class").not_nil!.split.should eq ["amount", "negative"]
-    W.text_of(r, %(//li[@id="person-4"]//p[@class="row-meta"])).should eq "0 Ausgaben · Saldo 0,00 €"
+    W.text_of(r, %(//li[@id="person-1"]//p[#{W.cls("row-meta")}])).should eq "1 Ausgabe · Saldo 20,00 € · das bist du"
+    W.text_of(r, %(//li[@id="person-2"]//p[#{W.cls("row-meta")}])).should eq "1 Ausgabe · Saldo -10,00 €"
+    W.attr(r, %(//li[@id="person-2"]//p[#{W.cls("row-meta")}]/span[#{W.cls("tabular-nums")}]), "class").not_nil!.split.should contain "text-danger"
+    W.text_of(r, %(//li[@id="person-4"]//p[#{W.cls("row-meta")}])).should eq "0 Ausgaben · Saldo 0,00 €"
 
     r = user.post("/einstellungen/teilnehmer/4/archivieren")
     {r.status, r.location, r.flash}.should eq({303, "/einstellungen/teilnehmer", "„Dorothea“ archiviert."})
@@ -1041,9 +1041,9 @@ describe "Web: settings" do
     defaults = ["Lebensmittel", "Restaurant", "Haushalt", "Miete & Nebenkosten", "Transport", "Reisen", "Freizeit", "Gesundheit", "Geschenke", "Sonstiges"]
     names.call(r).should eq defaults
     r.doc.xpath_nodes(%(//li[starts-with(@id, "kategorie-")])).map(&.["id"]).should eq (1..10).map { |i| "kategorie-#{i}" }
-    icons = r.doc.xpath_nodes(%(//li[starts-with(@id, "kategorie-")]/span[@class="muted"]//use)).map(&.["href"].split('#').last)
+    icons = r.doc.xpath_nodes(%(//li[starts-with(@id, "kategorie-")]//span[#{W.cls("input-group-text")}]/span[#{W.cls("plush")}])).map(&.["class"].lchop("plush plush-"))
     icons.should eq ["cart", "utensils", "home", "key", "car", "plane", "ticket", "heart", "gift", "receipt"]
-    W.text_of(r, %(//li[@id="kategorie-1"]//p[@class="row-meta"])).should eq "0 Ausgaben"
+    W.text_of(r, %(//li[@id="kategorie-1"]//p[#{W.cls("row-meta")}])).should eq "0 Ausgaben"
     r.doc.xpath_node(%(//li[@id="kategorie-1"]//button[@title="Nach oben"][@disabled])).should_not be_nil
     r.doc.xpath_node(%(//li[@id="kategorie-1"]//button[@title="Nach unten"][@disabled])).should be_nil
     r.doc.xpath_node(%(//li[@id="kategorie-10"]//button[@title="Nach unten"][@disabled])).should_not be_nil
@@ -1075,7 +1075,7 @@ describe "Web: settings" do
 
     # Archiving and bringing back.
     user.post("/ausgaben/neu", W.expense(titel: "Brot", betrag: "3", kategorie: "1", teil: [1_i64])).status.should eq 303
-    W.text_of(user.get("/einstellungen/kategorien"), %(//li[@id="kategorie-1"]//p[@class="row-meta"])).should eq "1 Ausgabe"
+    W.text_of(user.get("/einstellungen/kategorien"), %(//li[@id="kategorie-1"]//p[#{W.cls("row-meta")}])).should eq "1 Ausgabe"
     r = user.post("/einstellungen/kategorien/1/archivieren")
     {r.status, r.location, r.flash}.should eq({303, "/einstellungen/kategorien", "Kategorie „Essen & Trinken“ archiviert."})
     r = user.get("/einstellungen/kategorien")
@@ -1138,9 +1138,9 @@ end
 
 # The activity page as {group, [{element, link, first line, time}]}.
 private def activity_groups(r : E2E::Response) : Array({String, Array({String, String?, String, String})})
-  r.doc.xpath_nodes(%(//div[@class="activity-group"])).map do |g|
+  r.doc.xpath_nodes(%(//div[#{W.cls("activity-group")}])).map do |g|
     items = g.xpath_nodes(%(.//*[contains(@class, "activity-item")])).map do |i|
-      {i.name, i["href"]?, W.squish(i.xpath_node(%(.//div[@class="activity-main"]/div[1])).not_nil!.content),
+      {i.name, i["href"]?, W.squish(i.xpath_node(%(.//div[#{W.cls("activity-main")}]/div[1])).not_nil!.content),
        i.xpath_node(".//time").not_nil!["datetime"]}
     end
     {g["data-group"], items}
@@ -1170,7 +1170,7 @@ describe "Web: activity over time" do
     world.restart("2026-09-10T10:00:00Z")
     user.post("/ausgaben/1", W.expense(titel: "Einkauf groß", betrag: "12,34", datum: "2026-03-02", teil: [1_i64, 2_i64])).status.should eq 303
     r = user.get("/ausgaben/1")
-    W.text_of(r, "//div[@class='card-header']/p[@class='card-description']").should eq "Angelegt am 02.03.2026, 11:00 · geändert am 10.09.2026, 12:00"
+    W.text_of(r, %(//div[#{W.cls("card-header")}]/p[#{W.cls("card-text")}])).should eq "Angelegt am 02.03.2026, 11:00 · geändert am 10.09.2026, 12:00"
     world.restart("2026-09-22T10:00:00Z")
     user.post("/ausgaben/neu", W.expense(titel: "Wocheneinkauf", betrag: "25", datum: "2026-09-22", teil: [1_i64, 2_i64])).status.should eq 303
     user.post("/einstellungen/wiederkehrend/neu", {"ausgabe" => "2", "haeufigkeit" => "weekly"}).status.should eq 303
@@ -1208,19 +1208,19 @@ describe "Web: activity over time" do
       "03.10.2026, 12:00", "03.10.2026, 00:30", "02.10.2026, 23:30", "01.10.2026, 12:00", "22.09.2026, 12:00",
       "22.09.2026, 12:00", "10.09.2026, 12:00", "02.03.2026, 11:00", "01.07.2025, 12:00", "01.05.2024, 12:00",
     ]
-    W.texts(r, %(//ul[@class="changes"]/li)).should eq ["Titel: Einkauf → Einkauf groß"]
-    W.texts(r, %(//span[@class="amount muted"])).should eq ["(12,34 €)", "(25,00 €)", "(25,00 €)", "(12,34 €)"]
-    W.attr(r, %(//a[@class="activity-item"]//span[@class="expense-chevron"]//use), "href").not_nil!.should end_with "#chevron-right"
+    W.texts(r, %(//ul[#{W.cls("changes")}]/li)).should eq ["Titel: Einkauf → Einkauf groß"]
+    W.texts(r, %(//*[#{W.cls("activity-main")}]//span[#{W.cls("tabular-nums")}])).should eq ["(12,34 €)", "(25,00 €)", "(25,00 €)", "(12,34 €)"]
+    W.attr(r, %(//a[#{W.cls("activity-item")}]//span[#{W.cls("expense-chevron")}]//use), "href").not_nil!.should end_with "#chevron-right"
 
     # An automatic expense and its history.
     r = user.get("/ausgaben/3")
     W.input(r, "datum").should eq "2026-09-29"
-    W.text_of(r, "//div[@class='card-header']/p[@class='card-description']").should eq "Angelegt am 01.10.2026, 12:00 · Wiederkehrend"
-    W.attr(r, %(//p[@class="card-description"]/a[contains(@class, "badge")]), "href").should eq "/einstellungen/wiederkehrend"
+    W.text_of(r, %(//div[#{W.cls("card-header")}]/p[#{W.cls("card-text")}])).should eq "Angelegt am 01.10.2026, 12:00 · Wiederkehrend"
+    W.attr(r, %(//p[#{W.cls("card-text")}]/a[#{W.cls("badge")}]), "href").should eq "/einstellungen/wiederkehrend"
     r.text.should contain "Diese Ausgabe wird automatisch wiederholt. Wiederkehrende Ausgaben verwalten"
     r.doc.xpath_node(%(//a[contains(@href, "/einstellungen/wiederkehrend/neu")])).should be_nil
-    W.texts(r, %(//div[@class="activity-item"]//div[@class="activity-main"]/div[1])).should eq ["Automatisch hat „Wocheneinkauf“ angelegt (25,00 €)."]
-    W.attr(user.get("/"), %(//a[@id="ausgabe-3"]//span[@title="Wiederkehrend"]), "class").should eq "badge badge-muted"
+    W.texts(r, %(//div[#{W.cls("activity-item")}]//div[#{W.cls("activity-main")}]/div[1])).should eq ["Automatisch hat „Wocheneinkauf“ angelegt (25,00 €)."]
+    W.attr(user.get("/"), %(//a[@id="ausgabe-3"]//span[@title="Wiederkehrend"]), "class").not_nil!.split.should contain "badge"
   end
 
   scenario "the same log seen later in the month", world do
@@ -1453,21 +1453,21 @@ describe "Web: security, PWA, static files and CLI" do
     {
       "name" => "Zipfelkasse", "short_name" => "Zipfelkasse", "description" => "Gemeinsame Ausgaben teilen", "lang" => "de",
       "dir" => "ltr", "id" => "/", "start_url" => "/", "scope" => "/", "display" => "standalone",
-      "background_color" => "#ffffff", "theme_color" => "#047756",
+      "background_color" => "#ece4d4", "theme_color" => "#ece4d4",
     }.each { |k, v| {k, m[k].as_s}.should eq({k, v}) }
     m["shortcuts"].should eq JSON.parse(%([{"name":"Ausgabe hinzufügen","url":"/ausgaben/neu"},{"name":"Salden","url":"/salden"}]))
     icons = m["icons"].as_a
     icons.map { |i| {i["src"].as_s.split('?').first, i["sizes"].as_s, i["type"].as_s, i["purpose"].as_s} }.should eq [
-      {"/static/icons/icon-192.png", "192x192", "image/png", "any"},
-      {"/static/icons/icon-512.png", "512x512", "image/png", "any"},
-      {"/static/icons/maskable-512.png", "512x512", "image/png", "maskable"},
+      {"/static/icons/icon-felt-192.webp", "192x192", "image/webp", "any"},
+      {"/static/icons/icon-felt-512.webp", "512x512", "image/webp", "any"},
+      {"/static/icons/maskable-felt-512.webp", "512x512", "image/webp", "maskable"},
     ]
     icons.each do |i|
       src = i["src"].as_s
       src.should match(/\?v=[0-9a-f]{10}$/)
-      png = anon.get(src)
-      {png.status, png.content_type, png.headers["Cache-Control"]}.should eq({200, "image/png", "public, max-age=31536000, immutable"})
-      W.sha10(png.body).should eq src.split("?v=").last
+      img = anon.get(src)
+      {img.status, img.content_type, img.headers["Cache-Control"]}.should eq({200, "image/webp", "public, max-age=31536000, immutable"})
+      W.sha10(img.body).should eq src.split("?v=").last
     end
 
     r = anon.get("/sw.js")
@@ -1477,19 +1477,54 @@ describe "Web: security, PWA, static files and CLI" do
     r.body.should_not contain "caches."
     r = anon.get("/favicon.ico")
     {r.status, r.content_type, r.headers["Cache-Control"]}.should eq({200, "image/png", "public, max-age=86400"})
-    r.body.should eq anon.get("/static/icons/favicon-32.png").body
+    r.body.should eq anon.get("/static/icons/favicon-felt-light.png").body
+  end
+
+  scenario "appearance per device", world do
+    user = world.user
+    user.login("Anna")
+    html = ->(r : E2E::Response) { {W.attr(r, "//html", "data-look"), W.attr(r, "//html", "data-bs-theme")} }
+    mascots = ->(r : E2E::Response) do
+      r.doc.xpath_nodes(%(//a[#{W.cls("app-brand")}]//*[@src or @srcset])).map { |n| (n["src"]? || n["srcset"]).split('?').first }
+    end
+    # Felt, following the system, until the device chooses otherwise.
+    r = user.get("/")
+    html.call(r).should eq({"felt", nil})
+    mascots.call(r).should eq ["/static/brand/mascot-felt-dark.webp", "/static/brand/mascot-felt-light.webp"]
+    W.texts(r, %(//meta[@name="theme-color"]/@content)).should eq ["#ece4d4", "#26292d"]
+    r = user.get("/einstellungen")
+    r.doc.xpath_nodes(%(//form[@action="/einstellungen/darstellung"]//input[@checked])).map(&.["value"]).should eq ["felt", "auto"]
+
+    r = user.post("/einstellungen/darstellung", {"look" => "clean", "theme" => "dark"})
+    {r.status, r.headers["Location"]}.should eq({303, "/einstellungen#darstellung"})
+    r = user.get("/")
+    html.call(r).should eq({"clean", "dark"})
+    mascots.call(r).should eq ["/static/brand/mascot-clean-dark.webp"]
+    W.texts(r, %(//meta[@name="theme-color"]/@content)).should eq ["#212529"]
+    W.attr(r, %(//link[@rel="apple-touch-icon"]), "href").not_nil!.should start_with "/static/icons/apple-touch-icon-clean.png?v="
+    user.get("/manifest.webmanifest").json["icons"][0]["src"].as_s.should start_with "/static/icons/icon-clean-192.webp?v="
+
+    # Unknown values keep the current choice.
+    user.post("/einstellungen/darstellung", {"look" => "plaid", "theme" => "light"}).status.should eq 303
+    html.call(user.get("/")).should eq({"clean", "light"})
+    user.post("/einstellungen/darstellung", {"look" => "felt", "theme" => "auto"})
+    html.call(user.get("/")).should eq({"felt", nil})
   end
 
   scenario "static files and cache busting", world do
     user = world.user
     user.login("Anna")
-    {
-      "app.css" => "text/css; charset=utf-8", "app.js" => "text/javascript; charset=utf-8",
-      "expense-form.js" => "text/javascript; charset=utf-8", "sw.js" => "text/javascript; charset=utf-8",
-      "icons.svg" => "image/svg+xml", "mascot.webp" => "image/webp", "icons/apple-touch-icon.png" => "image/png",
-      "icons/favicon-32.png" => "image/png", "icons/icon-192.png" => "image/png", "icons/icon-512.png" => "image/png",
-      "icons/maskable-512.png" => "image/png",
-    }.each do |file, type|
+    # Every file under src/static is served (dot and underscore files are not embedded).
+    types = {
+      ".css" => "text/css; charset=utf-8", ".js" => "text/javascript; charset=utf-8",
+      ".svg" => "image/svg+xml", ".webp" => "image/webp", ".png" => "image/png",
+    }
+    root = File.expand_path("../src/static", __DIR__)
+    files = Dir.glob("#{root}/**/*").select { |f| File.file?(f) }.map(&.lchop("#{root}/"))
+      .reject { |f| File.basename(f).starts_with?(/[._]/) }.sort
+    ["app.css", "app.js", "expense-form.js", "sw.js", "icons.svg"].each { |f| files.should contain f }
+    files.each do |file|
+      type = types[File.extname(file)]? || fail "no content type expected for #{file}"
       r = user.get("/static/#{file}")
       {file, r.status, r.content_type, r.headers["Cache-Control"]}.should eq({file, 200, type, "public, max-age=300"})
       r.body.bytesize.should eq r.headers["Content-Length"].to_i
@@ -1508,8 +1543,8 @@ describe "Web: security, PWA, static files and CLI" do
     refs = page.doc.xpath_nodes("//link[@href]|//script[@src]|//img[@src]|//use[@href]").map { |n| n["href"]? || n["src"] }
     statics = refs.select(&.starts_with?("/static/")).map(&.split('#').first).uniq!
     statics.map(&.split('?').first).sort.should eq [
-      "/static/app.css", "/static/app.js", "/static/expense-form.js", "/static/icons.svg", "/static/icons/apple-touch-icon.png",
-      "/static/icons/favicon-32.png", "/static/mascot.webp",
+      "/static/app.css", "/static/app.js", "/static/brand/mascot-felt-light.webp", "/static/expense-form.js", "/static/icons.svg",
+      "/static/icons/apple-touch-icon-felt.png", "/static/icons/favicon-felt-dark.png", "/static/icons/favicon-felt-light.png",
     ]
     statics.each do |ref|
       path, v = ref.split("?v=")

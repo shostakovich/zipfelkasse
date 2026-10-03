@@ -54,8 +54,9 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
-## Design references
+## felt-css
 
-The look follows [Spliit](https://github.com/spliit-app/spliit) (MIT), which builds on
-[shadcn/ui](https://ui.shadcn.com) (MIT) and [Tailwind CSS](https://tailwindcss.com) (MIT): `src/static/app.css`
-reuses their color values and a Tailwind-style reset. No source code from these projects is included.
+The pages load [felt-css](https://felt-css.rocu.de/) (Bootstrap 5 class names with a felt look) from
+`https://felt-css.rocu.de/felt.css`; it is public domain under the Unlicense. The mascot, app icons and plush
+icons in `src/static/brand/`, `src/static/icons/` and `src/static/plush/` were made for Zipfelkasse with an
+image model and belong to it.
