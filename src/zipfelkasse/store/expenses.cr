@@ -2,7 +2,6 @@ require "json"
 
 module Zipfelkasse
   class Store
-    # Ties are broken newest first.
     enum ExpenseSort
       DateDesc
       DateAsc
@@ -19,14 +18,8 @@ module Zipfelkasse
       end
     end
 
-    # An expense as entered, or the template of a recurrence (stored as JSON
-    # without date and recurring_id). The store validates it and computes the
-    # shares from split_mode, amounts and parts. For SplitMode::Amount the
-    # weights are amounts in the smallest unit of original_currency.
-    #
-    # In euros original_amount_minor is amount_cents, fx_rate 1 and fx_source
-    # nil; the store sets them. For a foreign currency it computes
-    # amount_cents from original_amount_minor and fx_rate.
+    # An expense as entered, or a recurrence template. Amount weights are in the
+    # smallest unit of original_currency; the store derives the euro amount.
     struct ExpenseInput
       include JSON::Serializable
 
@@ -55,7 +48,6 @@ module Zipfelkasse
       end
     end
 
-    # A stored expense, deleted ones included.
     record Expense,
       id : Int64,
       title : String,
@@ -106,7 +98,6 @@ module Zipfelkasse
         !Domain.eur?(original_currency)
       end
 
-      # Cents of participant_id's share, 0 if not involved.
       def share_of(participant_id : Int64) : Int64
         shares.find(&.participant_id.==(participant_id)).try(&.amount_cents) || 0_i64
       end
@@ -115,8 +106,6 @@ module Zipfelkasse
         shares.map { |sh| Domain::Part.new(sh.participant_id, sh.weight) }
       end
 
-      # Complete (parts from the stored weights), so it can be passed straight
-      # back to update_expense or become a template.
       def to_input : ExpenseInput
         ExpenseInput.new(title: title, date: date, category_id: category_id, paid_by: paid_by, notes: notes,
           reimbursement: reimbursement, split_mode: split_mode, amount_cents: amount_cents, parts: parts,
@@ -125,9 +114,8 @@ module Zipfelkasse
       end
     end
 
-    # Narrows list_expenses; the defaults mean "no filter".
     record ExpenseFilter,
-      text : String? = nil,                    # substring of title or notes, folded
+      text : String? = nil,
       any_text : Array(String) = [] of String, # one of them suffices (together with text)
       category_id : Int64? = nil,
       without_category : Bool = false, # then category_id is ignored
@@ -144,7 +132,6 @@ module Zipfelkasse
 
     record DatedEntry, date : Time, entry : Domain::Entry
 
-    # Title and category of a past expense (for category suggestions).
     record TitleCategory, title : String, category_id : Int64 do
       include DB::Serializable
     end
@@ -165,8 +152,7 @@ module Zipfelkasse
     MAX_TITLE_LEN =  200
     MAX_NOTES_LEN = 2000
 
-    # "Title or notes of e contain one of terms", compared folded (LIKE would
-    # only ignore the case of ASCII letters). Empty without terms.
+    # Folded, since LIKE ignores the case of ASCII letters only.
     protected def self.text_cond(terms : Enumerable(String)) : {String, Array(DB::Any)}
       ors = [] of String
       args = [] of DB::Any
@@ -180,8 +166,6 @@ module Zipfelkasse
       {"(" + ors.join(" OR ") + ")", args}
     end
 
-    # Validates the input including the split. The cent shares are computed
-    # by split_shares once the expense ID is known.
     protected def self.normalize_expense(input : ExpenseInput) : ExpenseInput
       input.title = normalize_name(input.title)
       input.notes = input.notes.strip
@@ -248,7 +232,6 @@ module Zipfelkasse
       end
     end
 
-    # No actor means the system. The text is shown with the activity entry.
     def create_expense(actor_id : Int64?, input : ExpenseInput, text : String? = nil) : Int64
       input = Store.normalize_expense(input)
       id = transaction do |tx|
@@ -277,8 +260,7 @@ module Zipfelkasse
       id
     end
 
-    # Logs the changed fields; an unchanged save writes nothing (not even
-    # updated_at) and calls no hook.
+    # An unchanged save writes nothing, not even updated_at.
     def update_expense(actor_id : Int64?, id : Int64, input : ExpenseInput) : Nil
       input = Store.normalize_expense(input)
       shares = Store.split_shares(input, id)
@@ -305,7 +287,6 @@ module Zipfelkasse
       changed(id) if changed
     end
 
-    # Soft delete; the shares stay. Already deleted expenses raise NotFound.
     def delete_expense(actor_id : Int64?, id : Int64) : Nil
       transaction do |tx|
         old = get_expense(id, tx)
@@ -318,7 +299,6 @@ module Zipfelkasse
       changed(id)
     end
 
-    # Deleted expenses too (the YNAB sync processes deletions).
     def get_expense?(id : Int64, db : DB::QueryMethods = @db) : Expense?
       db.query_one?("#{EXPENSE_SELECT} WHERE e.id = ?", id, as: Expense)
     end
@@ -327,7 +307,6 @@ module Zipfelkasse
       get_expense?(id, db) || raise NotFound.new
     end
 
-    # Non-deleted expenses, by default newest first.
     def list_expenses(f : ExpenseFilter = ExpenseFilter.new) : Array(Expense)
       where = ["e.deleted_at IS NULL"]
       args = [] of DB::Any
@@ -378,15 +357,11 @@ module Zipfelkasse
       @db.query_all(q, args: args, as: Expense)
     end
 
-    # The ID the next new expense will most likely get (SQLite assigns
-    # max(id) + 1; deletes are soft). The form preview needs it to distribute
-    # leftover cents like the store; a concurrent create makes the preview off
-    # by at most one cent.
+    # SQLite assigns max(id) + 1 (deletes are soft); the form preview splits the cents by it.
     def next_expense_id : Int64
       @db.scalar("SELECT coalesce(max(id), 0) + 1 FROM expenses").as(Int64)
     end
 
-    # Non-deleted expenses dated up to `to` (nil = all), oldest first.
     def dated_balance_entries(to : Time?, db : DB::QueryMethods = @db) : Array(DatedEntry)
       q = "SELECT e.id, e.date, e.paid_by, e.amount_cents, x.participant_id, x.amount_cents " \
           "FROM expenses e JOIN expense_shares x ON x.expense_id = e.id WHERE e.deleted_at IS NULL"
@@ -410,14 +385,10 @@ module Zipfelkasse
       entries
     end
 
-    # Cents per person (positive = is owed money); people without entries are
-    # missing.
     def balances(db : DB::QueryMethods = @db) : Hash(Int64, Int64)
       Domain.balances(dated_balance_entries(nil, db).map(&.entry))
     end
 
-    # Non-deleted, non-reimbursement expenses with an active category, newest
-    # first.
     def category_history : Array(TitleCategory)
       @db.query_all("SELECT e.title, e.category_id FROM expenses e JOIN categories c ON c.id = e.category_id " \
                     "WHERE e.deleted_at IS NULL AND e.is_reimbursement = 0 AND c.archived_at IS NULL " \
@@ -461,7 +432,6 @@ module Zipfelkasse
       fields.select { |_, was, now| was != now }.map { |field, was, now| FieldChange.new(field, was, now) }
     end
 
-    # "1 € = 1,0857 USD (EZB)", or "–" without foreign currency.
     private def rate_summary(currency : String, rate : Float64?, source : Domain::FXSource?) : String
       return "–" if Domain.eur?(currency)
       summary = "1 € = #{Domain.format_rate(rate.not_nil!)} #{currency.upcase}"
@@ -472,7 +442,6 @@ module Zipfelkasse
       end
     end
 
-    # The weights per person in the mode's format (amounts in currency).
     def self.weight_summary(mode : Domain::SplitMode, currency : String, shares : Array(Domain::Share),
                             names : Hash(Int64, String)) : String
       shares.join(", ") do |sh|

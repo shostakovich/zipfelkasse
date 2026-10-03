@@ -84,7 +84,6 @@ module Zipfelkasse::Web
     error : String? = nil,
     scripts : Array(String) = [] of String
 
-  # Not a View itself: it holds one.
   record Layout, page : Page, content : View, me : Store::Participant?, group_name : String, flash : String? do
     include Helpers
 

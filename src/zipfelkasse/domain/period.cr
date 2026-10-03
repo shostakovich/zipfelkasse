@@ -5,7 +5,6 @@ module Zipfelkasse::Domain
     Week
   end
 
-  # Periods are labelled "2026", "2026-09" and ISO week "2026-W40".
   module Period
     extend self
 

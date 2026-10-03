@@ -1,7 +1,6 @@
 require "uri"
 
 module Zipfelkasse::Web
-  # Expenses per "Weitere anzeigen" step on the home page.
   HOME_PAGE_SIZE =   100
   HOME_MAX_ROWS  = 5_000
 
@@ -14,16 +13,13 @@ module Zipfelkasse::Web
     end
   end
 
-  # A row of the expense list. everyone: all active people are involved
-  # (from 4 people on); involved: the current person pays or has a share.
+  # everyone: all active people are involved (from 4 people on).
   record ExpenseRow, expense : Store::Expense, for_names : Array(String), everyone : Bool, involved : Bool,
     my_balance : Int64 do
     delegate id, title, date, reimbursement?, category_name, paid_by_name, recurring_id, amount_cents,
       original_amount_minor, original_currency, foreign?, to: @expense
   end
 
-  # Splits the expenses (sorted by date, descending) into labelled periods.
-  # active holds the IDs of the active people.
   def self.group_expenses(es : Array(Store::Expense), today : Time, me_id : Int64, names : Hash(Int64, String),
                           active : Set(Int64)) : Array({String, Array(ExpenseRow)})
     rows = es.map do |e|
@@ -37,12 +33,9 @@ module Zipfelkasse::Web
     rows.chunks { |row| period_label(row.date, today) }
   end
 
-  # A person in the split of the expense form. value holds shares, percent
-  # or an amount depending on the mode; cents is the computed share (saved
-  # expenses only).
+  # value holds shares, percent or an amount, depending on the mode.
   record SplitRow, id : Int64, name : String, archived : Bool, checked : Bool, value : String = "", cents : Int64? = nil
 
-  # Raised with the form as it is to be shown again.
   class InvalidForm < Domain::ValidationError
     getter form : ExpenseForm
 
@@ -51,8 +44,7 @@ module Zipfelkasse::Web
     end
   end
 
-  # The values as text, so that after an error they are shown again exactly
-  # as entered.
+  # Text, so that after an error the values are shown as entered.
   record ExpenseForm,
     id : Int64? = nil,
     title : String = "",
@@ -61,14 +53,14 @@ module Zipfelkasse::Web
     currency : String? = "EUR", # one of COMMON_CURRENCIES, nil = other
     currency_other : String = "",
     amount : String = "", # in the selected currency
-    rate : String = "",   # foreign currency per 1 EUR
+    rate : String = "",
     rate_source : Domain::FXSource? = nil,
     paid_by : Int64? = nil,
     notes : String = "",
     reimbursement : Bool = false,
     split_mode : Domain::SplitMode = Domain::SplitMode::Equal,
     rows : Array(SplitRow) = [] of SplitRow,
-    eur_cents : Int64? = nil do # converted amount for display
+    eur_cents : Int64? = nil do
     def self.from_expense(e : Store::Expense, people : Array(Store::Participant)) : ExpenseForm
       currency = e.original_currency
       common = COMMON_CURRENCIES.includes?(currency)
@@ -97,8 +89,7 @@ module Zipfelkasse::Web
       end
     end
 
-    # The empty form (all active people involved, I paid) or a prefilled
-    # reimbursement (?rueckzahlung=1&von=ID&an=ID&betrag=cents).
+    # Or a prefilled reimbursement (?rueckzahlung=1&von=ID&an=ID&betrag=cents).
     def self.blank(query : URI::Params, today : Time, me_id : Int64, people : Array(Store::Participant)) : ExpenseForm
       reimbursement = !query["rueckzahlung"]?.presence.nil?
       to = Web.positive_id?(query["an"]?, trim: true)
@@ -113,9 +104,7 @@ module Zipfelkasse::Web
         amount: reimbursement && cents && cents > 0 ? Domain.format_cents_input(cents) : "")
     end
 
-    # Reads a posted form without validating it. people are all people;
-    # archived ones are shown only if checked, in the existing expense or the
-    # payer.
+    # Archived people only show when checked, in the existing expense or paying.
     def self.from_post(body : URI::Params, existing : Store::Expense?, people : Array(Store::Participant)) : ExpenseForm
       paid_by = Web.positive_id?(body["bezahlt_von"]?, trim: true)
       checked = body.fetch_all("teil").compact_map { |v| Web.positive_id?(v, trim: true) }.to_set
@@ -149,7 +138,6 @@ module Zipfelkasse::Web
       rows.select(&.checked)
     end
 
-    # Weights of the checked people. Error messages name the person.
     def parts : Array(Domain::Part)
       checked = checked_rows
       if reimbursement?
@@ -259,7 +247,6 @@ module Zipfelkasse::Web
       redirect(env, "/", "„#{expense.title}“ gelöscht.")
     end
 
-    # Deleted expenses too.
     private def find_expense(env : HTTP::Server::Context) : Store::Expense
       or_404(env, "Ausgabe nicht gefunden.") { @d.store.get_expense(path_id(env)) }
     end
@@ -334,7 +321,6 @@ module Zipfelkasse::Web
       payers = @d.store.list_participants(true).select { |p| !p.archived? || p.id == form.paid_by }
       categories = @d.store.list_categories(true).select { |c| !c.archived? || c.id == form.category_id }
       history = expense ? Web.activity_items(@d.store.list_activity(Store::ActivityFilter.new(expense_id: expense.id, limit: 50))) : [] of ActivityItem
-      # The form preview distributes leftover cents by expense ID like the store.
       rotation = form.id || @d.store.next_expense_id
       suggest = Web.suggest_categories(@d.store.category_history).to_json
       view = Views::Expense.new(form, expense, categories, payers, suggest, rotation, history)

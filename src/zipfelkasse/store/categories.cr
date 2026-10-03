@@ -16,8 +16,6 @@ module Zipfelkasse
 
     CATEGORY_COLS = "id, name, position, archived_at"
 
-    # The catch-all category: new categories are sorted in before it,
-    # wherever it has been moved to.
     OTHER_CATEGORY = "Sonstiges"
 
     def list_categories(include_archived = false, db : DB::QueryMethods = @db) : Array(Category)
@@ -33,8 +31,7 @@ module Zipfelkasse
       get_category?(id, db) || raise NotFound.new
     end
 
-    # Inserts the category directly before the active "Sonstiges" (or at the
-    # end without one) and renumbers the active categories.
+    # New categories go before the active "Sonstiges", wherever it was moved to.
     def create_category(actor_id : Int64?, name : String) : Int64
       name = Store.clean_name(name, "die Kategorie")
       transaction do |tx|
@@ -68,9 +65,7 @@ module Zipfelkasse
       end
     end
 
-    # Swaps an active category with its neighbour among the active ones and
-    # renumbers them; at the edges nothing happens. Unknown or archived
-    # categories raise NotFound.
+    # At the edges nothing happens; archived categories raise NotFound.
     def move_category(actor_id : Int64?, id : Int64, up : Bool) : Nil
       transaction do |tx|
         active = list_categories(db: tx)

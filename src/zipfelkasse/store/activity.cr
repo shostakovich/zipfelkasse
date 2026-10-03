@@ -15,13 +15,10 @@ module Zipfelkasse
       end
     end
 
-    # A changed property, already formatted for display (German field names,
-    # formatted values).
     record FieldChange, field : String, old : String, new : String do
       include JSON::Serializable
     end
 
-    # The content of activity.details_json; fields that are not set are left out.
     struct ActivityDetails
       include JSON::Serializable
 
@@ -61,13 +58,11 @@ module Zipfelkasse
       expense_id : Int64? = nil,
       actor_id : Int64? = nil,
       action : Action? = nil,
-      since : Time? = nil,      # at or after
-      until : Time? = nil,      # before
-      before_id : Int64? = nil, # for paging: only entries with a smaller ID
+      since : Time? = nil,
+      until : Time? = nil, # exclusive
+      before_id : Int64? = nil,
       limit : Int32 = 100
 
-    # Writes an activity entry in the transaction of the change it describes.
-    # No actor means the system.
     def insert_activity(tx : DB::Connection, actor_id : Int64?, action : Action, expense_id : Int64?,
                         details : ActivityDetails) : Nil
       tx.exec("INSERT INTO activity (at, actor_id, action, expense_id, details_json) VALUES (?, ?, ?, ?, ?)",

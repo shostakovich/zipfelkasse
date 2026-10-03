@@ -33,7 +33,6 @@ module Zipfelkasse
         n.starts_with?(BACKUP_PREFIX) && n.ends_with?(BACKUP_SUFFIX) &&
           File.info?(File.join(dir, n), follow_symlinks: false).try(&.file?)
       end
-      # The timestamp in the name sorts correctly lexicographically.
       names.sort!
       while names.size > Math.max(keep, 0)
         File.delete(File.join(dir, names.shift))

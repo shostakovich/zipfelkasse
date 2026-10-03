@@ -73,7 +73,6 @@ module Zipfelkasse
   end
 
   module CLI
-    # A failure the user can fix: it is printed without a backtrace.
     class Error < Exception
     end
 
@@ -155,7 +154,6 @@ module Zipfelkasse
       raise Error.new("cannot listen on #{addr}", cause: ex)
     end
 
-    # One backup a day at 03:00 local time, on the configured clock.
     def self.backup_loop(stopper : Stopper, store : Store, config : Config) : Nil
       due = Domain.next_at_hour(config.now.in(config.location), 3)
       while stopper.wait(due - config.now)

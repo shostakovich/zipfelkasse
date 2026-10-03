@@ -2,7 +2,6 @@ module Zipfelkasse::Recurring
   LIST_PATH = "/einstellungen/wiederkehrend"
   NOT_FOUND = "Wiederkehrende Ausgabe nicht gefunden."
 
-  # A frequency to choose in the form, with what it would do for the expense.
   record FreqOption, preview : Preview, checked : Bool do
     delegate next_date, to: preview
 
@@ -14,9 +13,6 @@ module Zipfelkasse::Recurring
       Web.frequency_label(value)
     end
 
-    # What happens to the missed occurrences, e.g. "3 verpasste Termine werden
-    # sofort eingetragen; 1 bereits als Ausgabe vorhandener Termin wird
-    # übersprungen"; empty if there are none.
     def note : String
       missed, existing = preview.missed, preview.existing
       capped = missed > MAX_MISSED_COUNT
@@ -50,8 +46,6 @@ module Zipfelkasse::Recurring
       Web.view "recurring/index.ecr"
     end
 
-    # expense is nil without a chosen expense; options are empty until a
-    # frequency can be chosen.
     record New, expense : Store::Expense?, options : Array(FreqOption) do
       Web.view "recurring/new.ecr"
 

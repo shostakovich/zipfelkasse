@@ -1,9 +1,7 @@
 module Zipfelkasse::Domain
-  # An expense in the form needed for balances. Reimbursements are ordinary
-  # entries: payer = whoever pays back, single share = recipient.
+  # A reimbursement is an entry whose payer pays back and whose single share is the recipient.
   record Entry, paid_by : Int64, amount_cents : Int64, shares : Array(Share)
 
-  # Positive = is owed money, negative = owes money. All balances sum to 0.
   def balances(entries : Array(Entry)) : Hash(Int64, Int64)
     entries.each_with_object({} of Int64 => Int64) do |e, b|
       b[e.paid_by] = b.fetch(e.paid_by, 0_i64) + e.amount_cents
@@ -13,8 +11,7 @@ module Zipfelkasse::Domain
 
   record Transfer, from : Int64, to : Int64, amount_cents : Int64
 
-  # Greedy: the largest debtor pays the largest creditor until everything is
-  # settled. Ties are broken by the smaller ID, so the result is deterministic.
+  # Greedy: the largest debtor pays the largest creditor; ties go to the smaller ID.
   def settle(balances : Hash(Int64, Int64)) : Array(Transfer)
     open = balances.reject { |_, v| v == 0 }
     transfers = [] of Transfer

@@ -32,13 +32,10 @@ end
 
 module Zipfelkasse
   class Store
-    # SQL function for text search, registered on every connection (the
-    # sandbox of sql_query included): lower-cased with ß as "ss", umlauts
-    # kept, so "bäcker" finds "BÄCKER" but not "baecker".
+    # Lower case with ß as "ss" and umlauts kept: "bäcker" finds "BÄCKER", not "baecker".
     FOLD_FUNC = "zipfelkasse_fold"
 
-    # Per connection: extended result codes (to tell UNIQUE from CHECK
-    # violations) and the fold function.
+    # Extended result codes tell UNIQUE from CHECK violations.
     def self.setup(conn : DB::Connection) : Nil
       handle = conn.as(SQLite3::Connection).to_unsafe
       LibSQLite3.extended_result_codes(handle, 1)
@@ -83,7 +80,6 @@ module Zipfelkasse
       raise ex
     end
 
-    # Timestamps are RFC 3339 in UTC, so they compare as text.
     def self.format_time(t : Time) : String
       t.to_utc.to_s(TIME_FORMAT)
     end
@@ -103,7 +99,6 @@ module Zipfelkasse
       parse_date?(s) || raise Time::Format::Error.new("invalid date #{s.inspect}")
     end
 
-    # Column converters for DB::Field; NULL becomes nil.
     module TimeText
       def self.from_rs(rs : DB::ResultSet) : Time?
         rs.read(String?).try { |s| Time.parse_rfc3339(s) }

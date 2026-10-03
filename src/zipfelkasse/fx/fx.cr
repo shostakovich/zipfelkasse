@@ -24,7 +24,6 @@ module Zipfelkasse::FX
       @base_url = d.config.ecb_base_url || DEFAULT_BASE_URL
     end
 
-    # Raises Domain::ValidationError (shown as is), FetchError or a database error.
     def rate(currency : String, date : Time) : Domain::FXRate
       code = currency.strip.upcase
       date = Domain.date_of(date)
@@ -66,7 +65,6 @@ module Zipfelkasse::FX
       end
     end
 
-    # Loads the rates since the newest cached day and returns the newest day.
     def refresh : Time
       fetch(file_reaching(@d.store.ecb_cache_stats.to || @d.today))
     end

@@ -1,8 +1,7 @@
 require "kemal"
 
 module Zipfelkasse::Web
-  # Ends a request with an error page (or JSON, or plain text) and this
-  # status; *status* needs an error handler (see Web.install_errors).
+  # *status* needs an error handler (see ERROR_STATUSES).
   class HTTPError < Kemal::Exceptions::CustomException
     def initialize(env : HTTP::Server::Context, status : Int32, message : String)
       env.response.status_code = status

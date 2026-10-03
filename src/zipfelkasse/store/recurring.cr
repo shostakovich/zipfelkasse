@@ -7,14 +7,12 @@ module Zipfelkasse
 
     class NoInstance < Exception; end
 
-    # A rule for a recurring expense. The template has no date and no
-    # recurring_id.
     record Recurring,
       id : Int64,
       template : ExpenseInput,
       frequency : Domain::Frequency,
-      start_date : Time, # anchor from which all occurrences are computed
-      next_date : Time,  # next occurrence not yet created
+      start_date : Time, # the anchor of all occurrences
+      next_date : Time,
       active : Bool,
       created_by : Int64?,
       created_at : Time,
@@ -39,9 +37,7 @@ module Zipfelkasse
 
     RECURRING_COLS = "id, template_json, frequency, start_date, next_date, active, created_by, created_at, updated_at"
 
-    # The expense becomes the template and first instance: the anchor is its
-    # date, it gets the recurring_id, and the next occurrence is the first one
-    # after the anchor.
+    # The expense becomes the template and the first instance.
     def create_recurring_from_expense(actor_id : Int64?, expense_id : Int64, freq : Domain::Frequency) : Int64
       transaction do |tx|
         e = get_expense(expense_id, tx)
@@ -69,22 +65,17 @@ module Zipfelkasse
       get_recurring?(id, db) || raise NotFound.new
     end
 
-    # Active rules first, then by next occurrence.
     def list_recurring : Array(Recurring)
       @db.query_all("SELECT #{RECURRING_COLS} FROM recurring ORDER BY active DESC, next_date, id", as: Recurring)
     end
 
-    # Active rules with next_date <= today.
     def due_recurring(today : Time) : Array(Recurring)
       @db.query_all("SELECT #{RECURRING_COLS} FROM recurring WHERE active = 1 AND next_date <= ? ORDER BY next_date, id",
         Store.format_date(today), as: Recurring)
     end
 
-    # The dates in [from, to] with a non-deleted expense like input: same
-    # title, payer and amount (for a foreign currency the original amount and
-    # currency, since the euro amount depends on the rate). Recurrences skip
-    # such occurrences, e.g. after a rule was deleted (its expenses lose their
-    # recurring_id) and created again, or when the expense was entered by hand.
+    # Same title, payer and amount (of a foreign currency the original one): a
+    # recurrence skips these dates, e.g. after it was deleted and created again.
     def expense_dates_like(input : ExpenseInput, from : Time, to : Time) : Set(Time)
       currency, amount_column, amount =
         if Domain.eur?(input.original_currency)
@@ -98,9 +89,7 @@ module Zipfelkasse
         as: String).map { |d| Store.parse_date(d) }.to_set
     end
 
-    # Optimistic locking: a catch-up works on a snapshot of the rule, so it
-    # only advances next_date if the rule is still active and still at from;
-    # otherwise raises RecurringChanged.
+    # Optimistic locking: a catch-up works on a snapshot of the rule.
     def set_recurring_next_date(id : Int64, from : Time, next_date : Time) : Nil
       transaction do |tx|
         result = tx.exec("UPDATE recurring SET next_date = ?, updated_at = ? WHERE id = ? AND active = 1 AND next_date = ?",
@@ -113,8 +102,7 @@ module Zipfelkasse
       "Wiederholung „#{r.template.title}“ (#{adverb(r.frequency)})"
     end
 
-    # The persisted activity texts are German and stay as they were written,
-    # whatever the UI labels say.
+    # Persisted activity text: German, whatever the UI labels say later.
     private def adverb(freq : Domain::Frequency) : String
       case freq
       in .weekly?  then "wöchentlich"
@@ -123,8 +111,7 @@ module Zipfelkasse
       end
     end
 
-    # On resume, occurrences from the pause are not caught up: next_date
-    # becomes the first occurrence from today on (unless it is later anyway).
+    # On resume, occurrences from the pause are not caught up.
     def set_recurring_active(actor_id : Int64?, id : Int64, active : Bool, today : Time) : Nil
       transaction do |tx|
         r = get_recurring(id, tx)
@@ -138,8 +125,6 @@ module Zipfelkasse
       end
     end
 
-    # Adopts the most recent non-deleted instance as the new template, e.g.
-    # after its amount was changed. Raises NotFound or NoInstance.
     def update_recurring_template_from_latest(actor_id : Int64?, id : Int64) : Nil
       transaction do |tx|
         r = get_recurring(id, tx)
@@ -151,8 +136,6 @@ module Zipfelkasse
       end
     end
 
-    # Expenses already created are kept; ON DELETE SET NULL clears their
-    # recurring_id.
     def delete_recurring(actor_id : Int64?, id : Int64) : Nil
       transaction do |tx|
         r = get_recurring(id, tx)

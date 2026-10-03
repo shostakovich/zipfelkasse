@@ -1,9 +1,8 @@
 module Zipfelkasse::Web
   module Views
-    # Width: bar length in percent of half the row (0–100).
+    # width: percent of half the row.
     record BalanceRow, participant : Store::Participant, cents : Int64, width : Int64
 
-    # A settlement suggestion; link opens the prefilled reimbursement form.
     record TransferRow, from : Store::Participant, to : Store::Participant, cents : Int64, link : String
 
     record Balances, rows : Array(BalanceRow), transfers : Array(TransferRow), me : Store::Participant? do

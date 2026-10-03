@@ -39,11 +39,8 @@ module Zipfelkasse::Web
     ctx.response.print message, '\n'
   end
 
-  # Only local paths are allowed as a return target. Rejected are control
-  # characters and backslashes (browsers strip tabs/newlines or read "\" as
-  # "/", so "/\t/evil" would become "//evil"), anything with a scheme or
-  # host, paths that start with "//" (even only after decoding) and broken
-  # escapes in the path or fragment.
+  # Only local paths: browsers strip tabs and read "\" as "/", so "/\t/evil"
+  # would become "//evil"; "//" is refused even after decoding.
   def self.safe_return(target : String) : String
     return "/" if target.each_char.any? { |c| unsafe_char?(c) }
     return "/" unless target.starts_with?('/') && !target.starts_with?("//")
