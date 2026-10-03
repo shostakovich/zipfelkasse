@@ -200,6 +200,17 @@ module Zipfelkasse::Web
     Domain.parse_weight(mode, cur, v)
   end
 
+  def self.form_encoding_ok?(s : String) : Bool
+    return false if s.includes?(';')
+    b = s.to_slice
+    i = 0
+    while i = b.index('%'.ord.to_u8, i)
+      return false unless i + 2 < b.size && b[i + 1].unsafe_chr.hex? && b[i + 2].unsafe_chr.hex?
+      i += 3
+    end
+    true
+  end
+
   class Handlers
     def register_expenses : Nil
       Web.route(@d, "GET", "/") { |r| home(r) }
@@ -281,6 +292,7 @@ module Zipfelkasse::Web
 
     # Creates the expense (existing nil) or updates it.
     private def save_expense(r : Request, existing : Store::Expense?) : Nil
+      raise HTTPError.new(400, "Ungültige Anfrage.") unless form_encoding_ok?(r)
       people = @d.store.list_participants(true)
       f = Web.read_expense_form(r, existing.try(&.id) || 0_i64, people, existing)
       begin
@@ -298,6 +310,14 @@ module Zipfelkasse::Web
       kind = input.reimbursement? ? "Rückzahlung" : "Ausgabe"
       r.set_flash("#{kind} „#{Store.normalize_name(input.title)}“ #{existing ? "gespeichert" : "angelegt"}.")
       r.redirect("/")
+    end
+
+    # Broken percent escapes or ";" separators in the query or the form body.
+    # The parser would accept them, the expense form rejects them.
+    private def form_encoding_ok?(r : Request) : Bool
+      return false unless Web.form_encoding_ok?(r.request.query || "")
+      type = (r.request.headers["Content-Type"]? || "").partition(';')[0].strip.downcase
+      type != "application/x-www-form-urlencoded" || Web.form_encoding_ok?(r.ctx.params.raw_body)
     end
 
     # Validates the form and builds the store input. A missing or ECB rate
