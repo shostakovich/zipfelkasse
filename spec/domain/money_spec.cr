@@ -156,32 +156,60 @@ describe Zipfelkasse::Domain do
       D.format_rate(Float64::NAN).should eq ""
     end
 
-    it "uses Go's error messages" do
+    it "parses amounts and reports errors like Go" do
       {
-        ""          => "Bitte einen Betrag eingeben.",
-        " € "       => "Bitte einen Betrag eingeben.",
-        "1 2,3x"    => "Ungültiger Betrag „12,3x“.",
-        "1,234"     => "Höchstens 2 Nachkommastellen erlaubt.",
-        "1" * 16    => "Der Betrag ist zu groß.",
-        "1\u{a0}000" => nil,
-      }.each do |input, message|
-        if message
-          expect_raises(D::ValidationError, message) { D.parse_cents(input) }
+        ""                    => "Bitte einen Betrag eingeben.",
+        " € "                 => "Bitte einen Betrag eingeben.",
+        "1 2,3x"              => "Ungültiger Betrag „12,3x“.",
+        "1,234"               => "Höchstens 2 Nachkommastellen erlaubt.",
+        "1" * 16              => "Der Betrag ist zu groß.",
+        "1\u{a0}000"          => 100000_i64,
+        "1\u{202f}000"        => "Ungültiger Betrag „1\u{202f}000“.", # only space and NBSP are removed
+        "€12"                 => "Ungültiger Betrag „€12“.",
+        "12 €€"               => "Ungültiger Betrag „12€“.",
+        "-0"                  => 0_i64,
+        "+-1"                 => "Ungültiger Betrag „+-1“.",
+        "--1"                 => "Ungültiger Betrag „--1“.",
+        "1.2.3,4"             => "Ungültiger Betrag „1.2.3,4“.",
+        "1,234,567.8"         => 123456780_i64,
+        ".5"                  => 50_i64,
+        "0,"                  => "Ungültiger Betrag „0,“.",
+        "000.123"             => "Höchstens 2 Nachkommastellen erlaubt.",
+        "1.0000"              => 100_i64,
+        "12.3456"             => "Höchstens 2 Nachkommastellen erlaubt.",
+        "1..2"                => "Ungültiger Betrag „1..2“.",
+        "\u{85}1,5\u{85}"     => 150_i64,
+        "1.234.5"             => "Ungültiger Betrag „1.234.5“.",
+        "+"                   => "Ungültiger Betrag „+“.",
+        "\u{661}\u{662}"      => "Ungültiger Betrag „\u{661}\u{662}“.",
+      }.each do |input, want|
+        if want.is_a?(String)
+          validation_error { D.parse_cents(input) }.should eq want
         else
-          D.parse_cents(input).should eq 100000
+          D.parse_cents(input).should eq want
         end
       end
-      expect_raises(D::ValidationError, "Dieser Betrag darf keine Nachkommastellen haben.") { D.parse_minor("1,5", 0) }
-      expect_raises(D::ValidationError, "Ungültige Prozentangabe „x“.") { D.parse_basis_points(" x % ") }
-      expect_raises(D::ValidationError, "Ungültiger Wechselkurs „-1,2“ – bitte eine Zahl größer als 0 angeben (Einheiten der Währung pro 1 €).") do
-        D.parse_rate(" - 1,2")
-      end
-      D.parse_cents("1\u{202f}000").should eq 1000 # U+202F is trimmed only at the ends, "1 000" is 1 € and a group
+      validation_error { D.parse_minor("1,5", 0) }.should eq "Dieser Betrag darf keine Nachkommastellen haben."
+      validation_error { D.parse_minor("1.500,5", 0) }.should eq "Dieser Betrag darf keine Nachkommastellen haben."
     end
 
-    it "keeps Go's results for absurd rates" do
-      D.to_eur_cents(MAX_CENTS, "USD", 1e-12).should eq Int64::MIN
-      D.to_eur_cents(5, "EUR", 2.0).should eq 3 # 2.5 rounds away from zero
+    it "parses basis points and rates like Go" do
+      validation_error { D.parse_basis_points(" x % ") }.should eq "Ungültige Prozentangabe „x“."
+      validation_error { D.parse_basis_points("%") }.should eq "Ungültige Prozentangabe „“."
+      validation_error { D.parse_basis_points("50%%") }.should eq "Ungültige Prozentangabe „50%“."
+      validation_error { D.parse_basis_points("100,001") }.should eq "Ungültige Prozentangabe „100,001“."
+      D.parse_basis_points("-5").should eq -500
+      validation_error { D.parse_rate(" - 1,2") }.should eq "Ungültiger Wechselkurs „-1,2“ – bitte eine Zahl größer als 0 angeben (Einheiten der Währung pro 1 €)."
+      validation_error { D.parse_rate("1234567890123") }.should contain "„1234567890123“"
+      validation_error { D.parse_rate("0,0000000000001") }.should contain "„0,0000000000001“"
+      D.parse_rate("1 000,5").should eq 1000.5
+      D.parse_rate("123456789012,5").should eq 123456789012.5
+      D.parse_rate("0,000000000001").should eq 1e-12
+    end
+
+    it "keeps Go's results for absurd rates and rounds half away from zero" do
+      D.to_eur_cents(MAX_CENTS, "USD", 1e-12).should eq Int64::MIN # Go's int64(float) overflow on amd64
+      D.to_eur_cents(5, "EUR", 2.0).should eq 3
       D.to_eur_cents(-5, "EUR", 2.0).should eq -3
       D.to_eur_cents(100, "USD", Float64::INFINITY).should eq 0
       D.to_eur_cents(100, "USD", Float64::NAN).should eq 0
@@ -190,3 +218,10 @@ describe Zipfelkasse::Domain do
 end
 
 private MAX_CENTS = Zipfelkasse::Domain::MAX_AMOUNT_CENTS
+
+private def validation_error(&) : String
+  yield
+  fail "expected a ValidationError"
+rescue e : Zipfelkasse::Domain::ValidationError
+  e.msg
+end
