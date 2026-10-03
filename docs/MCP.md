@@ -127,11 +127,10 @@ visible once they are listed in `Store::EXPOSED_TABLES`.
 
 ## Access
 
-Only `POST` is served; any other method gets **405** before the checks below. There are three checks, in this
-order:
+There are three checks, in this order:
 
-1. The secret in the path is compared in constant time. If it is wrong, the response is a plain **404** and reveals
-   nothing.
+1. The secret in the path is compared in constant time. If it is wrong, the response is a plain **404** for every
+   method and reveals nothing. With the right secret, only `POST` is served; any other method gets **405**.
 2. The client IP must be in `MCP_ALLOWED_CIDRS`. The default is `160.79.104.0/21`, which is Anthropic. Otherwise the
    response is **403**.
 3. A non-empty `Origin` header results in **403**. Browsers should never access this endpoint, which is why the

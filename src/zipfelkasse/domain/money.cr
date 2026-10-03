@@ -30,10 +30,6 @@ module Zipfelkasse::Domain
     format_minor(bp, 2) + " %"
   end
 
-  def parse_cents(s : String) : Int64
-    parse_minor(s, 2)
-  end
-
   def parse_basis_points(s : String) : Int64
     s = s.strip.rchop("%").strip
     begin

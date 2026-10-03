@@ -9,7 +9,6 @@ lib LibSQLite3
   SQLITE_LIMIT_ATTACHED =     7
 
   fun extended_result_codes = sqlite3_extended_result_codes(db : SQLite3, onoff : Int32) : Int32
-  fun errstr = sqlite3_errstr(code : Int32) : UInt8*
   fun value_type = sqlite3_value_type(value : SQLite3Value) : ::SQLite3::Type
   fun value_bytes = sqlite3_value_bytes(value : SQLite3Value) : Int32
   fun result_text = sqlite3_result_text(ctx : SQLite3Context, text : UInt8*, n : Int32, destructor : Void*) : Nil
@@ -117,7 +116,7 @@ module Zipfelkasse
       end
     end
 
-    # "" means none (ynab_config and expenses keep their NOT NULL columns).
+    # "" means none: expenses.fx_source is NOT NULL.
     module FXSourceText
       def self.from_rs(rs : DB::ResultSet) : Domain::FXSource?
         key = rs.read(String)

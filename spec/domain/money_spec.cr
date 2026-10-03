@@ -21,7 +21,7 @@ describe Domain do
     end
   end
 
-  describe ".parse_cents" do
+  describe ".parse_minor with two decimals" do
     {
       "12,34" => 1234, "12.34" => 1234, "12" => 1200, "12,3" => 1230, "12.5" => 1250, ",50" => 50, ".5" => 50, "0" => 0,
       "-0" => 0, " 12,34 € " => 1234, "12,34€" => 1234, "1.234,56" => 123456, "1,234.56" => 123456, "1,234,567.8" => 123456780,
@@ -29,7 +29,7 @@ describe Domain do
       "1.0000" => 100, "1\u{a0}000" => 100000, "\t1,5\u{a0}" => 150,
     }.each do |text, cents|
       it "reads #{text.inspect} as #{cents} cents" do
-        Domain.parse_cents(text).should eq cents
+        Domain.parse_minor(text, 2).should eq cents
       end
     end
 
@@ -64,7 +64,7 @@ describe Domain do
       "99999999999999999999" => "Der Betrag ist zu groß.",
     }.each do |text, message|
       it "rejects #{text.inspect} with #{message.inspect}" do
-        expect_invalid(message) { Domain.parse_cents(text) }
+        expect_invalid(message) { Domain.parse_minor(text, 2) }
       end
     end
   end

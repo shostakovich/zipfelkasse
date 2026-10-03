@@ -7,7 +7,7 @@ require "csv"
 # the OFX file by line.
 
 # What /api/kurs answers with.
-private def kurs_json(currency : String, date : String, rate : String, source : String) : JSON::Any
+private def rate_json(currency : String, date : String, rate : String, source : String) : JSON::Any
   JSON.parse(%({"currency":"#{currency}","date":"#{date}","rate":#{E2E::FxExport.shortest_float(rate)},"source":"#{source}"}))
 end
 
@@ -105,17 +105,17 @@ module FxExportSpec
       user.login("Anna")
       before = {count.call(nf), count.call(hist)}
       {
-        "waehrung=EUR"                           => kurs_json("EUR", "2026-10-03", "1", "fest"),
-        "waehrung=%20eur%20&datum=2027-01-01"    => kurs_json("EUR", "2027-01-01", "1", "fest"),
-        "waehrung=EUR&datum=01.06.2024"          => kurs_json("EUR", "2024-06-01", "1", "fest"),
-        "waehrung=USD"                           => kurs_json("USD", "2026-10-02", rate.call("USD", "2026-10-02"), "ezb"),
-        "waehrung=USD&datum="                    => kurs_json("USD", "2026-10-02", rate.call("USD", "2026-10-02"), "ezb"),
-        "waehrung=usd&datum=01.10.2026"          => kurs_json("USD", "2026-10-01", rate.call("USD", "2026-10-01"), "ezb"),
-        "waehrung=JPY&datum=2026-09-27"          => kurs_json("JPY", "2026-09-25", rate.call("JPY", "2026-09-25"), "ezb"),
-        "waehrung=GBP&datum=5.9.2026"            => kurs_json("GBP", "2026-09-04", rate.call("GBP", "2026-09-04"), "ezb"),
-        "waehrung=IDR&datum=2026-07-06"          => kurs_json("IDR", "2026-07-06", rate.call("IDR", "2026-07-06"), "ezb"),
-        "waehrung=THB&datum=2026-12-24"          => kurs_json("THB", "2026-10-02", rate.call("THB", "2026-10-02"), "ezb"),
-        "waehrung=%20chf&datum=%202026-10-01%20" => kurs_json("CHF", "2026-10-01", rate.call("CHF", "2026-10-01"), "ezb"),
+        "waehrung=EUR"                           => rate_json("EUR", "2026-10-03", "1", "fest"),
+        "waehrung=%20eur%20&datum=2027-01-01"    => rate_json("EUR", "2027-01-01", "1", "fest"),
+        "waehrung=EUR&datum=01.06.2024"          => rate_json("EUR", "2024-06-01", "1", "fest"),
+        "waehrung=USD"                           => rate_json("USD", "2026-10-02", rate.call("USD", "2026-10-02"), "ezb"),
+        "waehrung=USD&datum="                    => rate_json("USD", "2026-10-02", rate.call("USD", "2026-10-02"), "ezb"),
+        "waehrung=usd&datum=01.10.2026"          => rate_json("USD", "2026-10-01", rate.call("USD", "2026-10-01"), "ezb"),
+        "waehrung=JPY&datum=2026-09-27"          => rate_json("JPY", "2026-09-25", rate.call("JPY", "2026-09-25"), "ezb"),
+        "waehrung=GBP&datum=5.9.2026"            => rate_json("GBP", "2026-09-04", rate.call("GBP", "2026-09-04"), "ezb"),
+        "waehrung=IDR&datum=2026-07-06"          => rate_json("IDR", "2026-07-06", rate.call("IDR", "2026-07-06"), "ezb"),
+        "waehrung=THB&datum=2026-12-24"          => rate_json("THB", "2026-10-02", rate.call("THB", "2026-10-02"), "ezb"),
+        "waehrung=%20chf&datum=%202026-10-01%20" => rate_json("CHF", "2026-10-01", rate.call("CHF", "2026-10-01"), "ezb"),
       }.each do |query, body|
         r = user.get("/api/kurs?#{query}")
         {query, r.status, r.json}.should eq({query, 200, body})
@@ -170,17 +170,17 @@ module FxExportSpec
       user = world.user
       user.login("Anna")
       r = user.get("/api/kurs?waehrung=USD&datum=2024-05-19") # Sunday
-      {r.status, r.json}.should eq({200, kurs_json("USD", "2024-05-17", rate.call("USD", "2024-05-17"), "ezb")})
+      {r.status, r.json}.should eq({200, rate_json("USD", "2024-05-17", rate.call("USD", "2024-05-17"), "ezb")})
       count.call(hist).should eq 1
       E2E::Database.open(world.app.db_path) do |db|
         db.scalar("SELECT min(date) FROM fx_rates WHERE source = 'ezb'").should eq "2023-12-01"
       end
       {
         # Easter Monday and Good Friday 2026 are no TARGET days.
-        "waehrung=GBP&datum=2026-04-06" => kurs_json("GBP", "2026-04-02", rate.call("GBP", "2026-04-02"), "ezb"),
-        "waehrung=CHF&datum=01.01.2025" => kurs_json("CHF", "2024-12-31", rate.call("CHF", "2024-12-31"), "ezb"),
-        "waehrung=HUF&datum=2025-12-26" => kurs_json("HUF", "2025-12-24", rate.call("HUF", "2025-12-24"), "ezb"),
-        "waehrung=IDR&datum=2024-01-02" => kurs_json("IDR", "2024-01-02", rate.call("IDR", "2024-01-02"), "ezb"),
+        "waehrung=GBP&datum=2026-04-06" => rate_json("GBP", "2026-04-02", rate.call("GBP", "2026-04-02"), "ezb"),
+        "waehrung=CHF&datum=01.01.2025" => rate_json("CHF", "2024-12-31", rate.call("CHF", "2024-12-31"), "ezb"),
+        "waehrung=HUF&datum=2025-12-26" => rate_json("HUF", "2025-12-24", rate.call("HUF", "2025-12-24"), "ezb"),
+        "waehrung=IDR&datum=2024-01-02" => rate_json("IDR", "2024-01-02", rate.call("IDR", "2024-01-02"), "ezb"),
       }.each do |query, body|
         r = user.get("/api/kurs?#{query}")
         {query, r.status, r.json}.should eq({query, 200, body})
@@ -206,12 +206,12 @@ module FxExportSpec
       # The manual rate applies from its date on, also to future dates.
       usd = ->(d : String) { rate.call("USD", d) }
       {
-        "datum=2026-09-30" => kurs_json("USD", "2026-09-30", "1.2", "manuell"),
-        "datum=2026-10-01" => kurs_json("USD", "2026-09-30", "1.2", "manuell"),
-        ""                 => kurs_json("USD", "2026-09-30", "1.2", "manuell"),
-        "datum=2027-02-01" => kurs_json("USD", "2026-09-30", "1.2", "manuell"),
-        "datum=2026-09-29" => kurs_json("USD", "2026-09-29", usd.call("2026-09-29"), "ezb"),
-        "datum=2024-05-17" => kurs_json("USD", "2024-05-17", usd.call("2024-05-17"), "ezb"),
+        "datum=2026-09-30" => rate_json("USD", "2026-09-30", "1.2", "manuell"),
+        "datum=2026-10-01" => rate_json("USD", "2026-09-30", "1.2", "manuell"),
+        ""                 => rate_json("USD", "2026-09-30", "1.2", "manuell"),
+        "datum=2027-02-01" => rate_json("USD", "2026-09-30", "1.2", "manuell"),
+        "datum=2026-09-29" => rate_json("USD", "2026-09-29", usd.call("2026-09-29"), "ezb"),
+        "datum=2024-05-17" => rate_json("USD", "2024-05-17", usd.call("2024-05-17"), "ezb"),
       }.each do |query, body|
         r = user.get("/api/kurs?waehrung=USD&#{query}")
         {query, r.status, r.json}.should eq({query, 200, body})
@@ -221,8 +221,8 @@ module FxExportSpec
       # applies before it. Saving the same day again replaces the rate.
       user.post("/einstellungen/kurse", {"waehrung" => "USD", "datum" => "2026-10-01", "kurs" => "1,3"}).status.should eq 303
       user.post("/einstellungen/kurse", {"waehrung" => "USD", "datum" => "2026-10-01", "kurs" => "1,25"}).status.should eq 303
-      user.get("/api/kurs?waehrung=USD&datum=2026-10-02").json.should eq kurs_json("USD", "2026-10-01", "1.25", "manuell")
-      user.get("/api/kurs?waehrung=USD&datum=2026-09-30").json.should eq kurs_json("USD", "2026-09-30", "1.2", "manuell")
+      user.get("/api/kurs?waehrung=USD&datum=2026-10-02").json.should eq rate_json("USD", "2026-10-01", "1.25", "manuell")
+      user.get("/api/kurs?waehrung=USD&datum=2026-09-30").json.should eq rate_json("USD", "2026-09-30", "1.2", "manuell")
       # Currencies the ECB does not publish, without a time limit; the ways
       # of writing a rate.
       {
@@ -237,13 +237,13 @@ module FxExportSpec
         r = user.post("/einstellungen/kurse", {"waehrung" => cur, "datum" => date, "kurs" => input})
         {cur, date, r.status}.should eq({cur, date, 303})
       end
-      user.get("/api/kurs?waehrung=KWD&datum=2026-10-03").json.should eq kurs_json("KWD", "2024-06-01", "0.3312", "manuell")
+      user.get("/api/kurs?waehrung=KWD&datum=2026-10-03").json.should eq rate_json("KWD", "2024-06-01", "0.3312", "manuell")
       r = user.get("/api/kurs?waehrung=KWD&datum=2024-05-31")
       {r.status, r.json}.should eq({422, error_json("Für KWD gibt es keinen EZB-Kurs – bitte Kurs von Hand eintragen.")})
-      user.get("/api/kurs?waehrung=VND&datum=2026-09-02").json.should eq kurs_json("VND", "2026-09-02", "17000", "manuell")
+      user.get("/api/kurs?waehrung=VND&datum=2026-09-02").json.should eq rate_json("VND", "2026-09-02", "17000", "manuell")
       # A manual IDR rate beats the ECB rate of the same day.
-      user.get("/api/kurs?waehrung=IDR&datum=2026-09-04").json.should eq kurs_json("IDR", "2026-09-04", "20274.71", "manuell")
-      user.get("/api/kurs?waehrung=IDR&datum=2026-09-03").json.should eq kurs_json("IDR", "2026-09-03", rate.call("IDR", "2026-09-03"), "ezb")
+      user.get("/api/kurs?waehrung=IDR&datum=2026-09-04").json.should eq rate_json("IDR", "2026-09-04", "20274.71", "manuell")
+      user.get("/api/kurs?waehrung=IDR&datum=2026-09-03").json.should eq rate_json("IDR", "2026-09-03", rate.call("IDR", "2026-09-03"), "ezb")
 
       page = user.get("/einstellungen/kurse")
       table_rows(page, "Manuelle Kurse").map(&.first(3)).should eq [
@@ -301,10 +301,10 @@ module FxExportSpec
       # Deleting: only the manual rate goes; the ECB rate of the day stays.
       r = user.post("/einstellungen/kurse/loeschen", {"waehrung" => "idr", "datum" => "2026-09-04"})
       {r.status, r.location, r.flash}.should eq({303, "/einstellungen/kurse", "Manueller Kurs für IDR gelöscht."})
-      user.get("/api/kurs?waehrung=IDR&datum=2026-09-04").json.should eq kurs_json("IDR", "2026-09-04", rate.call("IDR", "2026-09-04"), "ezb")
+      user.get("/api/kurs?waehrung=IDR&datum=2026-09-04").json.should eq rate_json("IDR", "2026-09-04", rate.call("IDR", "2026-09-04"), "ezb")
       r = user.post("/einstellungen/kurse/loeschen", {"waehrung" => "USD", "datum" => "01.10.2026"})
       {r.status, r.flash}.should eq({303, "Manueller Kurs für USD gelöscht."})
-      user.get("/api/kurs?waehrung=USD&datum=2026-10-02").json.should eq kurs_json("USD", "2026-09-30", "1.2", "manuell")
+      user.get("/api/kurs?waehrung=USD&datum=2026-10-02").json.should eq rate_json("USD", "2026-09-30", "1.2", "manuell")
       [
         {"USD", "2026-10-01"}, # already deleted
         {"USD", "2026-10-02"}, # only an ECB rate
@@ -437,13 +437,13 @@ module FxExportSpec
       sleep 250.milliseconds
       user = world.user
       user.login("Anna")
-      user.get("/api/kurs?waehrung=JPY&datum=2024-05-17").json.should eq kurs_json("JPY", "2024-05-17", rate.call("JPY", "2024-05-17"), "ezb")
+      user.get("/api/kurs?waehrung=JPY&datum=2024-05-17").json.should eq rate_json("JPY", "2024-05-17", rate.call("JPY", "2024-05-17"), "ezb")
       {count.call(nf), count.call(hist)}.should eq requests
       # Dates outside the cache ask the ECB once per cooldown: today's rate
       # may be new, and the history might reach further back (the real one
       # starts in 1999, before any date the app accepts).
       2.times do
-        user.get("/api/kurs?waehrung=GBP").json.should eq kurs_json("GBP", "2026-10-02", rate.call("GBP", "2026-10-02"), "ezb")
+        user.get("/api/kurs?waehrung=GBP").json.should eq rate_json("GBP", "2026-10-02", rate.call("GBP", "2026-10-02"), "ezb")
         r = user.get("/api/kurs?waehrung=USD&datum=2023-11-20")
         {r.status, r.json}.should eq({422, error_json("Für USD gibt es um den 20.11.2023 keinen EZB-Kurs – bitte Kurs von Hand eintragen.")})
       end
@@ -534,18 +534,18 @@ module FxExportSpec
       # Monday 16:59 in Berlin (CET): the cache lacks Sunday's refresh, the
       # ECB has nothing newer yet.
       restart.call("2036-11-10T15:59:00Z", [nf])
-      user.get("/api/kurs?waehrung=USD").json.should eq kurs_json("USD", "2036-11-07", ecb.rate("USD", fri), "ezb")
+      user.get("/api/kurs?waehrung=USD").json.should eq rate_json("USD", "2036-11-07", ecb.rate("USD", fri), "ezb")
       # 17:00 in Berlin (16:00 UTC): Monday's rates.
       ecb.last_day = mon
       restart.call("2036-11-10T16:00:00Z", [nf])
       newest.call.should eq "2036-11-10"
-      user.get("/api/kurs?waehrung=USD").json.should eq kurs_json("USD", "2036-11-10", ecb.rate("USD", mon), "ezb")
+      user.get("/api/kurs?waehrung=USD").json.should eq rate_json("USD", "2036-11-10", ecb.rate("USD", mon), "ezb")
       user.get("/einstellungen/kurse").text.should contain("bis 10.11.2036.")
       # Tuesday morning: nothing due at startup; asking for today's rate
       # downloads once, then the cooldown holds.
       restart.call("2036-11-11T07:00:00Z", [] of String)
       2.times do
-        user.get("/api/kurs?waehrung=USD").json.should eq kurs_json("USD", "2036-11-10", ecb.rate("USD", mon), "ezb")
+        user.get("/api/kurs?waehrung=USD").json.should eq rate_json("USD", "2036-11-10", ecb.rate("USD", mon), "ezb")
       end
       ecb.requests.should eq [nf] * 4
       # A week later, with gaps in the cache: the 90-day file fills them.
@@ -553,7 +553,7 @@ module FxExportSpec
       restart.call("2036-11-15T11:00:00Z", [nf])
       newest.call.should eq "2036-11-14"
       E2E::Database.count(world.app.db_path, "SELECT count(DISTINCT date) FROM fx_rates WHERE source = 'ezb' AND date > '2036-11-10'").should eq 4
-      user.get("/api/kurs?waehrung=GBP&datum=2036-11-16").json.should eq kurs_json("GBP", "2036-11-14", ecb.rate("GBP", later), "ezb")
+      user.get("/api/kurs?waehrung=GBP&datum=2036-11-16").json.should eq rate_json("GBP", "2036-11-14", ecb.rate("GBP", later), "ezb")
       # After more than 85 days the 90-day file would leave a gap: the history.
       ecb.last_day = Time.utc(2037, 2, 27)
       restart.call("2037-03-01T11:00:00Z", ["eurofxref-hist.xml"])

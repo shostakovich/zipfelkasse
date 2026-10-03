@@ -53,12 +53,10 @@ module E2E
       protocol_headers(method, name)
     end
 
-    # Any request to the MCP endpoint.
     def self.request(user : User, method : String, extra = {} of String => String, body : String? = nil, path = PATH) : Response
       user.run { |b| b.request(method, path, headers(extra), body) }
     end
 
-    # JSON-RPC request body.
     def self.body(method : String, params : String? = nil, id : String? = "1") : String
       parts = [%("jsonrpc":"2.0")]
       parts << %("id":#{id}) if id
@@ -117,7 +115,6 @@ module E2E
       content[0]["text"].as_s
     end
 
-    # The parsed JSON of a successful tool result.
     def self.data(r : Response) : JSON::Any
       JSON.parse(text(r))
     end
