@@ -1,0 +1,21 @@
+name: zipfelkasse
+version: 1.0.0
+
+description: Share expenses within a household (a slimmed-down Spliit port).
+
+crystal: ">= 1.21.0"
+
+targets:
+  zipfelkasse:
+    main: src/zipfelkasse.cr
+
+dependencies:
+  kemal:
+    github: kemalcr/kemal
+    version: ~> 1.14.0
+  db:
+    github: crystal-lang/crystal-db
+    version: ~> 0.14.0
+  sqlite3:
+    github: crystal-lang/crystal-sqlite3
+    version: ~> 0.23.0

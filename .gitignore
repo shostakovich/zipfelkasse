@@ -3,3 +3,7 @@
 *.db-shm
 *.db-wal
 .claude/worktrees/
+/lib/
+/bin/
+/.shards/
+/e2e/data/
