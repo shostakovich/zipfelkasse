@@ -76,8 +76,8 @@ module Zipfelkasse::MCP
     t.to_s(Domain::DATE_LAYOUT)
   end
 
-  # Floats as the original prints them: 1 instead of 1.0, 1e+30 instead of
-  # 1.0e+30, and SQLite's literal text for infinite reals.
+  # Integral floats without ".0" (1, 1e+30) and infinite reals as SQLite
+  # prints them, so that numbers look the same in every tool.
   def self.float(j : JSON::Builder, f : Float64) : Nil
     if f.infinite?
       j.raw(f > 0 ? "9.0e+999" : "-9.0e+999")
@@ -151,8 +151,8 @@ module Zipfelkasse::MCP
   class Args
     alias Value = String | Int64 | Float64 | Bool | Array(String) | Hash(String, String)
 
-    GO_TYPES = {string: "string", int: "int", int64: "int64", float: "float64", bool: "bool", strings: "[]string",
-                weights: "map[string]mcp.amountText"}
+    TYPE_NAMES = {string: "string", int: "int", int64: "int64", float: "float64", bool: "bool", strings: "[]string",
+                  weights: "map[string]mcp.amountText"}
 
     # A wrongly typed value; the first one is reported after decoding.
     class TypeError < Exception
@@ -217,7 +217,7 @@ module Zipfelkasse::MCP
       pull = JSON::PullParser.new(raw)
       kind = pull.kind
       return if kind.null?
-      mismatch = TypeError.new(MCP.type_error(kind, ".#{name}", GO_TYPES[type]? || ""))
+      mismatch = TypeError.new(MCP.type_error(kind, ".#{name}", TYPE_NAMES[type]? || ""))
       number = kind.int? || kind.float?
       case type
       when :string
@@ -225,7 +225,7 @@ module Zipfelkasse::MCP
       when :int, :int64
         raise mismatch unless number
         return pull.read_int if kind.int?
-        raise TypeError.new("json: cannot unmarshal number #{raw} into Go struct field .#{name} of type #{GO_TYPES[type]}")
+        raise TypeError.new("json: cannot unmarshal number #{raw} into Go struct field .#{name} of type #{TYPE_NAMES[type]}")
       when :float
         raise mismatch unless number
         f = raw.to_f64?

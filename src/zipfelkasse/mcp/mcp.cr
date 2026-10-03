@@ -61,6 +61,21 @@ module Zipfelkasse::MCP
       attrs["version"] = info.version unless info.version.empty?
       attrs["tool_error"] = info.tool_error unless info.tool_error.empty?
       @log.log(Logger::Level::Info, "mcp", attrs)
+    ensure
+      drain(ctx.request)
+    end
+
+    # Reads what the client still sends (up to a limit): the server closes a
+    # connection with an unread body, and a client still writing would get a
+    # reset instead of the response.
+    private def drain(req : HTTP::Request) : Nil
+      body = req.body || return
+      buf = Bytes.new(64 * 1024)
+      left = 4 * MAX_BODY
+      while left > 0 && (n = body.read(buf)) > 0
+        left -= n
+      end
+    rescue IO::Error
     end
   end
 end

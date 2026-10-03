@@ -163,7 +163,7 @@ module Zipfelkasse::MCP
       JSON::Any.new({"supported" => JSON::Any.new(ALL_VERSIONS.map { |v| JSON::Any.new(v) }), "requested" => JSON::Any.new(version)}))
   end
 
-  # The first value, like Go's Header.Get.
+  # The first value of a header.
   def self.header(headers : HTTP::Headers, name : String) : String
     headers.get?(name).try(&.first?) || ""
   end
@@ -196,7 +196,7 @@ module Zipfelkasse::MCP
     nil
   end
 
-  # Go maps are written with sorted keys.
+  # Objects with sorted keys, so that the output is stable.
   def self.write_any(j : JSON::Builder, v : JSON::Any) : Nil
     case raw = v.raw
     when Hash  then j.object { raw.keys.sort!.each { |k| j.field(k) { write_any(j, raw[k]) } } }
