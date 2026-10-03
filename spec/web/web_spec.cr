@@ -195,6 +195,18 @@ describe Zipfelkasse::Web do
     end
   end
 
+  it "answers an unexpected error with the error page and a log entry" do
+    with_server do |srv|
+      Web.route(srv.d, "GET", "/kaputt") { |_| raise "Platte voll" }
+      me = who_cookie(must_participant(srv.store, "Anna"))
+      res = srv.get("/kaputt", me)
+      res.status_code.should eq 500
+      res.body.should contain "Da ist etwas schiefgegangen."
+      res.body.should contain "Du bist <strong>Anna</strong>"
+      srv.log_io.to_s.should contain %(level=ERROR msg=request method=GET path=/kaputt err="Platte voll")
+    end
+  end
+
   it "answers health checks and unknown paths" do
     with_server do |srv|
       srv.get("/healthz").body.should eq "ok\n"
