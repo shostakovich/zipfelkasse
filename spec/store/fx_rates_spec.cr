@@ -30,6 +30,7 @@ describe "Store exchange rates" do
 
     it "describes the cache" do
       store.ecb_cache_stats.should eq Store::FXCacheStats.new(3, 2, date("2026-09-29"), date("2026-09-30"))
+      store.ecb_date_range.should eq date("2026-09-29")..date("2026-09-30")
       store.latest_ecb_rates.map { |rate| {rate.currency, rate.rate} }.should eq [{"GBP", 0.85}, {"USD", 1.11}]
       store.list_fx_currencies.should eq ["GBP", "USD"]
       store.has_ecb_currency?("GBP").should be_true
@@ -45,6 +46,7 @@ describe "Store exchange rates" do
 
   it "has empty cache stats without ECB rates" do
     store.ecb_cache_stats.should eq Store::FXCacheStats.new(0, 0, nil, nil)
+    store.ecb_date_range.should be_nil
     store.latest_ecb_rates.should be_empty
   end
 

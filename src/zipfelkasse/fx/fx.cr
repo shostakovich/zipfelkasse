@@ -1,7 +1,8 @@
 # Rules for Service#rate: EUR is 1; the newest manual rate valid on the date
 # wins; otherwise the ECB rate of the date or of the last business day before
-# it. The ECB cache is complete from its first to its last day: a date outside
-# loads the 90-day file, or the full history for older dates.
+# it. The ECB cache is complete from its first to its last day: a date before
+# it loads the full history (or the 90-day file), a date after it loads the
+# 90-day file only once the ECB can have published since the last load.
 module Zipfelkasse::FX
   Log = ::Log.for(self)
 
@@ -9,7 +10,8 @@ module Zipfelkasse::FX
   LOOKBACK_DAYS = 10
   # The 90-day file still reaches this far back.
   RECENT_DAYS = 85
-  # After the ECB publishes, around 16:00 CET.
+  # The ECB publishes on weekdays around 16:00 CET.
+  PUBLISH_HOUR = 16
   REFRESH_HOUR = 17
   # A file is downloaded on demand at most this often.
   COOLDOWN = 15.minutes
@@ -17,8 +19,14 @@ module Zipfelkasse::FX
   BERLIN = Time::Location.load("Europe/Berlin")
 
   class Service
+    record Attempt, at : Time, error : FetchError?
+
     @http = OutboundHTTP.new(60.seconds, MAX_BODY_SIZE)
-    @attempts = {} of String => {Time::Instant, FetchError?}
+    @attempts = {} of String => Attempt
+    @loads = Hash(String, Mutex).new { |loads, file| loads[file] = Mutex.new }
+    @fetched_at : Time?
+    @cached_days : Range(Time, Time)?
+    @cached_days_read = false
 
     def initialize(@d : Web::Deps)
       @base_url = d.config.ecb_base_url || DEFAULT_BASE_URL
@@ -40,17 +48,45 @@ module Zipfelkasse::FX
     end
 
     private def load_missing(date : Time) : FetchError?
-      cache = @d.store.ecb_cache_stats
-      from, to = cache.from, cache.to
-      return if from && to && from <= date <= to
-      file = file_reaching(to && date > to ? to : date)
-      if (attempt = @attempts[file]?) && Time.instant - attempt[0] < COOLDOWN
-        return attempt[1]
+      days = cached_days
+      return if days && days.includes?(date)
+      if days && date > days.end
+        return unless published_since?(@fetched_at || published_at(days.end))
+        file = file_reaching(days.end)
+      else
+        file = file_reaching(date)
       end
-      fetch(file)
+      @loads[file].synchronize do
+        if (attempt = @attempts[file]?) && @d.now - attempt.at < COOLDOWN
+          return attempt.error
+        end
+        fetch(file)
+      end
       nil
     rescue ex : FetchError
       ex
+    end
+
+    # After a restart, the publication of the newest cached day stands in for the last load.
+    private def published_at(day : Time) : Time
+      Time.local(day.year, day.month, day.day, PUBLISH_HOUR, location: BERLIN)
+    end
+
+    private def published_since?(time : Time) : Bool
+      publication = Domain.next_at_hour(time.in(BERLIN), PUBLISH_HOUR)
+      while publication.saturday? || publication.sunday?
+        publication = publication.shift(days: 1)
+      end
+      publication <= @d.now
+    end
+
+    # Only #fetch writes ECB rates, so the bounds are read once.
+    private def cached_days : Range(Time, Time)?
+      unless @cached_days_read
+        @cached_days = @d.store.ecb_date_range
+        @cached_days_read = true
+      end
+      @cached_days
     end
 
     private def file_reaching(day : Time) : String
@@ -66,7 +102,8 @@ module Zipfelkasse::FX
     end
 
     def refresh : Time
-      fetch(file_reaching(@d.store.ecb_cache_stats.to || @d.today))
+      file = file_reaching(cached_days.try(&.end) || @d.today)
+      @loads[file].synchronize { fetch(file) }
     end
 
     # Loads at startup when the cache lacks the last daily refresh, then daily
@@ -76,15 +113,18 @@ module Zipfelkasse::FX
         stopper.done.receive?
         @http.stop
       end
-      to = @d.store.ecb_cache_stats.to
-      refresh_logged(stopper) if to.nil? || to < Domain.date_of(@d.now.in(BERLIN) - REFRESH_HOUR.hours)
+      refresh_logged(stopper, if_stale: true)
       # Waits on the configured clock: a frozen test clock never reaches the next refresh.
       while stopper.wait(Domain.next_at_hour(@d.now.in(BERLIN), REFRESH_HOUR) - @d.now)
         refresh_logged(stopper)
       end
     end
 
-    private def refresh_logged(stopper : Stopper) : Nil
+    private def refresh_logged(stopper : Stopper, if_stale = false) : Nil
+      if if_stale
+        to = cached_days.try(&.end)
+        return unless to.nil? || to < Domain.date_of(@d.now.in(BERLIN) - REFRESH_HOUR.hours)
+      end
       refresh
     rescue ex
       Log.error(exception: ex) { "refresh ECB rates" } unless stopper.stopped?
@@ -92,15 +132,17 @@ module Zipfelkasse::FX
 
     private def fetch(file : String) : Time
       rates = download(file)
-      @attempts[file] = {Time.instant, nil}
-      newest = rates.max_of(&.date)
+      @attempts[file] = Attempt.new(@d.now, nil)
+      @fetched_at = @d.now
+      oldest, newest = rates.minmax_of(&.date)
+      @cached_days = cached_days.try { |days| Math.min(days.begin, oldest)..Math.max(days.end, newest) } || (oldest..newest)
       Log.info(&.emit("ECB rates loaded", file: file, rates: rates.size,
-        from: Store.format_date(rates.min_of(&.date)), to: Store.format_date(newest)))
+        from: Store.format_date(oldest), to: Store.format_date(newest)))
       newest
     rescue ex
       Log.warn(exception: ex, &.emit("loading ECB rates failed", file: file))
       error = ex.as?(FetchError) || FetchError.new(ex.message || ex.class.name)
-      @attempts[file] = {Time.instant, error}
+      @attempts[file] = Attempt.new(@d.now, error)
       raise error
     end
 

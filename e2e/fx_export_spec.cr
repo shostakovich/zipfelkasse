@@ -439,15 +439,16 @@ module FxExportSpec
       user.login("Anna")
       user.get("/api/kurs?waehrung=JPY&datum=2024-05-17").json.should eq rate_json("JPY", "2024-05-17", rate.call("JPY", "2024-05-17"), "ezb")
       {count.call(nf), count.call(hist)}.should eq requests
-      # Dates outside the cache ask the ECB once per cooldown: today's rate
-      # may be new, and the history might reach further back (the real one
+      # On Saturday the ECB has published nothing since Friday's rates, so
+      # today's rate needs no download. A date before the cache asks the ECB
+      # once per cooldown: the history might reach further back (the real one
       # starts in 1999, before any date the app accepts).
       2.times do
         user.get("/api/kurs?waehrung=GBP").json.should eq rate_json("GBP", "2026-10-02", rate.call("GBP", "2026-10-02"), "ezb")
         r = user.get("/api/kurs?waehrung=USD&datum=2023-11-20")
         {r.status, r.json}.should eq({422, error_json("Für USD gibt es um den 20.11.2023 keinen EZB-Kurs – bitte Kurs von Hand eintragen.")})
       end
-      {count.call(nf), count.call(hist)}.should eq({requests[0] + 1, requests[1] + 1})
+      {count.call(nf), count.call(hist)}.should eq({requests[0], requests[1] + 1})
     end
   end
 
@@ -541,9 +542,14 @@ module FxExportSpec
       newest.call.should eq "2036-11-10"
       user.get("/api/kurs?waehrung=USD").json.should eq rate_json("USD", "2036-11-10", ecb.rate("USD", mon), "ezb")
       user.get("/einstellungen/kurse").text.should contain("bis 10.11.2036.")
-      # Tuesday morning: nothing due at startup; asking for today's rate
-      # downloads once, then the cooldown holds.
+      # Tuesday morning: nothing due at startup, and the ECB publishes
+      # Tuesday's rates only at 16:00, so today's rate needs no download.
       restart.call("2036-11-11T07:00:00Z", [] of String)
+      user.get("/api/kurs?waehrung=USD").json.should eq rate_json("USD", "2036-11-10", ecb.rate("USD", mon), "ezb")
+      ecb.requests.should eq [nf] * 3
+      # 16:30 in Berlin, before the 17:00 refresh: asking for today's rate
+      # downloads once, then the cooldown holds although the ECB is late.
+      restart.call("2036-11-11T15:30:00Z", [] of String)
       2.times do
         user.get("/api/kurs?waehrung=USD").json.should eq rate_json("USD", "2036-11-10", ecb.rate("USD", mon), "ezb")
       end

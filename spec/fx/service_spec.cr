@@ -18,14 +18,18 @@ private def ecb_rate(currency : String, day : String) : Float64
   ecb.rate(currency, date(day)).to_f
 end
 
-# The service with the clock at Friday, 2026-10-02 12:00 in Berlin; the fake
-# ECB has published up to Thursday.
-private def new_service(store : Store, ecb : FakeECB) : FX::Service
+private def fx_config(ecb : FakeECB, now : String) : Config
   config = Config.new
   config.location = BERLIN
   config.ecb_base_url = ecb.base_url
-  config.now = at("2026-10-02 12:00")
-  FX::Service.new(Web::Deps.new(config, store))
+  config.now = at(now)
+  config
+end
+
+# The service with the clock at Friday, 2026-10-02 12:00 in Berlin; the fake
+# ECB has published up to Thursday.
+private def new_service(store : Store, ecb : FakeECB, now = "2026-10-02 12:00") : FX::Service
+  FX::Service.new(Web::Deps.new(fx_config(ecb, now), store))
 end
 
 private def service : FX::Service
@@ -59,8 +63,9 @@ describe FX::Service do
       end
     end
 
-    it "loads the 90-day file into an empty cache and then answers from the cache" do
-      service = service()
+    it "loads the 90-day file into an empty cache and then answers from the cache until the next publication" do
+      config = fx_config(ecb, "2026-10-02 12:00")
+      service = FX::Service.new(Web::Deps.new(config, store))
 
       service.rate("usd", date("2026-10-01"))
         .should eq Domain::FXRate.new("USD", date("2026-10-01"), ecb_rate("USD", "2026-10-01"), Domain::FXSource::Ecb)
@@ -72,6 +77,47 @@ describe FX::Service do
       service.rate("USD", date("2026-10-02")).date.should eq date("2026-10-01")
       service.rate("GBP", date("2026-12-24")).rate.should eq ecb_rate("GBP", "2026-10-01")
       ecb.requests.size.should eq 1
+
+      config.now = at("2026-10-02 15:59")
+      service.rate("USD", date("2026-10-02")).date.should eq date("2026-10-01")
+      ecb.requests.size.should eq 1
+
+      ecb.last_day = Time.utc(2026, 10, 2)
+      config.now = at("2026-10-02 16:00")
+      service.rate("USD", date("2026-10-02")).date.should eq date("2026-10-02")
+      ecb.requests.should eq [FX::RECENT, FX::RECENT]
+    end
+
+    it "waits for the next weekday's publication after the Friday rates, also after a restart" do
+      ecb.last_day = Time.utc(2026, 10, 2)
+      config = fx_config(ecb, "2026-10-02 17:00")
+      service = FX::Service.new(Web::Deps.new(config, store))
+      service.rate("USD", date("2026-10-02")).date.should eq date("2026-10-02")
+
+      {"2026-10-03 10:00", "2026-10-04 23:00", "2026-10-05 15:59"}.each do |now|
+        config.now = at(now)
+        service.rate("USD", date(now[0, 10])).date.should eq date("2026-10-02")
+        new_service(store, ecb, now).rate("USD", date(now[0, 10])).date.should eq date("2026-10-02")
+      end
+      ecb.requests.size.should eq 1
+
+      ecb.last_day = Time.utc(2026, 10, 5)
+      config.now = at("2026-10-05 16:00")
+      service.rate("USD", date("2026-10-05")).date.should eq date("2026-10-05")
+      ecb.requests.size.should eq 2
+    end
+
+    it "shares one download between concurrent requests" do
+      service = service()
+      ecb.block
+      done = Channel(Float64).new
+      2.times { spawn { done.send service.rate("USD", date("2026-10-01")).rate } }
+
+      eventually { ecb.requests.size > 0 }
+      sleep 50.milliseconds
+      ecb.release
+      2.times { done.receive.should eq ecb_rate("USD", "2026-10-01") }
+      ecb.requests.should eq [FX::RECENT]
     end
 
     it "loads the full history for a date before the 90 days, once" do
@@ -153,7 +199,7 @@ describe FX::Service do
       service.rate("USD", date("2026-09-30"))
       ecb.failure = 500
 
-      new_service(store, ecb).rate("USD", date("2026-10-02")).date.should eq date("2026-10-01")
+      new_service(store, ecb, "2026-10-02 17:00").rate("USD", date("2026-10-02")).date.should eq date("2026-10-01")
       ecb.requests.should eq [FX::RECENT, FX::RECENT]
     end
   end
@@ -193,6 +239,28 @@ describe FX::Service do
       when timeout(2.seconds)
         fail "run keeps waiting for the download"
       end
+    end
+
+    it "keeps running when the cache cannot be read at startup" do
+      service = service()
+      store.db.exec("DROP TABLE fx_rates")
+      stopper = Stopper.new
+      stopped = Channel(Exception?).new
+      spawn do
+        service.run(stopper)
+        stopped.send(nil)
+      rescue ex
+        stopped.send(ex)
+      end
+
+      select
+      when ex = stopped.receive
+        fail "run returned before the stopper fired: #{ex.inspect}"
+      when timeout(100.milliseconds)
+      end
+      stopper.stop
+      stopped.receive.should be_nil
+      ecb.requests.should be_empty
     end
   end
 end

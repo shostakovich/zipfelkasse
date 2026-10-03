@@ -85,6 +85,12 @@ module Zipfelkasse
                     "max(date) AS \"to\" FROM fx_rates WHERE source = ?", Domain::FXSource::Ecb.key, as: FXCacheStats)
     end
 
+    def ecb_date_range : Range(Time, Time)?
+      from, to = @db.query_one("SELECT min(date), max(date) FROM fx_rates WHERE source = ?", Domain::FXSource::Ecb.key,
+        as: {String?, String?})
+      Store.parse_date(from)..Store.parse_date(to) if from && to
+    end
+
     def list_fx_currencies : Array(String)
       @db.query_all("SELECT DISTINCT currency FROM fx_rates ORDER BY currency", as: String)
     end
