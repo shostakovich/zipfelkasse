@@ -69,13 +69,18 @@ package.
 | Root mux cleans paths with a 307 (`//salden` → `/salden`), `/mcp` → 307 `/mcp/` | plain 404 for unclean paths | browsers and the app never produce such paths |
 | `/static/` and `/static/icons/` show a directory listing; `/static/index.html` → 301 | 404 | not a feature |
 | A panic aborts the connection without a response | central error handler renders the 500 page | friendlier, error path only |
-| Go-specific JSON decoder messages in MCP errors (`json: cannot unmarshal …`) | equivalent German/English messages from the Crystal decoder | tests only check `isError` and the field name |
+| Go-specific JSON decoder messages in MCP errors (`json: cannot unmarshal …`) | own English messages naming the field and the expected type (`Invalid arguments: limit must be an integer.`), same error codes | tests only check `isError` and the field name |
+| encoding/json matches JSON keys case-insensitively (`{"LIMIT":2}`, `{"Method":"ping"}`) | keys match exactly; a differently cased tool argument is an unknown field | a decoder accident, no client sends such keys |
 | `HTTPS_PROXY` is honoured for ECB/YNAB requests | not supported by Crystal's `HTTP::Client` | see "Later" |
 | slog text log lines | same format (`time=… level=… msg=… k=v`), best effort | logs are not an interface |
 
 ## Later (noticed while porting, not changed)
 
 - Outbound HTTP through a proxy (`HTTPS_PROXY`) is not supported by the Crystal port.
+- Crystal's `HTTP::Client` does not follow redirects; a redirect from ECB or YNAB would show as an
+  HTTP status error (neither service redirects today).
+- Docker (phase 4): the static OpenSSL looks for `/etc/ssl/cert.pem`; set `SSL_CERT_FILE` or copy the
+  bundle there, and check that libxml2 links statically.
 
 ## Progress checklist
 
