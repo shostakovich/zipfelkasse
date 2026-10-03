@@ -76,17 +76,44 @@ module Zipfelkasse::MCP
     t.to_s(Domain::DATE_LAYOUT)
   end
 
-  # Integral floats without ".0" (1, 1e+30) and infinite reals as SQLite
-  # prints them, so that numbers look the same in every tool.
+  # Shortest round-trip digits like JSON elsewhere: plain notation from 1e-6
+  # up to 1e21 (integral values without ".0"), else 1e-7 / 1e+30. Infinite
+  # reals as SQLite prints them, so that numbers look the same in every tool.
   def self.float(j : JSON::Builder, f : Float64) : Nil
     if f.infinite?
       j.raw(f > 0 ? "9.0e+999" : "-9.0e+999")
-    elsif f == f.trunc && f.abs < 1e21
-      j.raw(f.to_i128.to_s)
     elsif f.nan?
       j.number(f) # raises
+    elsif f.zero?
+      j.raw("0")
     else
-      j.raw(f.to_s.sub(".0e", "e"))
+      j.raw(plain_float(f))
+    end
+  end
+
+  private def self.plain_float(f : Float64) : String
+    mantissa, _, exponent = f.abs.to_s.partition('e')
+    whole, _, fraction = mantissa.partition('.')
+    exp10 = exponent.to_i? || 0
+    if whole == "0"
+      leading = fraction.size - fraction.lstrip('0').size
+      digits = fraction.lstrip('0')
+      exp10 -= leading + 1
+    else
+      digits = whole + fraction
+      exp10 += whole.size - 1
+    end
+    digits = digits.rstrip('0')
+    sign = f < 0 ? "-" : ""
+    if exp10 < -6 || exp10 >= 21
+      rest = digits.size > 1 ? ".#{digits[1..]}" : ""
+      "#{sign}#{digits[0]}#{rest}e#{exp10 < 0 ? "-" : "+"}#{exp10.abs.to_s.rjust(exp10 < 0 ? 1 : 2, '0')}"
+    elsif exp10 < 0
+      "#{sign}0.#{"0" * (-exp10 - 1)}#{digits}"
+    elsif digits.size <= exp10 + 1
+      "#{sign}#{digits}#{"0" * (exp10 + 1 - digits.size)}"
+    else
+      "#{sign}#{digits[0, exp10 + 1]}.#{digits[exp10 + 1..]}"
     end
   end
 
