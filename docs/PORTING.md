@@ -87,7 +87,7 @@ package.
 - [ ] Phase 3, wave 1: `domain` (ported, being converted from GoCompat to plain Crystal) → `store` (core, participants, settings, activity done)
 - [ ] Phase 3, wave 2: `web`, `mcp`, `ynab`, `fx`, `export`, `recurring`
 - [ ] Phase 3 reviews after each wave
-- [ ] Phase 4: E2E + diff green against Crystal, Docker, CI, remove Go, docs
+- [ ] Phase 4: E2E + diff green against Crystal, Docker, CI, remove Go, docs; finally remove all migration scaffolding (diff mode, reference binary, porting docs, "like Go" wording) so only clean tests remain (see HANDOFF.md)
 
 ## Conventions
 

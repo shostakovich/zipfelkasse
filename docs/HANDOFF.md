@@ -97,7 +97,14 @@ Delete this file at the end of the port.
      (big: split transport/tools). Each feature package hooks in via `App.wire_<name>`.
    - After each wave: an adversarial review agent compares with Go (rounding, cent arithmetic, dates/time zones,
      sorting/collation, texts, escaping), fixes, then E2E against the Crystal binary.
-6. Phase 4 as in PORTING.md.
+6. Phase 4 as in PORTING.md, **plus Robert's final requirement**: at the very end, remove all migration
+   scaffolding so that only clean tests remain that one would have written without a migration:
+   - remove the diff mode and everything about a reference binary (`E2E_REF_BIN`, `World` with two apps,
+     `Compare`/`DOM` canonicalisation, `compare_spec.cr`, the "built by the reference" seed logic),
+   - remove `docs/porting/` (inventories, probes), `docs/PORTING.md`, this handoff, Go-related wording in specs
+     and comments ("like Go", "Go's …"),
+   - keep the E2E scenarios as plain black-box tests with assertions (fakes for ECB/YNAB and the frozen clock
+     stay, they are normal test infrastructure), and the unit specs as normal Crystal specs.
 
 ## Findings worth remembering
 
