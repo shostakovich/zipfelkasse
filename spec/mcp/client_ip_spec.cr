@@ -47,7 +47,12 @@ describe Config::Prefix do
     Config::Prefix.parse("::/0").contains?(Config::Prefix.parse("1.2.3.4")).should be_true
   end
 
-  {"010.1.2.3", "1.2.3.4/33", "fd00::/129", "1.2.3", "10.0.0.0/x"}.each do |text|
+  it "reads the length of an IPv4-mapped network in IPv6 bits" do
+    Config::Prefix.parse("::ffff:192.168.0.0/112").should eq Config::Prefix.parse("192.168.0.0/16")
+    Config::Prefix.parse("::ffff:192.168.0.0/112").to_s.should eq "192.168.0.0/16"
+  end
+
+  {"010.1.2.3", "1.2.3.4/33", "fd00::/129", "::ffff:1.2.3.4/129", "1.2.3", "10.0.0.0/x"}.each do |text|
     it "refuses #{text.inspect}" do
       expect_raises(ArgumentError) { Config::Prefix.parse(text) }
     end

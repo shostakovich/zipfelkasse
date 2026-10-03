@@ -21,7 +21,7 @@ module Zipfelkasse
         address, slash, length = text.partition('/')
         prefix = parse_address?(address) || raise ArgumentError.new("#{address.inspect} is not an IP address#{" or network" if slash.empty?}")
         return prefix if slash.empty?
-        max = prefix.v4? ? 32 : 128
+        max = address.includes?(':') ? 128 : 32
         n = length.to_i? if length.matches?(/\A\d+\z/)
         raise ArgumentError.new("#{length.inspect} is not a valid prefix length for #{address}") if n.nil? || n > max
         new(prefix.bits, n + 128 - max)
