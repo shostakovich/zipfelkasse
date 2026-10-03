@@ -1,20 +1,18 @@
 <%- unless rows.empty? %>
   <section class="card">
     <div class="card-header">
-      <h2 class="card-title">Archiviert</h2>
+      <h2 class="card-title h5 mb-0">Archiviert</h2>
     </div>
-    <div class="card-content">
-      <ul class="rows">
-        <%- rows.each do |row| %>
-        <li id="<%= anchor %>-<%= row.id %>">
-          <span class="grow"><%= row.name %></span>
-          <form method="post" action="<%= action %>/<%= row.id %>/reaktivieren">
-            <button class="btn btn-outline btn-sm" type="submit"><%= icon "undo" %> Zurückholen</button>
-          </form>
-          <p class="row-meta"><%= expense_count row.expenses %></p>
-        </li>
-        <%- end %>
-      </ul>
-    </div>
+    <ul class="list-group list-group-flush">
+      <%- rows.each do |row| %>
+      <li class="list-group-item d-flex flex-wrap align-items-center gap-2" id="<%= anchor %>-<%= row.id %>">
+        <span class="flex-grow-1 text-break"><%= row.name %></span>
+        <form method="post" action="<%= action %>/<%= row.id %>/reaktivieren">
+          <button class="btn btn-sm btn-light" type="submit"><%= icon "undo" %> Zurückholen</button>
+        </form>
+        <p class="row-meta w-100 small text-body-secondary mb-0"><%= expense_count row.expenses %></p>
+      </li>
+      <%- end %>
+    </ul>
   </section>
   <%- end %>

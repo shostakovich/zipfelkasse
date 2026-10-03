@@ -1,162 +1,165 @@
-<div class="stack">
-<form class="expense-form stack" id="expense-form" method="post" data-rotation="<%= rotation %>"
+<div class="vstack gap-3">
+<form class="expense-form" id="expense-form" method="post" data-rotation="<%= rotation %>"
   action="<% if id = form.id %>/ausgaben/<%= id %><% else %>/ausgaben/neu<% end %>">
-<fieldset class="stack"<% if deleted? %> disabled<% end %>>
+<fieldset class="vstack gap-3"<% if deleted? %> disabled<% end %>>
   <section class="card">
     <div class="card-header">
-      <h1 class="card-title">
+      <h1 class="card-title h5 mb-0">
         <%- if deleted? %>Gelöschte Ausgabe<% elsif form.id %>Ausgabe bearbeiten<% else %>Ausgabe hinzufügen<% end -%>
       </h1>
       <%- if e = expense %>
-      <p class="card-description">
+      <p class="card-text small fw-normal text-body-secondary mt-1 mb-0">
         Angelegt am <%= date_time e.created_at %><% if e.updated_at != e.created_at %> · geändert am <%= date_time e.updated_at %><% end %>
-        <%- if e.recurring_id %> · <a class="badge badge-muted" href="/einstellungen/wiederkehrend"><%= icon "repeat" %> Wiederkehrend</a><% end %>
+        <%- if e.recurring_id %> · <a class="badge bg-secondary-subtle text-secondary-emphasis text-decoration-none" href="/einstellungen/wiederkehrend"><%= icon "repeat" %> Wiederkehrend</a><% end %>
       </p>
       <%- end %>
     </div>
-    <div class="card-content">
+    <div class="card-body">
       <%- if (e = expense) && deleted? %>
-      <p class="alert alert-destructive">Diese Ausgabe wurde am <%= date_time e.deleted_at %> gelöscht und zählt nicht mehr zu den Salden.</p>
+      <p class="alert alert-danger">Diese Ausgabe wurde am <%= date_time e.deleted_at %> gelöscht und zählt nicht mehr zu den Salden.</p>
       <%- end %>
-      <div class="form-grid">
-        <div class="field">
-          <label for="titel">Titel</label>
-          <input id="titel" name="titel" value="<%= form.title %>" required maxlength="200" placeholder="z. B. Einkauf Wochenmarkt" autocomplete="off" enterkeyhint="next">
+      <div class="row g-3">
+        <div class="col-sm-6">
+          <label class="form-label" for="titel">Titel</label>
+          <input class="form-control" id="titel" name="titel" value="<%= form.title %>" required maxlength="200" placeholder="z. B. Einkauf Wochenmarkt" autocomplete="off" enterkeyhint="next">
         </div>
-        <div class="field">
-          <label for="datum">Datum</label>
-          <input id="datum" name="datum" type="date" value="<%= form.date %>" required>
+        <div class="col-sm-6">
+          <label class="form-label" for="datum">Datum</label>
+          <input class="form-control" id="datum" name="datum" type="date" value="<%= form.date %>" required>
         </div>
-        <div class="field">
-          <label for="kategorie">Kategorie</label>
-          <select id="kategorie" name="kategorie" data-suggest="<%= suggest %>" aria-describedby="kategorie-hinweis">
+        <div class="col-sm-6">
+          <label class="form-label" for="kategorie">Kategorie</label>
+          <select class="form-select" id="kategorie" name="kategorie" data-suggest="<%= suggest %>" aria-describedby="kategorie-hinweis">
             <option value="">Keine Kategorie</option>
             <%- categories.each do |c| %>
             <option value="<%= c.id %>"<% if c.id == form.category_id %> selected<% end %>><%= c.name %><% if c.archived? %> (archiviert)<% end %></option>
             <%- end %>
           </select>
-          <p class="help" id="kategorie-hinweis" hidden>Vorschlag anhand früherer Ausgaben</p>
+          <p class="form-text" id="kategorie-hinweis" hidden>Vorschlag anhand früherer Ausgaben</p>
         </div>
-        <div class="field">
-          <label for="bezahlt_von"><span class="not-reimbursement">Bezahlt von</span><span class="only-reimbursement">Zurückgezahlt von</span></label>
-          <select id="bezahlt_von" name="bezahlt_von" required>
+        <div class="col-sm-6">
+          <label class="form-label" for="bezahlt_von"><span class="not-reimbursement">Bezahlt von</span><span class="only-reimbursement">Zurückgezahlt von</span></label>
+          <select class="form-select" id="bezahlt_von" name="bezahlt_von" required>
             <%- payers.each do |p| %>
             <option value="<%= p.id %>"<% if p.id == form.paid_by %> selected<% end %>><%= p.name %><% if p.archived? %> (archiviert)<% end %></option>
             <%- end %>
           </select>
         </div>
-        <div class="field">
-          <label for="waehrung">Währung</label>
-          <select id="waehrung" name="waehrung">
+        <div class="col-sm-6">
+          <label class="form-label" for="waehrung">Währung</label>
+          <select class="form-select" id="waehrung" name="waehrung">
             <%- COMMON_CURRENCIES.each do |c| %>
             <option value="<%= c %>"<% if c == form.currency %> selected<% end %>><%= c %><% if c == "EUR" %> – Euro<% end %></option>
             <%- end %>
             <option value=""<% if form.currency.nil? %> selected<% end %>>Andere …</option>
           </select>
-          <div class="currency-other field">
-            <label for="waehrung_andere" class="sr-only">Andere Währung (ISO-Code)</label>
-            <input id="waehrung_andere" name="waehrung_andere" value="<%= form.currency_other %>" maxlength="3" placeholder="ISO-Code, z. B. THB" autocapitalize="characters" autocomplete="off" pattern="[A-Za-z]{3}">
+          <div class="currency-other mt-2">
+            <label for="waehrung_andere" class="visually-hidden">Andere Währung (ISO-Code)</label>
+            <input class="form-control" id="waehrung_andere" name="waehrung_andere" value="<%= form.currency_other %>" maxlength="3" placeholder="ISO-Code, z. B. THB" autocapitalize="characters" autocomplete="off" pattern="[A-Za-z]{3}">
           </div>
         </div>
-        <div class="field">
-          <label for="betrag">Betrag</label>
-          <div class="input-unit">
-            <input id="betrag" name="betrag" value="<%= form.amount %>" required inputmode="decimal" placeholder="0,00" autocomplete="off">
-            <span class="unit" id="betrag-einheit"><% if currency == "EUR" %>€<% else %><%= currency %><% end %></span>
+        <div class="col-sm-6">
+          <label class="form-label" for="betrag">Betrag</label>
+          <div class="input-group">
+            <input class="form-control tabular-nums" id="betrag" name="betrag" value="<%= form.amount %>" required inputmode="decimal" placeholder="0,00" autocomplete="off">
+            <span class="input-group-text" id="betrag-einheit"><% if currency == "EUR" %>€<% else %><%= currency %><% end %></span>
           </div>
         </div>
 
-        <div class="fx-only fx-box span-2">
-          <div class="field">
-            <label for="kurs">Wechselkurs</label>
-            <div class="input-unit">
-              <span class="unit">1 € =</span>
-              <input id="kurs" name="kurs" value="<%= form.rate %>" inputmode="decimal" placeholder="automatisch" autocomplete="off">
-              <span class="unit" id="kurs-einheit"><% if currency != "EUR" %><%= currency %><% end %></span>
+        <div class="fx-only col-12">
+          <div class="rounded border bg-body-tertiary p-3">
+            <div class="row g-3">
+              <div class="col-sm-6">
+                <label class="form-label" for="kurs">Wechselkurs</label>
+                <div class="input-group">
+                  <span class="input-group-text">1 € =</span>
+                  <input class="form-control tabular-nums" id="kurs" name="kurs" value="<%= form.rate %>" inputmode="decimal" placeholder="automatisch" autocomplete="off">
+                  <span class="input-group-text" id="kurs-einheit"><% if currency != "EUR" %><%= currency %><% end %></span>
+                </div>
+                <input type="hidden" id="kurs_quelle" name="kurs_quelle" value="<%= form.rate_source.try(&.key) %>">
+                <p class="form-text" id="kurs-hinweis" aria-live="polite">
+                  <%- if form.rate_source.try(&.manual?) %>Von Hand eingetragener Kurs.
+                  <%- elsif form.rate_source.try(&.ecb?) %>EZB-Kurs.
+                  <%- else %>Leer lassen für den EZB-Kurs.<% end -%>
+                </p>
+                <button class="btn btn-link btn-sm px-0" type="button" id="kurs-laden" hidden><%= icon "refresh" %> EZB-Kurs laden</button>
+              </div>
+              <div class="col-sm-6">
+                <span class="form-label d-block">Umgerechnet in Euro</span>
+                <p class="form-control-plaintext py-2 mb-0"><strong class="fs-5 tabular-nums" id="eur-vorschau"><% if cents = form.eur_cents %><%= eur cents %><% else %>–<% end %></strong></p>
+              </div>
             </div>
-            <input type="hidden" id="kurs_quelle" name="kurs_quelle" value="<%= form.rate_source.try(&.key) %>">
-            <p class="help" id="kurs-hinweis" aria-live="polite">
-              <%- if form.rate_source.try(&.manual?) %>Von Hand eingetragener Kurs.
-              <%- elsif form.rate_source.try(&.ecb?) %>EZB-Kurs.
-              <%- else %>Leer lassen für den EZB-Kurs.<% end -%>
-            </p>
-            <button class="btn btn-link btn-sm" type="button" id="kurs-laden" hidden><%= icon "refresh" %> EZB-Kurs laden</button>
-          </div>
-          <div class="field fx-preview">
-            <span class="label">Umgerechnet in Euro</span>
-            <p><strong id="eur-vorschau"><% if cents = form.eur_cents %><%= eur cents %><% else %>–<% end %></strong></p>
           </div>
         </div>
 
-        <div class="field span-2">
-          <label class="check">
-            <input type="checkbox" id="rueckzahlung" name="rueckzahlung" value="1"<% if form.reimbursement? %> checked<% end %>>
-            Das ist eine Rückzahlung
-          </label>
+        <div class="col-12">
+          <div class="form-check">
+            <input class="form-check-input" type="checkbox" id="rueckzahlung" name="rueckzahlung" value="1"<% if form.reimbursement? %> checked<% end %>>
+            <label class="form-check-label" for="rueckzahlung">Das ist eine Rückzahlung</label>
+          </div>
         </div>
-        <div class="field span-2">
-          <label for="notiz">Notiz</label>
-          <textarea id="notiz" name="notiz" rows="2" maxlength="2000"><%= form.notes %></textarea>
+        <div class="col-12">
+          <label class="form-label" for="notiz">Notiz</label>
+          <textarea class="form-control" id="notiz" name="notiz" rows="2" maxlength="2000"><%= form.notes %></textarea>
         </div>
       </div>
     </div>
   </section>
 
   <section class="card" id="aufteilung-karte">
-    <div class="card-header">
-      <div class="split-head">
-        <h2 class="card-title"><span class="not-reimbursement">Für wen?</span><span class="only-reimbursement">An wen?</span></h2>
-        <button class="btn btn-link btn-sm not-reimbursement" type="button" id="alle-auswaehlen" hidden>Alle auswählen</button>
+    <div class="card-header d-flex align-items-start justify-content-between gap-3">
+      <div>
+        <h2 class="card-title h5 mb-0"><span class="not-reimbursement">Für wen?</span><span class="only-reimbursement">An wen?</span></h2>
+        <p class="card-text small fw-normal text-body-secondary mt-1 mb-0">
+          <span class="not-reimbursement">Wähle, für wen bezahlt wurde.</span>
+          <span class="only-reimbursement">Wähle genau eine Person, die das Geld bekommen hat.</span>
+        </p>
       </div>
-      <p class="card-description">
-        <span class="not-reimbursement">Wähle, für wen bezahlt wurde.</span>
-        <span class="only-reimbursement">Wähle genau eine Person, die das Geld bekommen hat.</span>
-      </p>
+      <button class="btn btn-link btn-sm px-0 text-nowrap not-reimbursement" type="button" id="alle-auswaehlen" hidden>Alle auswählen</button>
     </div>
-    <div class="card-content">
-      <div class="split-rows" id="split-rows" data-currency="<%= currency %>">
-        <%- form.rows.each do |row| %>
-        <div class="split-row" data-id="<%= row.id %>">
-          <label class="check">
-            <input type="checkbox" name="teil" value="<%= row.id %>"<% if row.checked %> checked<% end %>>
-            <span><%= row.name %><% if row.archived %> <span class="muted">(archiviert)</span><% end %></span>
-            <span class="split-share" data-share><% if row.checked && (cents = row.cents) %><%= eur cents %><% end %></span>
-          </label>
-          <div class="split-weight">
-            <label class="sr-only" for="wert_<%= row.id %>">Wert für <%= row.name %></label>
-            <input id="wert_<%= row.id %>" name="wert_<%= row.id %>" value="<%= row.value %>" inputmode="decimal" autocomplete="off">
-            <span class="unit" data-unit>
-              <%- if form.split_mode.shares? %>Anteile<% elsif form.split_mode.percent? %>%<% elsif currency == "EUR" %>€<% else %><%= currency %><% end -%>
-            </span>
-          </div>
+    <div class="split-rows list-group list-group-flush" id="split-rows" data-currency="<%= currency %>">
+      <%- form.rows.each do |row| %>
+      <div class="split-row list-group-item d-flex flex-wrap align-items-center column-gap-3 row-gap-2" data-id="<%= row.id %>">
+        <div class="form-check flex-grow-1">
+          <input class="form-check-input" type="checkbox" id="teil_<%= row.id %>" name="teil" value="<%= row.id %>"<% if row.checked %> checked<% end %>>
+          <label class="form-check-label" for="teil_<%= row.id %>"><span><%= row.name %><% if row.archived %> <span class="text-body-secondary">(archiviert)</span><% end %></span>
+            <span class="small text-body-secondary tabular-nums ms-1" data-share><% if row.checked && (cents = row.cents) %><%= eur cents %><% end %></span></label>
         </div>
-        <%- end %>
+        <label class="visually-hidden" for="wert_<%= row.id %>">Wert für <%= row.name %></label>
+        <div class="split-weight input-group input-group-sm ms-auto">
+          <input class="form-control text-end tabular-nums" id="wert_<%= row.id %>" name="wert_<%= row.id %>" value="<%= row.value %>" inputmode="decimal" autocomplete="off">
+          <span class="input-group-text" data-unit>
+            <%- if form.split_mode.shares? %>Anteile<% elsif form.split_mode.percent? %>%<% elsif currency == "EUR" %>€<% else %><%= currency %><% end -%>
+          </span>
+        </div>
       </div>
-      <p class="split-sum not-reimbursement" id="split-summe" aria-live="polite"></p>
-
-      <details class="disclosure not-reimbursement"<% unless form.split_mode.equal? %> open<% end %>>
-        <summary>Weitere Aufteilungsoptionen …</summary>
-        <div class="field">
-          <label for="aufteilung">Aufteilung</label>
-          <select id="aufteilung" name="aufteilung">
+      <%- end %>
+    </div>
+    <div class="card-body vstack gap-2 border-top not-reimbursement">
+      <p class="split-sum small mb-0" id="split-summe" aria-live="polite"></p>
+      <details<% unless form.split_mode.equal? %> open<% end %>>
+        <summary class="small fw-semibold">Weitere Aufteilungsoptionen …</summary>
+        <div class="mt-2">
+          <label class="form-label" for="aufteilung">Aufteilung</label>
+          <select class="form-select" id="aufteilung" name="aufteilung">
             <%- Domain::SplitMode.each do |mode| %>
             <option value="<%= mode.key %>"<% if mode == form.split_mode %> selected<% end %>><%= Web.split_mode_label(mode) %></option>
             <%- end %>
           </select>
-          <p class="help">Nach Anteilen: z. B. 2 : 1. Nach Prozent: zusammen 100 %. Nach Beträgen: zusammen der Gesamtbetrag<% if currency != "EUR" %> in <%= currency %><% end %>.</p>
+          <p class="form-text">Nach Anteilen: z. B. 2 : 1. Nach Prozent: zusammen 100 %. Nach Beträgen: zusammen der Gesamtbetrag<% if currency != "EUR" %> in <%= currency %><% end %>.</p>
         </div>
       </details>
     </div>
   </section>
 
   <%- unless deleted? %>
-  <div class="actions">
+  <div class="d-flex flex-column flex-sm-row gap-2">
     <button class="btn btn-primary" type="submit"><%= icon "save" %> <% if form.id %>Speichern<% else %>Anlegen<% end %></button>
     <%- if id = form.id %>
-    <button class="btn btn-destructive" type="submit" formaction="/ausgaben/<%= id %>/loeschen" formnovalidate
+    <button class="btn btn-danger" type="submit" formaction="/ausgaben/<%= id %>/loeschen" formnovalidate
       data-confirm="Diese Ausgabe wirklich löschen? Sie verschwindet aus Liste und Salden; im Aktivitätsprotokoll bleibt sie sichtbar."><%= icon "trash" %> Löschen</button>
     <%- end %>
-    <a class="btn btn-ghost" href="/">Abbrechen</a>
+    <a class="btn" href="/">Abbrechen</a>
   </div>
   <%- end %>
 </fieldset>
@@ -165,25 +168,26 @@
 <%- if e = expense %>
 <section class="card">
   <div class="card-header">
-    <h2 class="card-title">Verlauf</h2>
+    <h2 class="card-title h5 mb-0">Verlauf</h2>
     <%- unless deleted? %>
-    <p class="card-description">
+    <p class="card-text small fw-normal text-body-secondary mt-1 mb-0">
       <%- if e.recurring_id %>
       Diese Ausgabe wird automatisch wiederholt. <a href="/einstellungen/wiederkehrend">Wiederkehrende Ausgaben verwalten</a>
       <%- else %>
-      <a href="/einstellungen/wiederkehrend/neu?ausgabe=<%= e.id %>"><%= icon "repeat" %> Als wiederkehrend einrichten</a>
+      <a class="icon-link" href="/einstellungen/wiederkehrend/neu?ausgabe=<%= e.id %>"><%= icon "repeat" %> Als wiederkehrend einrichten</a>
       <%- end %>
     </p>
     <%- end %>
   </div>
-  <div class="card-content">
+  <%- if history.empty? %>
+  <p class="card-body small text-body-secondary mb-0">Noch keine Einträge.</p>
+  <%- else %>
+  <div class="list-group list-group-flush">
     <%- history.each do |item| %>
     <%= Views::ActivityEntry.new(item, false) %>
     <%- end %>
-    <%- if history.empty? %>
-    <p class="muted small">Noch keine Einträge.</p>
-    <%- end %>
   </div>
+  <%- end %>
 </section>
 <%- end %>
 </div>

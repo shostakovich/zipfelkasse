@@ -161,7 +161,7 @@ describe "Seed invariants" do
     shown.sort.should eq expected.sort
 
     left = balances.dup
-    anna.get("/salden").doc.xpath_nodes(%(//div[@class="transfer"]//a)).each do |link|
+    anna.get("/salden").doc.xpath_nodes(%(//div[#{W.cls("transfer")}]//a)).each do |link|
       params = URI.parse(link["href"]).query_params
       cents = params["betrag"].to_i64
       left[params["von"].to_i64] += cents
@@ -194,7 +194,7 @@ describe "Seed invariants" do
       rows.zip(live).each do |row, e|
         involved = e.paid_by == id || e.shares.has_key?(id)
         balance = (e.paid_by == id ? e.amount : 0_i64) - (e.shares[id]? || 0_i64)
-        metas = row.xpath_nodes(%(.//span[@class="expense-meta"])).map { |m| W.squish(m.content) }
+        metas = row.xpath_nodes(%(.//span[#{W.cls("expense-meta")}])).map { |m| W.squish(m.content) }
         {name, e.id, metas[1]}.should eq({name, e.id, involved ? "Dein Saldo: #{Ledger.euro(balance)}" : "Du bist nicht beteiligt"})
       end
     end
@@ -219,7 +219,7 @@ describe "Seed invariants" do
         e.title, e.date, e.paid_by.to_s, e.mode, listed ? e.currency : "", listed ? "" : e.currency,
         Ledger.typed(e.minor, e.currency), e.notes, e.shares.keys.map(&.to_s).sort, e.reimbursement,
       })
-      page.doc.xpath_nodes(%(//div[@class="split-row"])).map { |row| {row["data-id"].to_i64, W.squish(row.xpath_node(%(.//*[@data-share])).try(&.content) || "")} }
+      page.doc.xpath_nodes(%(//div[#{W.cls("split-row")}])).map { |row| {row["data-id"].to_i64, W.squish(row.xpath_node(%(.//*[@data-share])).try(&.content) || "")} }
         .reject { |_, share| share.empty? }.to_h
         .should eq e.shares.transform_values { |cents| Ledger.euro(cents) }
     end

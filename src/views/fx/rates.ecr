@@ -1,8 +1,10 @@
-<div class="stack">
+<div class="vstack gap-3">
 <section class="card">
   <div class="card-header">
-    <h1 class="card-title">Wechselkurse</h1>
-    <p class="card-description">Kurse gelten wie bei der EZB als Einheiten der Fremdwährung pro 1 €.
+    <h1 class="card-title h5 mb-0">Wechselkurse</h1>
+  </div>
+  <div class="card-body">
+    <p class="small text-body-secondary mb-0">Kurse gelten wie bei der EZB als Einheiten der Fremdwährung pro 1 €.
       Für ein Ausgabedatum gilt der jüngste manuelle Kurs mit „gültig ab“ am oder vor diesem Datum – er hat Vorrang
       vor dem EZB-Kurs, bis ein neuerer manueller Kurs eingetragen oder er gelöscht wird. Ohne manuellen Kurs gilt der
       EZB-Referenzkurs vom Ausgabedatum bzw. vom letzten Bankarbeitstag davor.</p>
@@ -11,25 +13,25 @@
 
 <section class="card">
   <div class="card-header">
-    <h2 class="card-title">Manuelle Kurse</h2>
-    <p class="card-description">Zum Beispiel für den echten Kartenkurs oder für Währungen, die die EZB nicht führt.</p>
+    <h2 class="card-title h5 mb-0">Manuelle Kurse</h2>
+    <p class="card-text small fw-normal text-body-secondary mt-1 mb-0">Zum Beispiel für den echten Kartenkurs oder für Währungen, die die EZB nicht führt.</p>
   </div>
-  <div class="card-content stack">
+  <div class="card-body vstack gap-3">
     <%- if !manual.empty? %>
-    <div class="table-wrap">
-      <table>
-        <thead><tr><th>Währung</th><th>Gültig ab</th><th>1 € =</th><th><span class="sr-only">Aktion</span></th></tr></thead>
+    <div class="table-responsive">
+      <table class="table table-sm small align-middle mb-0">
+        <thead><tr><th>Währung</th><th>Gültig ab</th><th>1 € =</th><th><span class="visually-hidden">Aktion</span></th></tr></thead>
         <tbody>
         <%- manual.each do |row| %>
           <tr>
             <td><%= row.currency %></td>
             <td><%= date(row.date) %></td>
-            <td class="amount"><%= row.rate %> <%= row.currency %></td>
-            <td>
+            <td class="tabular-nums"><%= row.rate %> <%= row.currency %></td>
+            <td class="text-end">
               <form method="post" action="/einstellungen/kurse/loeschen">
                 <input type="hidden" name="waehrung" value="<%= row.currency %>">
                 <input type="hidden" name="datum" value="<%= Store.format_date(row.date) %>">
-                <button class="btn btn-ghost btn-sm" type="submit">Löschen<span class="sr-only"> (<%= row.currency %> ab <%= date(row.date) %>)</span></button>
+                <button class="btn btn-sm px-2" type="submit">Löschen<span class="visually-hidden"> (<%= row.currency %> ab <%= date(row.date) %>)</span></button>
               </form>
             </td>
           </tr>
@@ -38,52 +40,52 @@
       </table>
     </div>
     <%- else %>
-    <p class="muted">Noch keine manuellen Kurse.</p>
+    <p class="text-body-secondary mb-0">Noch keine manuellen Kurse.</p>
     <%- end %>
 
-    <form class="form" method="post" action="/einstellungen/kurse">
-      <div class="row">
-        <div class="field">
-          <label for="kurs-waehrung">Währung</label>
-          <input id="kurs-waehrung" name="waehrung" value="<%= form.currency %>" required maxlength="3" size="5"
+    <form method="post" action="/einstellungen/kurse">
+      <div class="row g-3">
+        <div class="col-sm-3">
+          <label class="form-label" for="kurs-waehrung">Währung</label>
+          <input class="form-control" id="kurs-waehrung" name="waehrung" value="<%= form.currency %>" required maxlength="3" size="5"
                  autocapitalize="characters" autocomplete="off" pattern="[A-Za-z]{3}" placeholder="USD" list="kurs-waehrungen">
           <datalist id="kurs-waehrungen"><% currencies.each do |c| %><option value="<%= c %>"><% end %></datalist>
         </div>
-        <div class="field">
-          <label for="kurs-datum">Gültig ab</label>
-          <input id="kurs-datum" name="datum" type="date" value="<%= form.date %>" required>
+        <div class="col-sm-4">
+          <label class="form-label" for="kurs-datum">Gültig ab</label>
+          <input class="form-control" id="kurs-datum" name="datum" type="date" value="<%= form.date %>" required>
         </div>
-        <div class="field">
-          <label for="kurs-kurs">Kurs (1 € = …)</label>
-          <input id="kurs-kurs" name="kurs" value="<%= form.rate %>" required inputmode="decimal" autocomplete="off" placeholder="1,0850">
+        <div class="col-sm-5">
+          <label class="form-label" for="kurs-kurs">Kurs (1 € = …)</label>
+          <input class="form-control tabular-nums" id="kurs-kurs" name="kurs" value="<%= form.rate %>" required inputmode="decimal" autocomplete="off" placeholder="1,0850">
         </div>
       </div>
-      <p class="help">Für 1 € gibt es 1,08 US-Dollar → 1,08.</p>
-      <div><button class="btn btn-primary" type="submit">Kurs speichern</button></div>
+      <p class="form-text">Für 1 € gibt es 1,08 US-Dollar → 1,08.</p>
+      <button class="btn btn-primary" type="submit">Kurs speichern</button>
     </form>
   </div>
 </section>
 
 <section class="card">
   <div class="card-header">
-    <h2 class="card-title">EZB-Referenzkurse</h2>
-    <p class="card-description">
+    <h2 class="card-title h5 mb-0">EZB-Referenzkurse</h2>
+    <p class="card-text small fw-normal text-body-secondary mt-1 mb-0">
       <%- if stats.count > 0 %>Zwischengespeichert: <%= stats.count %> Kurse für <%= stats.currencies %> Währungen vom <%= date(stats.from) %> bis <%= date(stats.to) %>.
       <%- else %>Noch keine EZB-Kurse zwischengespeichert – sie werden bei Bedarf automatisch geladen.<% end %>
       Neue Kurse werden täglich um 17 Uhr automatisch abgerufen.
     </p>
   </div>
-  <div class="card-content stack">
+  <div class="card-body vstack gap-3">
     <form method="post" action="/einstellungen/kurse/aktualisieren">
-      <button class="btn btn-outline" type="submit">EZB-Kurse jetzt aktualisieren</button>
+      <button class="btn btn-light" type="submit">EZB-Kurse jetzt aktualisieren</button>
     </form>
     <%- if !latest.empty? %>
-    <div class="table-wrap">
-      <table>
+    <div class="table-responsive">
+      <table class="table table-sm small mb-0">
         <thead><tr><th>Währung</th><th>Stand</th><th>1 € =</th></tr></thead>
         <tbody>
         <%- latest.each do |row| %>
-          <tr><td><%= row.currency %></td><td><%= date(row.date) %></td><td class="amount"><%= row.rate %> <%= row.currency %></td></tr>
+          <tr><td><%= row.currency %></td><td><%= date(row.date) %></td><td class="tabular-nums"><%= row.rate %> <%= row.currency %></td></tr>
         <%- end %>
         </tbody>
       </table>
@@ -95,19 +97,19 @@
 <%- if !used.empty? %>
 <section class="card">
   <div class="card-header">
-    <h2 class="card-title">Zuletzt verwendet</h2>
-    <p class="card-description">Kurse der jüngsten Ausgaben in Fremdwährung.</p>
+    <h2 class="card-title h5 mb-0">Zuletzt verwendet</h2>
+    <p class="card-text small fw-normal text-body-secondary mt-1 mb-0">Kurse der jüngsten Ausgaben in Fremdwährung.</p>
   </div>
-  <div class="card-content">
-    <div class="table-wrap">
-      <table>
+  <div class="card-body">
+    <div class="table-responsive">
+      <table class="table table-sm small mb-0">
         <thead><tr><th>Ausgabe</th><th>Datum</th><th>1 € =</th><th>Quelle</th></tr></thead>
         <tbody>
         <%- used.each do |row| %>
           <tr>
             <td><a href="/ausgaben/<%= row.expense_id %>"><%= row.title %></a></td>
             <td><%= date(row.date) %></td>
-            <td class="amount"><%= row.rate %> <%= row.currency %></td>
+            <td class="tabular-nums"><%= row.rate %> <%= row.currency %></td>
             <td><%= row.source %></td>
           </tr>
         <%- end %>

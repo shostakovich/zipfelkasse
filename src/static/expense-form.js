@@ -196,7 +196,7 @@
     var active = rows.filter(function (r) { return r.check.checked; });
     rows.forEach(function (r) { r.share.textContent = ""; });
     sumEl.textContent = "";
-    sumEl.classList.remove("bad");
+    sumEl.classList.remove("text-danger");
     if (total === null || total <= 0n || active.length === 0) return;
 
     var weights = [], bad = false;
@@ -211,7 +211,7 @@
     });
     if (bad) {
       sumEl.textContent = "Bitte nur gültige Zahlen eingeben.";
-      sumEl.classList.add("bad");
+      sumEl.classList.add("text-danger");
       return;
     }
     var sum = weights.reduce(function (a, b) { return a + b; }, 0n);
@@ -221,7 +221,7 @@
         var diff = 10000n - sum;
         sumEl.textContent = "Summe " + formatPercent(sum) + " % – " +
           (diff > 0n ? "es fehlen " + formatPercent(diff) : formatPercent(-diff) + " zu viel") + " %.";
-        sumEl.classList.add("bad");
+        sumEl.classList.add("text-danger");
         return;
       }
       sumEl.textContent = "Summe 100 %.";
@@ -233,7 +233,7 @@
         var rest = target - sum;
         sumEl.textContent = rest > 0n ? "Noch " + formatInput(rest, dec) + unit + " offen."
           : formatInput(-rest, dec) + unit + " zu viel.";
-        sumEl.classList.add("bad");
+        sumEl.classList.add("text-danger");
         return;
       }
       sumEl.textContent = "Passt: " + formatInput(sum, dec) + unit + ".";

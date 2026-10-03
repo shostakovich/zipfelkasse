@@ -24,7 +24,7 @@ module E2E
       "X-Content-Type-Options"  => "nosniff",
       "Referrer-Policy"         => "same-origin",
       "X-Frame-Options"         => "DENY",
-      "Content-Security-Policy" => "default-src 'self'; img-src 'self' data:; style-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'",
+      "Content-Security-Policy" => "default-src 'self'; img-src 'self' data: https://felt-css.rocu.de; style-src 'self' https://felt-css.rocu.de; frame-ancestors 'none'; base-uri 'self'; form-action 'self'",
     }
 
     def self.today_line(date : String, weekday : String) : String

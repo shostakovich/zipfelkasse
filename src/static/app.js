@@ -9,8 +9,8 @@
     document.querySelectorAll("[data-width]").forEach(function (el) {
       el.style.width = el.dataset.width + "%";
     });
-    // Changing a filter select submits the form right away.
-    document.querySelectorAll("select[data-autosubmit]").forEach(function (el) {
+    // Changing a filter select or an appearance radio submits the form right away.
+    document.querySelectorAll("select[data-autosubmit], [data-autosubmit] input[type=radio]").forEach(function (el) {
       el.addEventListener("change", function () {
         if (el.form) el.form.requestSubmit ? el.form.requestSubmit() : el.form.submit();
       });

@@ -1,32 +1,52 @@
-<div class="stack">
+<div class="vstack gap-3">
   <section class="card">
     <div class="card-header">
-      <h1 class="card-title">Einstellungen</h1>
-      <p class="card-description">Gruppe, Personen, Kategorien und mehr.</p>
+      <h1 class="card-title h5 mb-0">Einstellungen</h1>
+      <p class="card-text small text-body-secondary fw-normal mt-1 mb-0">Gruppe, Personen, Kategorien und mehr.</p>
     </div>
-    <div class="card-content">
-      <form method="post" action="/einstellungen" class="form">
-        <div class="field">
-          <label for="gruppenname">Name der Gruppe</label>
-          <div class="inline-form">
-            <input id="gruppenname" name="gruppenname" value="<%= group_name %>" required maxlength="60">
-            <button class="btn btn-primary" type="submit">Speichern</button>
-          </div>
+    <div class="card-body">
+      <form method="post" action="/einstellungen">
+        <label class="form-label" for="gruppenname">Name der Gruppe</label>
+        <div class="d-flex gap-2">
+          <input class="form-control" id="gruppenname" name="gruppenname" value="<%= group_name %>" required maxlength="60">
+          <button class="btn btn-primary" type="submit">Speichern</button>
         </div>
       </form>
     </div>
   </section>
 
+  <section class="card" id="darstellung">
+    <div class="card-header">
+      <h2 class="card-title h5 mb-0">Darstellung</h2>
+      <p class="card-text small text-body-secondary fw-normal mt-1 mb-0">Gilt nur für dieses Gerät.</p>
+    </div>
+    <div class="card-body">
+      <form class="d-flex flex-wrap align-items-center gap-3" method="post" action="/einstellungen/darstellung" data-autosubmit>
+        <div class="btn-group" role="group" aria-label="Stil">
+          <%- { {Look::Felt, "Filz"}, {Look::Clean, "Clean"} }.each do |value, label| %>
+          <input type="radio" class="btn-check" name="look" id="look-<%= value.to_s.downcase %>" value="<%= value.to_s.downcase %>" autocomplete="off"<% if look == value %> checked<% end %>>
+          <label class="btn btn-outline-primary" for="look-<%= value.to_s.downcase %>"><%= label %></label>
+          <%- end %>
+        </div>
+        <div class="btn-group" role="group" aria-label="Farbmodus">
+          <%- { {Theme::Light, "Hell"}, {Theme::Dark, "Dunkel"}, {Theme::Auto, "Automatisch"} }.each do |value, label| %>
+          <input type="radio" class="btn-check" name="theme" id="theme-<%= value.to_s.downcase %>" value="<%= value.to_s.downcase %>" autocomplete="off"<% if theme == value %> checked<% end %>>
+          <label class="btn btn-outline-primary" for="theme-<%= value.to_s.downcase %>"><%= label %></label>
+          <%- end %>
+        </div>
+        <button class="appearance-submit btn btn-primary" type="submit">Übernehmen</button>
+      </form>
+    </div>
+  </section>
+
   <section class="card">
-    <div class="card-content">
-      <ul class="link-list">
-        <li><a href="/einstellungen/teilnehmer"><%= icon "users" %> Teilnehmer</a></li>
-        <li><a href="/einstellungen/kategorien"><%= icon "tag" %> Kategorien</a></li>
-        <li><a href="/einstellungen/wiederkehrend"><%= icon "repeat" %> Wiederkehrende Ausgaben</a></li>
-        <li><a href="/einstellungen/kurse"><%= icon "banknote" %> Wechselkurse</a></li>
-        <li><a href="/einstellungen/ynab"><%= icon "receipt" %> YNAB</a></li>
-        <li><a href="/export"><%= icon "archive" %> Export</a></li>
-      </ul>
+    <div class="link-list list-group list-group-flush">
+      <a class="list-group-item list-group-item-action d-flex align-items-center gap-3 py-3" href="/einstellungen/teilnehmer"><span class="d-flex"><%= plush "users" %></span><span class="me-auto">Teilnehmer</span><span class="d-flex text-body-secondary"><%= icon "chevron-right" %></span></a>
+      <a class="list-group-item list-group-item-action d-flex align-items-center gap-3 py-3" href="/einstellungen/kategorien"><span class="d-flex"><%= plush "tag" %></span><span class="me-auto">Kategorien</span><span class="d-flex text-body-secondary"><%= icon "chevron-right" %></span></a>
+      <a class="list-group-item list-group-item-action d-flex align-items-center gap-3 py-3" href="/einstellungen/wiederkehrend"><span class="d-flex"><%= plush "repeat" %></span><span class="me-auto">Wiederkehrende Ausgaben</span><span class="d-flex text-body-secondary"><%= icon "chevron-right" %></span></a>
+      <a class="list-group-item list-group-item-action d-flex align-items-center gap-3 py-3" href="/einstellungen/kurse"><span class="d-flex"><%= plush "banknote" %></span><span class="me-auto">Wechselkurse</span><span class="d-flex text-body-secondary"><%= icon "chevron-right" %></span></a>
+      <a class="list-group-item list-group-item-action d-flex align-items-center gap-3 py-3" href="/einstellungen/ynab"><span class="d-flex"><%= plush "wallet" %></span><span class="me-auto">YNAB</span><span class="d-flex text-body-secondary"><%= icon "chevron-right" %></span></a>
+      <a class="list-group-item list-group-item-action d-flex align-items-center gap-3 py-3" href="/export"><span class="d-flex"><%= plush "archive" %></span><span class="me-auto">Export</span><span class="d-flex text-body-secondary"><%= icon "chevron-right" %></span></a>
     </div>
   </section>
 </div>

@@ -11,7 +11,7 @@ module E2E
       "X-Content-Type-Options"  => "nosniff",
       "Referrer-Policy"         => "same-origin",
       "X-Frame-Options"         => "DENY",
-      "Content-Security-Policy" => "default-src 'self'; img-src 'self' data:; style-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'",
+      "Content-Security-Policy" => "default-src 'self'; img-src 'self' data: https://felt-css.rocu.de; style-src 'self' https://felt-css.rocu.de; frame-ancestors 'none'; base-uri 'self'; form-action 'self'",
     }
 
     def self.form_body(form : Enumerable({String, String})) : String
@@ -51,6 +51,12 @@ module E2E
     # Content of an element, whitespace collapsed.
     def self.squish(s : String) : String
       s.gsub(/\s+/, " ").strip
+    end
+
+    # XPath predicate for "has the CSS class *name*" (elements carry Bootstrap
+    # utility classes next to their hooks): `%(//div[#{W.cls("split-row")}])`.
+    def self.cls(name : String) : String
+      %(contains(concat(" ", normalize-space(@class), " "), " #{name} "))
     end
 
     def self.texts(r : Response, xpath : String) : Array(String)
@@ -98,7 +104,7 @@ module E2E
 
     # The navigation tab marked as current.
     def self.current_tab(r : Response) : String?
-      attr(r, %(//nav[@aria-label="Hauptnavigation"]/a[@aria-current="page"]), "href")
+      attr(r, %(//nav[@aria-label="Hauptnavigation"]//a[@aria-current="page"]), "href")
     end
 
     def self.nav?(r : Response) : Bool
@@ -106,7 +112,7 @@ module E2E
     end
 
     def self.whoami(r : Response) : String?
-      text_of(r, %(//p[@class="whoami"]/strong))
+      text_of(r, %(//p[#{cls("whoami")}]/strong))
     end
 
     # The flash message shown on the page (role=status).

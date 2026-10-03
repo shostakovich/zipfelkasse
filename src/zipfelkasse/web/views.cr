@@ -44,11 +44,22 @@ module Zipfelkasse::Web
     end
 
     def sign_class(v : Int64) : String
-      v > 0 ? "positive" : (v < 0 ? "negative" : "")
+      v > 0 ? "text-success" : (v < 0 ? "text-danger" : "")
     end
 
     def static(name : String) : String
       Static.url(name)
+    end
+
+    # Names in the order of the plush sprite sheets (static/plush/icons-<look>-<theme>.webp).
+    PLUSH = %w(receipt scale activity settings users tag repeat banknote archive
+      cart utensils key zap home car plane ticket heart
+      gift shirt baby paw graduation phone shield piggy wallet)
+
+    # A felt or plush icon from the sprite of the current look and colour mode (see app.css).
+    def plush(name : String) : SafeHTML
+      name = "tag" unless PLUSH.includes?(name)
+      SafeHTML.new(%(<span class="plush plush-#{name}" aria-hidden="true"></span>))
     end
 
     def icon(name : String) : SafeHTML
@@ -84,8 +95,25 @@ module Zipfelkasse::Web
     error : String? = nil,
     scripts : Array(String) = [] of String
 
-  record Layout, page : Page, content : View, me : Store::Participant?, group_name : String, flash : String? do
+  record Layout, page : Page, content : View, me : Store::Participant?, group_name : String, flash : String?,
+    look : Look, theme : Theme do
     include Helpers
+
+    # Browser chrome colour per colour mode: the page colour of the look.
+    def theme_color(dark : Bool) : String
+      if dark
+        look.felt? ? "#26292d" : "#212529"
+      else
+        look.felt? ? "#ece4d4" : "#f6f7f9"
+      end
+    end
+
+    # A static image in a light and a dark version (`name-light.ext`, `name-dark.ext`):
+    # the pinned one, or both with the system choosing.
+    def themed_srcs(base : String, ext : String) : {String, String?}
+      return {static("#{base}-#{theme.to_s.downcase}.#{ext}"), nil} unless theme.auto?
+      {static("#{base}-light.#{ext}"), static("#{base}-dark.#{ext}")}
+    end
 
     def to_s(io : IO) : Nil
       Web.template io, "layout.ecr"
@@ -94,7 +122,7 @@ module Zipfelkasse::Web
 
   def self.render_page(env : HTTP::Server::Context, store : Store, status : Int32, page : Page, content : View,
                        group_name : String = store.group_name) : String
-    html = Layout.new(page, content, env.me?, group_name, env.take_flash).to_s
+    html = Layout.new(page, content, env.me?, group_name, env.take_flash, env.look, env.theme).to_s
     response = env.response
     response.status_code = status
     response.content_type = "text/html; charset=utf-8"

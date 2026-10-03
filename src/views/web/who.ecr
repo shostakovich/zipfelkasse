@@ -1,36 +1,35 @@
-<div class="stack">
+<div class="vstack gap-3">
   <section class="card">
     <div class="card-header">
-      <h1 class="card-title">Wer bist du?</h1>
-      <p class="card-description">Wähle dich aus. Die App merkt sich das auf diesem Gerät.</p>
+      <h1 class="card-title h5 mb-0">Wer bist du?</h1>
+      <p class="card-text small fw-normal text-body-secondary mt-1 mb-0">Wähle dich aus. Die App merkt sich das auf diesem Gerät.</p>
     </div>
-    <div class="card-content">
-      <%- if !participants.empty? %>
-      <form method="post" action="/wer" class="stack-sm">
-        <input type="hidden" name="zurueck" value="<%= return_to %>">
-        <%- participants.each do |p| %>
-        <button class="btn btn-outline btn-block btn-lg" type="submit" name="id" value="<%= p.id %>"
-          <%- if me.try(&.id) == p.id %> aria-current="true"<% end %>><%= p.name %></button>
-        <%- end %>
-      </form>
-      <%- else %>
-      <p class="muted">Noch niemand da. Leg dich unten als erste Person an.</p>
+    <%- if !participants.empty? %>
+    <form method="post" action="/wer" class="list-group list-group-flush">
+      <input type="hidden" name="zurueck" value="<%= return_to %>">
+      <%- participants.each do |p| %>
+      <%- current = me.try(&.id) == p.id %>
+      <button class="list-group-item list-group-item-action d-flex align-items-center justify-content-between gap-3 py-3 fw-semibold<% if current %> active<% end %>" type="submit" name="id" value="<%= p.id %>"
+        <%- if current %> aria-current="true"<% end %>><span class="text-break"><%= p.name %></span><%= icon "chevron-right" %></button>
       <%- end %>
-    </div>
+    </form>
+    <%- else %>
+    <p class="card-body text-body-secondary mb-0">Noch niemand da. Leg dich unten als erste Person an.</p>
+    <%- end %>
   </section>
 
   <section class="card">
     <div class="card-header">
-      <h2 class="card-title">Neue Person</h2>
+      <h2 class="card-title h5 mb-0">Neue Person</h2>
     </div>
-    <div class="card-content">
-      <form method="post" action="/wer/neu" class="form">
+    <div class="card-body">
+      <form method="post" action="/wer/neu">
         <input type="hidden" name="zurueck" value="<%= return_to %>">
-        <div class="field">
-          <label for="name">Name</label>
-          <input id="name" name="name" value="<%= name %>" required maxlength="60" autocomplete="given-name">
+        <div class="mb-3">
+          <label class="form-label" for="name">Name</label>
+          <input class="form-control" id="name" name="name" value="<%= name %>" required maxlength="60" autocomplete="given-name">
         </div>
-        <button class="btn btn-primary btn-block" type="submit">Anlegen und auswählen</button>
+        <button class="btn btn-primary w-100" type="submit">Anlegen und auswählen</button>
       </form>
     </div>
   </section>

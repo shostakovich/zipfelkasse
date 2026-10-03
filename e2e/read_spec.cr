@@ -144,8 +144,8 @@ describe "Read everything" do
       user.get(path).status.should eq 200
       user.get(path.split('?').first).status.should eq 200
     end
-    %w(app.css app.js expense-form.js icons.svg mascot.webp sw.js icons/apple-touch-icon.png icons/favicon-32.png
-      icons/icon-192.png icons/icon-512.png icons/maskable-512.png).each do |f|
+    %w(app.css app.js expense-form.js icons.svg sw.js brand/mascot-felt-light.webp plush/icons-felt-light.webp
+      icons/apple-touch-icon-felt.png icons/favicon-felt-light.png icons/icon-felt-192.webp icons/maskable-felt-512.webp).each do |f|
       user.get("/static/#{f}").status.should eq 200
     end
     user.get("/static/missing.css").status.should eq 404

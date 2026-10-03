@@ -6,6 +6,8 @@ module Zipfelkasse::Web
 
   IDENTITY_COOKIE = "wer"
   FLASH_COOKIE    = "flash"
+  LOOK_COOKIE     = "look"
+  THEME_COOKIE    = "theme"
 
   MAX_BODY_BYTES = 1 << 20
 
@@ -14,6 +16,18 @@ module Zipfelkasse::Web
     Balances
     Activity
     Settings
+  end
+
+  # The felt-css look and colour mode, chosen per device.
+  enum Look
+    Felt
+    Clean
+  end
+
+  enum Theme
+    Auto
+    Light
+    Dark
   end
 
   class Deps
