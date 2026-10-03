@@ -14,6 +14,8 @@ lib LibSQLite3
   SQLITE_LIMIT_LENGTH   = 0
   SQLITE_LIMIT_ATTACHED = 7
 
+  SQLITE_TOOBIG = 18
+
   fun extended_result_codes = sqlite3_extended_result_codes(db : SQLite3, onoff : Int32) : Int32
   fun extended_errcode = sqlite3_extended_errcode(db : SQLite3) : Int32
   fun errstr = sqlite3_errstr(code : Int32) : UInt8*
@@ -36,6 +38,15 @@ end
 # repeats the error of the statement's last failed step (e.g. a UNIQUE
 # violation the app already handled). Closing a connection whose statement
 # cache holds such a statement then raises. finalize itself cannot fail.
+class SQLite3::Connection
+  # crystal-sqlite3 always opens with READWRITE | CREATE; the sql_query
+  # sandbox also needs URI (for ATTACH 'file:…?mode=ro'), and no pragmas.
+  def initialize(options : ::DB::Connection::Options, filename : String, flags : SQLite3::Flag)
+    super(options)
+    check LibSQLite3.open_v2(filename, out @db, flags, nil)
+  end
+end
+
 class SQLite3::Statement
   protected def do_close
     @arg_refs.try(&.clear)
