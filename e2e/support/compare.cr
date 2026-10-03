@@ -11,7 +11,7 @@ module E2E
       diffs = [] of String
       diffs << "status: #{a.status} vs #{b.status}" if a.status != b.status
       HEADERS.each do |h|
-        va, vb = a.headers[h]?, b.headers[h]?
+        va, vb = header(a, h), header(b, h)
         diffs << "header #{h}: #{va.inspect} vs #{vb.inspect}" if va != vb
       end
       ta, tb = media_type(a), media_type(b)
@@ -21,6 +21,12 @@ module E2E
       ba, bb = body(a), body(b)
       diffs << "body:\n#{text_diff(ba, bb)}" if ba != bb
       diffs
+    end
+
+    # "Connection: keep-alive" is the HTTP/1.1 default, sent or not.
+    private def self.header(r : Response, name : String) : String?
+      v = r.headers[name]?
+      name == "Connection" && v == "keep-alive" ? nil : v
     end
 
     private def self.media_type(r : Response) : String

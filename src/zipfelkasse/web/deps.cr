@@ -207,6 +207,8 @@ module Zipfelkasse::Web
     if ctx.request.method.in?("GET", "HEAD")
       res.content_type = "text/html; charset=utf-8"
       res.print %(<a href="#{::HTML.escape(url)}">See Other</a>.\n\n) if ctx.request.method == "GET"
+    else
+      res.headers.delete("Content-Type") # Kemal's default
     end
   end
 
