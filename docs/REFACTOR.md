@@ -181,3 +181,31 @@ Left over from wave 1, now part of wave 2:
 - W2-B: MCP tool arguments still use 0/""; `YNABStatus`/`YNABSync` still use "" for absent values and are
   mutable structs; `set_ynab_token(reachable:)` callback (G27); `docs/MCP.md` still says `store.MCPTables`
   (D2).
+
+## Wave 2 and 3 outcome (merged)
+
+`crystal spec` 868 green, E2E 118 green. Shared fakes and fixtures live in `spec/support/` (used by `e2e/`
+too). A second review of `src/` is at
+`/private/tmp/claude-501/-Users-shostakovich-Code-zipfelkasse--claude-worktrees-zipfelkasse-go-crystal-78337b/ff6dc48e-67ef-4457-b5f8-a0dcbf93c2bb/scratchpad/review-2.md`
+(findings F1–F18 and "Kemal (1)–(5)"). Decisions on it: F3 stays as is (YNAB single fallback); features all
+stay; the owner uses MCP only with current Claude clients, so **only MCP protocol version 2026-07-28 is
+supported** (drop the legacy versions and handshake).
+
+## Wave 4 (two parallel packages)
+
+**W4-A Core, web, FX** — everything except `mcp/`, `ynab/`, `store/ynab.cr`, `export/formats.cr` and the
+`Prefix` part of `config/config.cr`.
+- F1 for its files, F2, F7, F8 (web part and dead `fx` nil checks), F9, F11, F12, F13, F15, F16 (domain part),
+  F17, F18, Kemal (2)–(5), the `currency_code` bug.
+- Migration **006**: normalize legacy `recurring.template_json` (drop `date`, `recurring_id`, empty
+  `fx_source`, `category_id: 0`) so `ZeroAsNil`/`FXSourceJSON` go. Verify on a copy of `data/prod`.
+- F12: `Config#now`/`today` is the single clock; W4-B adapts `YNAB::Service` to it.
+
+**W4-B MCP and YNAB** — `mcp/`, `ynab/`, `store/ynab.cr`, `export/formats.cr`, the `Prefix` part of
+`config/config.cr`, and minimal edits in `web/errors.cr`/`app.cr` for mounting MCP as a Kemal route.
+- F1 for its files, F4, F5, F6, F8 (MCP part), F10, F14, F16 (`MCP.eur`/`money`), Kemal (1), legacy MCP
+  protocols removed (`docs/MCP.md` follows).
+- Migration **007**: YNAB sync `state` + `fingerprint` columns and nullable `ynab_config`/`ynab_sync` strings
+  (table rebuild, verified on a copy of `data/prod`).
+
+Both: keep the E2E suite as the safety net; specs in `spec/` follow the code.
