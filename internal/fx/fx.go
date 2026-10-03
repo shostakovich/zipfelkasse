@@ -235,7 +235,10 @@ func (s *Service) Run(ctx context.Context) {
 	}
 	retries := 0
 	for {
-		wait := time.Until(nextPublish(s.now().In(s.berlin)))
+		// Measured with s.now, not time.Until: under the frozen test clock a
+		// next publish time in the real past would fire again and again.
+		now := s.now()
+		wait := nextPublish(now.In(s.berlin)).Sub(now)
 		if retries > 0 {
 			wait = time.Hour
 		}
