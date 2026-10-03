@@ -64,9 +64,7 @@ module Zipfelkasse
       config = Config.from_env
       log = Logger.new(STDERR, location: config.location)
       store = Store.open(config.db_path)
-      if now = config.frozen_now
-        store.clock = -> { now }
-      end
+      store.clock = -> { config.now }
       begin
         app = App.new(config, store, log)
         server = HTTP::Server.new(app.handlers)

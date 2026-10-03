@@ -2,38 +2,38 @@ require "socket"
 
 module Zipfelkasse
   struct Config
-    # Anthropic's address range.
-    DEFAULT_MCP_ALLOWED_CIDRS = "160.79.104.0/21"
-
-    property addr : String = ":8080"                    # ZIPFELKASSE_ADDR
-    property db_path : String = "./data/zipfelkasse.db" # ZIPFELKASSE_DB (container: /data/zipfelkasse.db)
-    property backup_dir : String = "data/backups"       # ZIPFELKASSE_BACKUP_DIR, default <directory of the DB>/backups
-    property mcp_secret : String = ""                   # MCP_SECRET; empty = MCP disabled
-    property mcp_allowed_cidrs = [] of Prefix           # MCP_ALLOWED_CIDRS, default 160.79.104.0/21
-    property trusted_proxies = [] of Prefix             # TRUSTED_PROXIES (IPs or CIDRs), default empty
-
-    getter location : Time::Location = Time::Location.local # from TZ
-    getter location_name = "Local"                          # the TZ value
-
-    # Test-only overrides for the black-box E2E suite (e2e/). Never set them
-    # in production.
-    property now : Time? = nil              # ZIPFELKASSE_TEST_NOW (RFC 3339): frozen clock
-    property ecb_base_url : String = ""     # ZIPFELKASSE_TEST_ECB_URL
-    property ynab_base_url : String = ""    # ZIPFELKASSE_TEST_YNAB_URL
-    property ynab_delay : Time::Span? = nil # ZIPFELKASSE_TEST_YNAB_DELAY
-
     class Error < Exception
     end
 
-    def initialize
+    TEST_HOOKS = {{ flag?(:test_hooks) }}
+
+    # Anthropic's address range.
+    DEFAULT_MCP_ALLOWED_CIDRS = "160.79.104.0/21"
+
+    property addr : String = ":8080"
+    property db_path : String = "./data/zipfelkasse.db"
+    property mcp_secret : String = ""
+    property mcp_allowed_cidrs : Array(Prefix) = Prefix.parse_list(DEFAULT_MCP_ALLOWED_CIDRS)
+    property trusted_proxies = [] of Prefix
+    property ecb_base_url : String = ""
+    property ynab_base_url : String = ""
+    property ynab_delay : Time::Span? = nil
+    setter backup_dir : String?
+    setter now : Time?
+
+    getter location : Time::Location = Time::Location.local
+    getter location_name = "Local"
+
+    def location=(@location : Time::Location)
+      @location_name = location.name
+    end
+
+    def backup_dir : String
+      @backup_dir || Path.new(File.dirname(db_path), "backups").normalize.to_s
     end
 
     def now : Time
       @now || Time.utc
-    end
-
-    def frozen_now : Time?
-      @now
     end
 
     def today : Time
@@ -42,64 +42,43 @@ module Zipfelkasse
     end
 
     def self.from_env(env = ENV) : Config
-      c = Config.new
-      c.addr = presence(env["ZIPFELKASSE_ADDR"]?) || ":8080"
-      c.db_path = presence(env["ZIPFELKASSE_DB"]?) || "./data/zipfelkasse.db"
-      c.mcp_secret = (env["MCP_SECRET"]? || "").strip
-      c.backup_dir = presence(env["ZIPFELKASSE_BACKUP_DIR"]?) || clean_join(File.dirname(c.db_path), "backups")
-      c.mcp_allowed_cidrs = wrap("MCP_ALLOWED_CIDRS") { Prefix.parse_list(presence(env["MCP_ALLOWED_CIDRS"]?) || DEFAULT_MCP_ALLOWED_CIDRS) }
-      c.trusted_proxies = wrap("TRUSTED_PROXIES") { Prefix.parse_list(env["TRUSTED_PROXIES"]? || "") }
-      if (tz = env["TZ"]?) && !tz.empty?
-        c.location = wrap("TZ") { Time::Location.load(tz) }
+      c = new
+      c.addr = value(env, "ZIPFELKASSE_ADDR") || c.addr
+      c.db_path = value(env, "ZIPFELKASSE_DB") || c.db_path
+      c.backup_dir = value(env, "ZIPFELKASSE_BACKUP_DIR")
+      c.mcp_secret = value(env, "MCP_SECRET") || ""
+      if v = value(env, "MCP_ALLOWED_CIDRS")
+        c.mcp_allowed_cidrs = parse("MCP_ALLOWED_CIDRS") { Prefix.parse_list(v) }
       end
-      c.test_overrides(env)
+      c.trusted_proxies = parse("TRUSTED_PROXIES") { Prefix.parse_list(env["TRUSTED_PROXIES"]? || "") }
+      if tz = value(env, "TZ")
+        c.location = parse("TZ") { Time::Location.load(tz) }
+      end
+      c.read_test_hooks(env) if TEST_HOOKS
       c
     end
 
-    protected def test_overrides(env) : Nil
-      if v = Config.presence(env["ZIPFELKASSE_TEST_NOW"]?)
-        @now = Config.wrap("ZIPFELKASSE_TEST_NOW") { Time.parse_rfc3339(v) }
+    def read_test_hooks(env) : Nil
+      if v = Config.value(env, "ZIPFELKASSE_TEST_NOW")
+        @now = Config.parse("ZIPFELKASSE_TEST_NOW") { Time.parse_rfc3339(v) }
       end
-      @ecb_base_url = (env["ZIPFELKASSE_TEST_ECB_URL"]? || "").strip
-      @ynab_base_url = (env["ZIPFELKASSE_TEST_YNAB_URL"]? || "").strip
-      if v = Config.presence(env["ZIPFELKASSE_TEST_YNAB_DELAY"]?)
-        @ynab_delay = Config.wrap("ZIPFELKASSE_TEST_YNAB_DELAY") { Config.parse_duration(v) }
+      @ecb_base_url = Config.value(env, "ZIPFELKASSE_TEST_ECB_URL") || ""
+      @ynab_base_url = Config.value(env, "ZIPFELKASSE_TEST_YNAB_URL") || ""
+      if v = Config.value(env, "ZIPFELKASSE_TEST_YNAB_DELAY_MS")
+        @ynab_delay = Config.parse("ZIPFELKASSE_TEST_YNAB_DELAY_MS") do
+          (v.to_i? || raise ArgumentError.new("not a whole number of milliseconds: #{v.inspect}")).milliseconds
+        end
       end
     end
 
-    def location=(@location : Time::Location)
-      @location_name = location.name
+    protected def self.value(env, name : String) : String?
+      env[name]?.try(&.strip).presence
     end
 
-    protected def self.presence(v : String?) : String?
-      v.try(&.strip).presence
-    end
-
-    protected def self.wrap(name : String, &)
+    protected def self.parse(name : String, &)
       yield
     rescue ex
-      raise Error.new("#{name}: #{ex.message}")
-    end
-
-    protected def self.clean_join(dir : String, name : String) : String
-      Path.new(dir, name).normalize.to_s
-    end
-
-    def self.parse_duration(s : String) : Time::Span
-      raise ArgumentError.new("time: invalid duration #{s.inspect}") unless s.matches?(/\A(\d+(\.\d+)?(ns|us|µs|ms|s|m|h))+\z/)
-      total = Time::Span.zero
-      s.scan(/(\d+(?:\.\d+)?)(ns|us|µs|ms|s|m|h)/) do |m|
-        n = m[1].to_f
-        total += case m[2]
-                 when "ns"       then n.nanoseconds
-                 when "us", "µs" then (n * 1000).nanoseconds
-                 when "ms"       then n.milliseconds
-                 when "s"        then n.seconds
-                 when "m"        then n.minutes
-                 else                 n.hours
-                 end
-      end
-      total
+      raise Error.new("invalid #{name}", cause: ex)
     end
 
     # An IP network (CIDR), always masked.
@@ -118,13 +97,12 @@ module Zipfelkasse
       def self.parse(s : String) : Prefix
         if s.includes?('/')
           addr, _, len = s.partition('/')
-          bytes = Prefix.addr_bytes(addr) || raise ArgumentError.new("netip.ParsePrefix(#{s.inspect}): ParseAddr(#{addr.inspect}): unable to parse IP")
+          bytes = Prefix.addr_bytes(addr) || raise ArgumentError.new("#{addr.inspect} is not an IP address")
           n = len.to_i? if len.matches?(/\A\d+\z/)
-          raise ArgumentError.new("netip.ParsePrefix(#{s.inspect}): bad bits after slash: #{len.inspect}") unless n
-          raise ArgumentError.new("netip.ParsePrefix(#{s.inspect}): prefix length out of range") if n > bytes.size * 8
+          raise ArgumentError.new("#{len.inspect} is not a valid prefix length for #{addr}") if n.nil? || n > bytes.size * 8
           new(mask(bytes, n), n)
         else
-          bytes = Prefix.addr_bytes(s) || raise ArgumentError.new("ParseAddr(#{s.inspect}): unable to parse IP")
+          bytes = Prefix.addr_bytes(s) || raise ArgumentError.new("#{s.inspect} is not an IP address or network")
           bytes = unmap(bytes)
           new(bytes, bytes.size * 8)
         end
@@ -185,10 +163,6 @@ module Zipfelkasse
       def ==(other : Prefix) : Bool
         @bits == other.bits && @bytes == other.bytes
       end
-    end
-
-    def self.contains_addr?(prefixes : Array(Prefix), addr : String) : Bool
-      prefixes.any?(&.contains?(addr))
     end
   end
 end

@@ -47,17 +47,17 @@ module E2E
 
     def env : Hash(String, String)
       {
-        "ZIPFELKASSE_ADDR"            => host,
-        "ZIPFELKASSE_DB"              => db_path,
-        "ZIPFELKASSE_BACKUP_DIR"      => File.join(@dir, "backups"),
-        "TZ"                          => "Europe/Berlin",
-        "MCP_SECRET"                  => MCP_SECRET,
-        "MCP_ALLOWED_CIDRS"           => "127.0.0.1/32, ::1/128",
-        "TRUSTED_PROXIES"             => "",
-        "ZIPFELKASSE_TEST_NOW"        => @now,
-        "ZIPFELKASSE_TEST_ECB_URL"    => @ecb.base_url,
-        "ZIPFELKASSE_TEST_YNAB_URL"   => @ynab.base_url,
-        "ZIPFELKASSE_TEST_YNAB_DELAY" => "300ms",
+        "ZIPFELKASSE_ADDR"               => host,
+        "ZIPFELKASSE_DB"                 => db_path,
+        "ZIPFELKASSE_BACKUP_DIR"         => File.join(@dir, "backups"),
+        "TZ"                             => "Europe/Berlin",
+        "MCP_SECRET"                     => MCP_SECRET,
+        "MCP_ALLOWED_CIDRS"              => "127.0.0.1/32, ::1/128",
+        "TRUSTED_PROXIES"                => "",
+        "ZIPFELKASSE_TEST_NOW"           => @now,
+        "ZIPFELKASSE_TEST_ECB_URL"       => @ecb.base_url,
+        "ZIPFELKASSE_TEST_YNAB_URL"      => @ynab.base_url,
+        "ZIPFELKASSE_TEST_YNAB_DELAY_MS" => "300",
       }.merge(@extra_env)
     end
 
