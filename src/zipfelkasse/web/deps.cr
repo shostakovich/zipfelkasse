@@ -124,10 +124,6 @@ module Zipfelkasse::Web
       @d.render.error(self, status, message)
     end
 
-    def not_found(message : String) : Nil
-      error(404, message)
-    end
-
     def server_error(ex : Exception) : Nil
       @d.log.error("request", method: method, path: Web.log_path(path), err: ex)
       error(500, "Da ist etwas schiefgegangen.")
