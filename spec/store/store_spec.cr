@@ -27,13 +27,28 @@ describe Store do
     end
   end
 
-  it "applies migrations above the base version once" do
-    migrations = [{6, "ALTER TABLE settings ADD COLUMN note TEXT"}, {7, "UPDATE settings SET value = 'Neu'"}]
+  it "applies migrations above the current version once" do
+    next_version = Store::LATEST_VERSION + 1
+    migrations = Store::MIGRATIONS + [{next_version, "ALTER TABLE settings ADD COLUMN note TEXT"},
+                                      {next_version + 1, "UPDATE settings SET value = 'Neu'"}]
     2.times do
       store.migrate(migrations)
-      store.schema_version.should eq 7
+      store.schema_version.should eq next_version + 1
     end
     store.group_name.should eq "Neu"
+  end
+
+  it "removes the legacy fields of recurring templates in migration 6" do
+    legacy = %q({"title":"Miete","date":"2026-01-01T00:00:00Z","category_id":0,"paid_by":1,"fx_rate":1,) +
+             %q("fx_source":"","recurring_id":0,"parts":[{"participant_id":1,"weight":1}]})
+    store.db.exec("INSERT INTO recurring (template_json, frequency, start_date, next_date, created_at, updated_at) " \
+                  "VALUES (?, 'monthly', '2026-01-01', '2026-02-01', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')", legacy)
+    store.db.exec("PRAGMA user_version = 5")
+
+    store.migrate(Store::MIGRATIONS.select { |version, _| version == 6 })
+    JSON.parse(store.db.scalar("SELECT template_json FROM recurring").as(String)).as_h.keys
+      .should eq %w(title paid_by fx_rate parts)
+    store.list_recurring.first.template.category_id.should be_nil
   end
 
   it "opens a file database twice" do

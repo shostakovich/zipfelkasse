@@ -27,30 +27,6 @@ module Zipfelkasse
       end
     end
 
-    # Older templates store "no category" as 0 and "no rate source" as "".
-    module ZeroAsNil
-      def self.from_json(pull : JSON::PullParser) : Int64?
-        id = pull.read_int
-        id == 0 ? nil : id
-      end
-
-      def self.to_json(id : Int64, json : JSON::Builder) : Nil
-        json.number(id)
-      end
-    end
-
-    module FXSourceJSON
-      def self.from_json(pull : JSON::PullParser) : Domain::FXSource?
-        key = pull.read_string
-        return if key.empty?
-        Domain::FXSource.from_key?(key) || raise JSON::ParseException.new("Unknown FX source #{key.inspect}", *pull.location)
-      end
-
-      def self.to_json(source : Domain::FXSource, json : JSON::Builder) : Nil
-        json.string(source.key)
-      end
-    end
-
     # An expense as entered, or the template of a recurrence (stored as JSON
     # without date and recurring_id). The store validates it and computes the
     # shares from split_mode, amounts and parts. For SplitMode::Amount the
@@ -65,7 +41,6 @@ module Zipfelkasse
       property title : String = ""
       @[JSON::Field(ignore: true)]
       property date : Time?
-      @[JSON::Field(converter: Zipfelkasse::Store::ZeroAsNil)]
       property category_id : Int64?
       property paid_by : Int64?
       property notes : String = ""
@@ -77,7 +52,6 @@ module Zipfelkasse
       property original_amount_minor : Int64 = 0_i64
       property original_currency : String = "EUR"
       property fx_rate : Float64?
-      @[JSON::Field(converter: Zipfelkasse::Store::FXSourceJSON)]
       property fx_source : Domain::FXSource?
       @[JSON::Field(ignore: true)]
       property recurring_id : Int64?
