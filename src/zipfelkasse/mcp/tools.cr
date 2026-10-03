@@ -325,7 +325,7 @@ module Zipfelkasse::MCP
     # long-running servers never report a stale date.
     def today_line : String
       t = today
-      %(Today is #{MCP.ymd(t)} (#{t.day_of_week}), server time zone #{location.name}. Resolve relative periods such as "last month" from this date.)
+      %(Today is #{MCP.ymd(t)} (#{t.day_of_week}), server time zone #{@d.config.location_name}. Resolve relative periods such as "last month" from this date.)
     end
 
     # With the data overview, left out if it cannot be read.

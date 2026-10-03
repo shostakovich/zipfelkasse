@@ -14,6 +14,11 @@ describe Zipfelkasse::Config do
     c.frozen_now.should be_nil
   end
 
+  it "calls the time zone Local without TZ" do
+    Config.from_env({} of String => String).location_name.should eq "Local"
+    Config.from_env({"TZ" => ""}).location_name.should eq "Local"
+  end
+
   it "reads all variables" do
     c = Config.from_env({
       "ZIPFELKASSE_ADDR"  => "127.0.0.1:9000",
@@ -26,6 +31,7 @@ describe Zipfelkasse::Config do
     c.backup_dir.should eq "/data/backups"
     c.mcp_secret.should eq "secret"
     c.location.name.should eq "Europe/Berlin"
+    c.location_name.should eq "Europe/Berlin"
     Config.contains_addr?(c.mcp_allowed_cidrs, "10.1.2.3").should be_true
     Config.contains_addr?(c.mcp_allowed_cidrs, "::ffff:192.168.1.5").should be_true
     Config.contains_addr?(c.mcp_allowed_cidrs, "192.168.1.6").should be_false

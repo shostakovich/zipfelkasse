@@ -5,13 +5,15 @@ module Zipfelkasse
     # Anthropic's address range.
     DEFAULT_MCP_ALLOWED_CIDRS = "160.79.104.0/21"
 
-    property addr : String = ":8080"                          # ZIPFELKASSE_ADDR
-    property db_path : String = "./data/zipfelkasse.db"       # ZIPFELKASSE_DB (container: /data/zipfelkasse.db)
-    property backup_dir : String = "data/backups"             # ZIPFELKASSE_BACKUP_DIR, default <directory of the DB>/backups
-    property mcp_secret : String = ""                         # MCP_SECRET; empty = MCP disabled
-    property mcp_allowed_cidrs = [] of Prefix                 # MCP_ALLOWED_CIDRS, default 160.79.104.0/21
-    property trusted_proxies = [] of Prefix                   # TRUSTED_PROXIES (IPs or CIDRs), default empty
-    property location : Time::Location = Time::Location.local # from TZ
+    property addr : String = ":8080"                    # ZIPFELKASSE_ADDR
+    property db_path : String = "./data/zipfelkasse.db" # ZIPFELKASSE_DB (container: /data/zipfelkasse.db)
+    property backup_dir : String = "data/backups"       # ZIPFELKASSE_BACKUP_DIR, default <directory of the DB>/backups
+    property mcp_secret : String = ""                   # MCP_SECRET; empty = MCP disabled
+    property mcp_allowed_cidrs = [] of Prefix           # MCP_ALLOWED_CIDRS, default 160.79.104.0/21
+    property trusted_proxies = [] of Prefix             # TRUSTED_PROXIES (IPs or CIDRs), default empty
+
+    getter location : Time::Location = Time::Location.local # from TZ
+    getter location_name = "Local"                          # the TZ value
 
     # Test-only overrides for the black-box E2E suite (e2e/). Never set them
     # in production.
@@ -65,9 +67,8 @@ module Zipfelkasse
       end
     end
 
-    # "Local" without TZ.
-    def location_name : String
-      location.name
+    def location=(@location : Time::Location)
+      @location_name = location.name
     end
 
     protected def self.presence(v : String?) : String?
