@@ -1,4 +1,3 @@
-
 <div class="stack">
   <section class="card">
     <div class="card-header">
@@ -23,8 +22,8 @@
       <p class="card-description">Persönlicher Zugriffstoken aus YNAB: Account Settings → Developer Settings → New Token. Er wird nur auf diesem Server gespeichert und nie wieder angezeigt.</p>
     </div>
     <div class="card-content stack">
-      <%- if data.token_set? %>
-      <%- if data.token_invalid? %>
+      <%- if data.token_set %>
+      <%- if data.token_invalid %>
       <p class="alert alert-destructive" role="alert">Der gespeicherte Token ist ungültig oder abgelaufen. Bitte einen neuen eintragen.</p>
       <%- else %>
       <p>Token: <strong>gesetzt</strong></p>
@@ -32,14 +31,14 @@
       <%- end %>
       <form method="post" action="/einstellungen/ynab/token" class="form">
         <div class="field">
-          <label for="token"><% if data.token_set? %>Token ersetzen<% else %>Token<% end %></label>
+          <label for="token"><% if data.token_set %>Token ersetzen<% else %>Token<% end %></label>
           <input id="token" name="token" type="password" autocomplete="off" spellcheck="false" maxlength="200" required>
         </div>
         <div class="row">
-          <button class="btn btn-primary" type="submit"><% if data.token_set? %>Token ersetzen<% else %>Verbinden<% end %></button>
+          <button class="btn btn-primary" type="submit"><% if data.token_set %>Token ersetzen<% else %>Verbinden<% end %></button>
         </div>
       </form>
-      <%- if data.token_set? %>
+      <%- if data.token_set %>
       <form method="post" action="/einstellungen/ynab/trennen">
         <button class="btn btn-outline btn-sm" type="submit">Verbindung trennen</button>
       </form>
@@ -47,17 +46,17 @@
     </div>
   </section>
 
-  <%- if data.token_set? && !data.token_invalid? %>
+  <%- if data.token_set && !data.token_invalid %>
   <section class="card">
     <div class="card-header">
       <h2 class="card-title">Plan und Konto</h2>
       <p class="card-description">Das Verrechnungskonto „Geteilt“ und ab wann deine Anteile übertragen werden.</p>
     </div>
     <div class="card-content stack">
-      <%- unless data.api_error.empty? %>
+      <%- if data.api_error %>
       <p class="alert alert-destructive" role="alert"><%= data.api_error %></p>
       <%- end %>
-      <%- unless data.currency.empty? %>
+      <%- if data.currency %>
       <p class="alert alert-destructive" role="alert">Achtung: Dieser Plan rechnet in <%= data.currency %>. Zipfelkasse überträgt Euro-Beträge.</p>
       <%- end %>
       <%- if !data.plans.empty? %>
@@ -78,7 +77,7 @@
         </div>
         <div class="field">
           <label for="start">Startdatum</label>
-          <input id="start" name="start" type="date" value="<%= iso_date(data.start_date) %>" required>
+          <input id="start" name="start" type="date" value="<%= data.start_date %>" required>
           <p class="help">Übertragen werden Ausgaben ab diesem Datum (bis heute). Ältere Ausgaben, die du erst nach dem Einrichten nachträglich erfasst, werden auch übertragen – der Startsaldo kennt sie ja nicht. Schon übertragene Ausgaben bleiben in YNAB, auch wenn ihr Datum oder das Startdatum später verschoben wird.</p>
         </div>
         <div class="row">
@@ -86,14 +85,14 @@
           <a class="btn btn-ghost btn-sm" href="/einstellungen/ynab?neu=1">Listen von YNAB neu laden</a>
         </div>
       </form>
-      <%- elsif data.api_error.empty? %>
+      <%- elsif data.api_error.nil? %>
       <p class="muted">In deinem YNAB gibt es kein offenes Konto im Budget. Lege zuerst das Konto „Geteilt“ an und lade die <a href="/einstellungen/ynab?neu=1">Liste neu</a>.</p>
       <%- end %>
     </div>
   </section>
   <%- end %>
 
-  <%- if data.has_target? && !data.categories.empty? %>
+  <%- if data.has_target && !data.categories.empty? %>
   <section class="card">
     <div class="card-header">
       <h2 class="card-title">Kategorien</h2>
@@ -143,14 +142,14 @@
   </section>
   <%- end %>
 
-  <%- if data.token_set? %>
+  <%- if data.token_set %>
   <section class="card">
     <div class="card-header">
       <h2 class="card-title">Status</h2>
     </div>
     <div class="card-content stack-sm">
       <p>Dein Saldo in Zipfelkasse: <strong class="amount <%= sign_class(data.balance) %>"><%= eur(data.balance) %></strong> <span class="muted">– so viel sollte auch „Geteilt“ in YNAB zeigen.</span></p>
-      <%- if data.ready? %>
+      <%- if data.ready %>
       <p>Synchronisierte Buchungen: <strong><%= data.synced %></strong></p>
       <%- if last_sync = data.status.last_sync %>
       <p>Letzter Abgleich: <%= date_time(last_sync) %><% unless data.status.summary.empty? %> <span class="muted">(<%= data.status.summary %>)</span><% end %></p>
@@ -188,7 +187,7 @@
       </div>
     </div>
     <%- end %>
-    <%- if data.ready? %>
+    <%- if data.ready %>
     <div class="card-footer">
       <form method="post" action="/einstellungen/ynab/sync">
         <button class="btn btn-secondary" type="submit">Jetzt synchronisieren</button>

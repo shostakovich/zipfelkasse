@@ -5,13 +5,13 @@ require "./e2e_helper"
 # JSON, OFX and CSV for YNAB). Exact bytes matter for the CSV and OFX files:
 # other programs read them.
 
-# The JSON /api/kurs answers with (compact, trailing newline).
-private def kurs_json(currency : String, date : String, rate : String, source : String) : String
-  %({"currency":"#{currency}","date":"#{date}","rate":#{E2E::FxExport.shortest_float(rate)},"source":"#{source}"}\n)
+# What /api/kurs answers with.
+private def kurs_json(currency : String, date : String, rate : String, source : String) : JSON::Any
+  JSON.parse(%({"currency":"#{currency}","date":"#{date}","rate":#{E2E::FxExport.shortest_float(rate)},"source":"#{source}"}))
 end
 
-private def error_json(msg : String) : String
-  %({"error":"#{msg}"}\n)
+private def error_json(msg : String) : JSON::Any
+  JSON.parse({error: msg}.to_json)
 end
 
 # Thousands dot, decimal comma, " €".
@@ -113,7 +113,7 @@ module FxExportSpec
         "waehrung=%20chf&datum=%202026-10-01%20" => kurs_json("CHF", "2026-10-01", rate.call("CHF", "2026-10-01"), "ezb"),
       }.each do |query, body|
         r = user.get("/api/kurs?#{query}")
-        {query, r.status, r.body}.should eq({query, 200, body})
+        {query, r.status, r.json}.should eq({query, 200, body})
         r.content_type.should eq "application/json; charset=utf-8"
       end
       {
@@ -130,7 +130,7 @@ module FxExportSpec
         "waehrung=USD&datum=%20"        => "Bitte ein Datum angeben.",
       }.each do |query, msg|
         r = user.get("/api/kurs?#{query}".rchop('?'))
-        {query, r.status, r.body}.should eq({query, 400, error_json(msg)})
+        {query, r.status, r.json}.should eq({query, 400, error_json(msg)})
         r.content_type.should eq "application/json; charset=utf-8"
       end
       # HTML characters are escaped by the JSON encoder; the text is the same.
@@ -142,7 +142,7 @@ module FxExportSpec
 
       anonymous = world.user
       r = anonymous.get("/api/kurs?waehrung=USD")
-      {r.status, r.body}.should eq({401, error_json("Bitte zuerst auswählen, wer du bist.")})
+      {r.status, r.json}.should eq({401, error_json("Bitte zuerst auswählen, wer du bist.")})
       r.content_type.should eq "application/json; charset=utf-8"
     end
 
@@ -153,10 +153,10 @@ module FxExportSpec
       # knows without a download that the ECB does not publish XAF.
       3.times do
         r = user.get("/api/kurs?waehrung=XAF&datum=2026-09-15")
-        {r.status, r.body}.should eq({422, error_json("Für XAF gibt es keinen EZB-Kurs – bitte Kurs von Hand eintragen.")})
+        {r.status, r.json}.should eq({422, error_json("Für XAF gibt es keinen EZB-Kurs – bitte Kurs von Hand eintragen.")})
       end
       r = user.get("/api/kurs?waehrung=xyz")
-      {r.status, r.body}.should eq({422, error_json("Für XYZ gibt es keinen EZB-Kurs – bitte Kurs von Hand eintragen.")})
+      {r.status, r.json}.should eq({422, error_json("Für XYZ gibt es keinen EZB-Kurs – bitte Kurs von Hand eintragen.")})
       count.call(nf).should eq 1
       count.call(zip).should eq 0
     end
@@ -165,7 +165,7 @@ module FxExportSpec
       user = world.user
       user.login("Anna")
       r = user.get("/api/kurs?waehrung=USD&datum=2024-05-19") # Sunday
-      {r.status, r.body}.should eq({200, kurs_json("USD", "2024-05-17", rate.call("USD", "2024-05-17"), "ezb")})
+      {r.status, r.json}.should eq({200, kurs_json("USD", "2024-05-17", rate.call("USD", "2024-05-17"), "ezb")})
       count.call(zip).should eq 1
       E2E::Database.open(world.app.db_path) do |db|
         db.scalar("SELECT value FROM settings WHERE key = 'fx.ezb_hist_bis'").should eq "2026-10-02"
@@ -179,13 +179,13 @@ module FxExportSpec
         "waehrung=IDR&datum=2024-01-02" => kurs_json("IDR", "2024-01-02", rate.call("IDR", "2024-01-02"), "ezb"),
       }.each do |query, body|
         r = user.get("/api/kurs?#{query}")
-        {query, r.status, r.body}.should eq({query, 200, body})
+        {query, r.status, r.json}.should eq({query, 200, body})
       end
       # Before the first rate of the file: a gap, no new download.
       r = user.get("/api/kurs?waehrung=USD&datum=2023-11-15")
-      {r.status, r.body}.should eq({422, error_json("Für USD gibt es um den 15.11.2023 keinen EZB-Kurs – bitte Kurs von Hand eintragen.")})
+      {r.status, r.json}.should eq({422, error_json("Für USD gibt es um den 15.11.2023 keinen EZB-Kurs – bitte Kurs von Hand eintragen.")})
       r = user.get("/api/kurs?waehrung=XAF&datum=2024-03-01")
-      {r.status, r.body}.should eq({422, error_json("Für XAF gibt es keinen EZB-Kurs – bitte Kurs von Hand eintragen.")})
+      {r.status, r.json}.should eq({422, error_json("Für XAF gibt es keinen EZB-Kurs – bitte Kurs von Hand eintragen.")})
       count.call(zip).should eq 1
       count.call(nf).should eq 1
     end
@@ -210,15 +210,15 @@ module FxExportSpec
         "datum=2024-05-17" => kurs_json("USD", "2024-05-17", usd.call("2024-05-17"), "ezb"),
       }.each do |query, body|
         r = user.get("/api/kurs?waehrung=USD&#{query}")
-        {query, r.status, r.body}.should eq({query, 200, body})
+        {query, r.status, r.json}.should eq({query, 200, body})
       end
 
       # A newer manual rate takes over from its date; the older one still
       # applies before it. Saving the same day again replaces the rate.
       user.post("/einstellungen/kurse", {"waehrung" => "USD", "datum" => "2026-10-01", "kurs" => "1,3"}).status.should eq 303
       user.post("/einstellungen/kurse", {"waehrung" => "USD", "datum" => "2026-10-01", "kurs" => "1,25"}).status.should eq 303
-      user.get("/api/kurs?waehrung=USD&datum=2026-10-02").body.should eq kurs_json("USD", "2026-10-01", "1.25", "manuell")
-      user.get("/api/kurs?waehrung=USD&datum=2026-09-30").body.should eq kurs_json("USD", "2026-09-30", "1.2", "manuell")
+      user.get("/api/kurs?waehrung=USD&datum=2026-10-02").json.should eq kurs_json("USD", "2026-10-01", "1.25", "manuell")
+      user.get("/api/kurs?waehrung=USD&datum=2026-09-30").json.should eq kurs_json("USD", "2026-09-30", "1.2", "manuell")
       # Currencies the ECB does not publish, without a time limit; the ways
       # of writing a rate.
       {
@@ -233,13 +233,13 @@ module FxExportSpec
         r = user.post("/einstellungen/kurse", {"waehrung" => cur, "datum" => date, "kurs" => input})
         {cur, date, r.status}.should eq({cur, date, 303})
       end
-      user.get("/api/kurs?waehrung=KWD&datum=2026-10-03").body.should eq kurs_json("KWD", "2024-06-01", "0.3312", "manuell")
+      user.get("/api/kurs?waehrung=KWD&datum=2026-10-03").json.should eq kurs_json("KWD", "2024-06-01", "0.3312", "manuell")
       r = user.get("/api/kurs?waehrung=KWD&datum=2024-05-31")
-      {r.status, r.body}.should eq({422, error_json("Für KWD gibt es keinen EZB-Kurs – bitte Kurs von Hand eintragen.")})
-      user.get("/api/kurs?waehrung=VND&datum=2026-09-02").body.should eq kurs_json("VND", "2026-09-02", "17000", "manuell")
+      {r.status, r.json}.should eq({422, error_json("Für KWD gibt es keinen EZB-Kurs – bitte Kurs von Hand eintragen.")})
+      user.get("/api/kurs?waehrung=VND&datum=2026-09-02").json.should eq kurs_json("VND", "2026-09-02", "17000", "manuell")
       # A manual IDR rate beats the ECB rate of the same day.
-      user.get("/api/kurs?waehrung=IDR&datum=2026-09-04").body.should eq kurs_json("IDR", "2026-09-04", "20274.71", "manuell")
-      user.get("/api/kurs?waehrung=IDR&datum=2026-09-03").body.should eq kurs_json("IDR", "2026-09-03", rate.call("IDR", "2026-09-03"), "ezb")
+      user.get("/api/kurs?waehrung=IDR&datum=2026-09-04").json.should eq kurs_json("IDR", "2026-09-04", "20274.71", "manuell")
+      user.get("/api/kurs?waehrung=IDR&datum=2026-09-03").json.should eq kurs_json("IDR", "2026-09-03", rate.call("IDR", "2026-09-03"), "ezb")
 
       page = user.get("/einstellungen/kurse")
       table_rows(page, "Manuelle Kurse").map(&.first(3)).should eq [
@@ -297,10 +297,10 @@ module FxExportSpec
       # Deleting: only the manual rate goes; the ECB rate of the day stays.
       r = user.post("/einstellungen/kurse/loeschen", {"waehrung" => "idr", "datum" => "2026-09-04"})
       {r.status, r.location, r.flash}.should eq({303, "/einstellungen/kurse", "Manueller Kurs für IDR gelöscht."})
-      user.get("/api/kurs?waehrung=IDR&datum=2026-09-04").body.should eq kurs_json("IDR", "2026-09-04", rate.call("IDR", "2026-09-04"), "ezb")
+      user.get("/api/kurs?waehrung=IDR&datum=2026-09-04").json.should eq kurs_json("IDR", "2026-09-04", rate.call("IDR", "2026-09-04"), "ezb")
       r = user.post("/einstellungen/kurse/loeschen", {"waehrung" => "USD", "datum" => "01.10.2026"})
       {r.status, r.flash}.should eq({303, "Manueller Kurs für USD gelöscht."})
-      user.get("/api/kurs?waehrung=USD&datum=2026-10-02").body.should eq kurs_json("USD", "2026-09-30", "1.2", "manuell")
+      user.get("/api/kurs?waehrung=USD&datum=2026-10-02").json.should eq kurs_json("USD", "2026-09-30", "1.2", "manuell")
       [
         {"USD", "2026-10-01"}, # already deleted
         {"USD", "2026-10-02"}, # only an ECB rate
@@ -308,7 +308,7 @@ module FxExportSpec
         {"", "2026-09-30"},
       ].each do |cur, date|
         r = user.post("/einstellungen/kurse/loeschen", {"waehrung" => cur, "datum" => date})
-        {cur, date, r.status, r.error_message}.should eq({cur, date, 404, "Diesen manuellen Kurs gibt es nicht (mehr)."})
+        {cur, date, r.status, r.doc.xpath_node("//main//h1").try(&.content.strip)}.should eq({cur, date, 404, "Diesen manuellen Kurs gibt es nicht (mehr)."})
       end
       E2E::Database.count(world.app.db_path, "SELECT count(*) FROM fx_rates WHERE currency = 'USD' AND date = '2026-10-02' AND source = 'ezb'").should eq 1
       manual_rows.call.should eq saved - 2
@@ -435,9 +435,9 @@ module FxExportSpec
       sleep 250.milliseconds
       user = world.user
       user.login("Anna")
-      user.get("/api/kurs?waehrung=JPY&datum=2024-05-17").body.should eq kurs_json("JPY", "2024-05-17", rate.call("JPY", "2024-05-17"), "ezb")
+      user.get("/api/kurs?waehrung=JPY&datum=2024-05-17").json.should eq kurs_json("JPY", "2024-05-17", rate.call("JPY", "2024-05-17"), "ezb")
       r = user.get("/api/kurs?waehrung=USD&datum=2023-11-20")
-      {r.status, r.body}.should eq({422, error_json("Für USD gibt es um den 20.11.2023 keinen EZB-Kurs – bitte Kurs von Hand eintragen.")})
+      {r.status, r.json}.should eq({422, error_json("Für USD gibt es um den 20.11.2023 keinen EZB-Kurs – bitte Kurs von Hand eintragen.")})
       {count.call(nf), count.call(zip)}.should eq requests
     end
   end
@@ -468,13 +468,13 @@ module FxExportSpec
 
       zips = ecb.count("eurofxref-hist.zip")
       r = user.get("/api/kurs?waehrung=USD&datum=2024-05-17")
-      {r.status, r.body}.should eq({502, error_json(failed.call("HTTP status 500"))})
+      {r.status, r.json}.should eq({502, error_json(failed.call("HTTP status 500"))})
       r.content_type.should eq "application/json; charset=utf-8"
       ecb.count("eurofxref-hist.zip").should eq zips + 1
       # Right after a failure the app does not ask again.
       ecb.failure = nil
       r = user.get("/api/kurs?waehrung=USD&datum=2024-05-17")
-      {r.status, r.body}.should eq({502, error_json(failed.call("HTTP status 500"))})
+      {r.status, r.json}.should eq({502, error_json(failed.call("HTTP status 500"))})
       r = user.post("/ausgaben/neu", expense_form("Hotel", "2024-05-17", "100,00", user.me.not_nil!, {user.me.not_nil! => ""}, currency: "USD"))
       r.status.should eq 422
       r.error_message.should eq "Für USD ist am 17.05.2024 kein Wechselkurs verfügbar. Kurs bitte von Hand eintragen."
@@ -529,19 +529,19 @@ module FxExportSpec
       # answer is reused (cooldown).
       2.times do
         r = user.get("/api/kurs?waehrung=XAF")
-        {r.status, r.body}.should eq({422, error_json("Für XAF gibt es keinen EZB-Kurs – bitte Kurs von Hand eintragen.")})
+        {r.status, r.json}.should eq({422, error_json("Für XAF gibt es keinen EZB-Kurs – bitte Kurs von Hand eintragen.")})
       end
       ecb.count("eurofxref-daily.xml").should eq 1
 
       # Monday 16:29 in Berlin (CET): Friday's rates are the newest expected.
       restart.call("2036-11-10T15:29:00Z", [] of String)
-      user.get("/api/kurs?waehrung=USD").body.should eq kurs_json("USD", "2036-11-07", first.rate("USD", fri), "ezb")
+      user.get("/api/kurs?waehrung=USD").json.should eq kurs_json("USD", "2036-11-07", first.rate("USD", fri), "ezb")
       # 16:30 in Berlin (15:30 UTC): Monday's rates are due, the daily file is
       # enough.
       ecb.upstream = fakes[1]
       restart.call("2036-11-10T15:30:00Z", ["eurofxref-daily.xml"])
       newest.call.should eq "2036-11-10"
-      user.get("/api/kurs?waehrung=USD").body.should eq kurs_json("USD", "2036-11-10", fakes[1].rate("USD", mon), "ezb")
+      user.get("/api/kurs?waehrung=USD").json.should eq kurs_json("USD", "2036-11-10", fakes[1].rate("USD", mon), "ezb")
       user.get("/einstellungen/kurse").text.should contain("bis 10.11.2036.")
       # Tuesday morning: nothing new is expected yet.
       restart.call("2036-11-11T07:00:00Z", [] of String)
@@ -552,7 +552,7 @@ module FxExportSpec
       E2E::Database.count(world.app.db_path, "SELECT count(DISTINCT date) FROM fx_rates WHERE source = 'ezb' AND date > '2036-11-10'").should eq 4
       # Sunday evening: still Friday's rates.
       restart.call("2036-11-16T19:00:00Z", [] of String)
-      user.get("/api/kurs?waehrung=GBP&datum=2036-11-16").body.should eq kurs_json("GBP", "2036-11-14", fakes[2].rate("GBP", later), "ezb")
+      user.get("/api/kurs?waehrung=GBP&datum=2036-11-16").json.should eq kurs_json("GBP", "2036-11-14", fakes[2].rate("GBP", later), "ezb")
     end
   end
 

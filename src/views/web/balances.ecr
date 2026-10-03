@@ -1,4 +1,3 @@
-
 <div class="stack">
   <section class="card">
     <div class="card-header">
@@ -9,12 +8,12 @@
       <%- unless rows.empty? %>
       <div class="balances">
         <%- rows.each do |row| %>
-        <div class="balance-row<% if row.cents < 0 %> negative-row<% end %><% if me && me.id == row.participant.id %> me<% end %>">
+        <div class="balance-row<% if row.cents < 0 %> negative-row<% end %><% if me.try(&.id) == row.participant.id %> me<% end %>">
           <div class="balance-name"><%= row.participant.name %><% if row.participant.archived? %> <span class="muted">(archiviert)</span><% end %></div>
           <div class="balance-cell">
             <div class="balance-value amount"><%= eur row.cents %></div>
             <%- if row.width != 0 %>
-            <div class="balance-bar" style="width: <%= row.width %>%"></div>
+            <div class="balance-bar" data-width="<%= row.width %>"></div>
             <%- end %>
           </div>
         </div>

@@ -223,15 +223,3 @@ module Zipfelkasse::YNAB
     token.empty? ? msg : msg.gsub(token, "•••")
   end
 end
-
-def Zipfelkasse::App.wire_ynab(app : App, d : Web::Deps, mcp : Web::MCPMount) : Nil
-  svc = YNAB::Service.new(d)
-  app.ynab = svc
-  svc.register
-  app.jobs << ->(s : Stopper) { svc.run(s) }
-end
-
-class Zipfelkasse::App
-  getter! ynab : YNAB::Service
-  protected setter ynab
-end

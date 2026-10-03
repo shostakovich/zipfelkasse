@@ -1,13 +1,14 @@
 module Zipfelkasse::FX
-  record RateRow,
-    currency : String,
-    date : Time,
-    rate : String,       # German format, e.g. "1,1298"
-    source : String,     # display label: "EZB", "manuell", …
-    title : String = "", # used rates: title of the expense
-    id : Int64 = 0_i64   # used rates: the expense
+  # rate is in German format, e.g. "1,1298"; title and expense_id only for
+  # used rates.
+  record RateRow, currency : String, date : Time, rate : String, source : String, title : String? = nil,
+    expense_id : Int64? = nil
 
   record ManualForm, currency : String = "", date : String = "", rate : String = ""
+
+  record RateResponse, currency : String, date : String, rate : Float64, source : Domain::FXSource do
+    include JSON::Serializable
+  end
 
   def self.source_label(source : Domain::FXSource) : String
     case source
@@ -21,97 +22,93 @@ module Zipfelkasse::FX
     rates.map { |r| RateRow.new(r.currency, r.date, Domain.format_rate(r.rate), source_label(r.source)) }
   end
 
-  class Service
+  module Views
+    record Rates, form : ManualForm, manual : Array(RateRow), latest : Array(RateRow), stats : Store::FXCacheStats,
+      used : Array(RateRow), currencies : Array(String) do
+      Web.view "fx/rates.ecr"
+    end
+  end
+
+  class Handlers < Web::Controller
+    def initialize(deps : Web::Deps, @service : Service)
+      super(deps)
+    end
+
     def register : Nil
-      d = @d
-      Web.route(d, "GET", "/api/kurs") { |r| api_rate(r) }
-      Web.route(d, "GET", "/einstellungen/kurse") { |r| render_page(r, 200, ManualForm.new, "") }
-      Web.route(d, "POST", "/einstellungen/kurse") { |r| save_manual(r) }
-      Web.route(d, "POST", "/einstellungen/kurse/loeschen") { |r| delete_manual(r) }
-      Web.route(d, "POST", "/einstellungen/kurse/aktualisieren") { |r| refresh_now(r) }
+      get("/api/kurs") { |env| api_rate(env) }
+      get("/einstellungen/kurse") { |env| show(env, ManualForm.new) }
+      post("/einstellungen/kurse") { |env| save_manual(env) }
+      post("/einstellungen/kurse/loeschen") { |env| delete_manual(env) }
+      post("/einstellungen/kurse/aktualisieren") { |env| refresh_now(env) }
     end
 
-    private def api_rate(r : Web::Request) : Nil
-      raw = r.query("waehrung")
-      cur = raw.strip.upcase
-      return r.json_error(400, "Bitte eine Währung angeben.") if cur.empty?
-      return r.json_error(400, "Ungültige Währung „#{raw}“.") unless cur == "EUR" || Domain.valid_currency_code?(cur)
-      date = today
-      unless (v = r.query("datum")).empty?
+    private def api_rate(env : HTTP::Server::Context) : String
+      raw = env.query("waehrung")
+      currency = raw.strip.upcase
+      return api_error(env, 400, "Bitte eine Währung angeben.") if currency.empty?
+      return api_error(env, 400, "Ungültige Währung „#{raw}“.") unless currency == "EUR" || Domain.valid_currency_code?(currency)
+      date = @service.today
+      unless (value = env.query("datum")).empty?
         begin
-          date = Domain.parse_date(v)
+          date = Domain.parse_date(value)
         rescue ex : Domain::ValidationError
-          return r.json_error(400, ex.msg)
+          return api_error(env, 400, ex.msg)
         end
       end
-      fx = begin
-        rate(cur, date)
+      rate = begin
+        @service.rate(currency, date)
       rescue ex : Domain::ValidationError
-        return r.json_error(422, ex.msg)
+        return api_error(env, 422, ex.msg)
       rescue ex : FetchError
-        return r.json_error(502, ex.message || "")
+        return api_error(env, 502, ex.message || "")
       rescue ex
-        Log.error(exception: ex, &.emit("rate", currency: cur))
-        return r.json_error(500, "Der Kurs konnte nicht ermittelt werden.")
+        Log.error(exception: ex, &.emit("rate", currency: currency))
+        return api_error(env, 500, "Der Kurs konnte nicht ermittelt werden.")
       end
-      r.json(200) do |j|
-        j.object do
-          j.field "currency", fx.currency
-          j.field "date", Store.format_date(fx.date)
-          # Shortest digits without exponent or ".0": 1 stays 1, not 1.0.
-          j.field("rate") { j.raw Domain.format_rate(fx.rate).sub(',', '.') }
-          j.field "source", fx.source.key
-        end
-      end
+      env.response.content_type = "application/json; charset=utf-8"
+      RateResponse.new(rate.currency, Store.format_date(rate.date), rate.rate, rate.source).to_json
     end
 
-    private def render_page(r : Web::Request, status : Int32, form : ManualForm, error : String) : Nil
-      form = form.copy_with(date: Store.format_date(today)) if form.date.empty?
+    private def show(env : HTTP::Server::Context, form : ManualForm, status = 200, error : String? = nil) : String
+      form = form.copy_with(date: Store.format_date(@service.today)) if form.date.empty?
       store = @d.store
-      manual = FX.rows(store.list_manual_fx_rates)
-      latest = FX.rows(store.latest_ecb_rates)
-      stats = store.ecb_cache_stats
       used = store.recent_used_fx_rates(10).map do |u|
         RateRow.new(u.currency, u.date, Domain.format_rate(u.rate), FX.source_label(u.source), u.title, u.expense_id)
       end
-      currencies = store.list_fx_currencies
-      r.page(status, Web::Page.new(title: "Wechselkurse", nav: Web::NAV_SETTINGS, error: error)) do |__io__|
-        Web.template __io__, "fx/kurse.ecr"
-      end
+      view = Views::Rates.new(form, FX.rows(store.list_manual_fx_rates), FX.rows(store.latest_ecb_rates),
+        store.ecb_cache_stats, used, store.list_fx_currencies)
+      page(env, view, "Wechselkurse", Web::Nav::Settings, status, error)
     end
 
-    private def save_manual(r : Web::Request) : Nil
-      form = ManualForm.new(r.form_value("waehrung").strip.upcase, r.form_value("datum").strip, r.form_value("kurs").strip)
+    private def save_manual(env : HTTP::Server::Context) : String
+      form = ManualForm.new(env.form("waehrung").strip.upcase, env.form("datum").strip, env.form("kurs").strip)
       begin
-        date = Domain.parse_date(form.date)
-        rate = Domain.parse_rate(form.rate)
-        @d.store.set_manual_fx_rate(r.me.id, form.currency, date, rate)
+        @d.store.set_manual_fx_rate(env.me.id, form.currency, Domain.parse_date(form.date), Domain.parse_rate(form.rate))
       rescue ex : Domain::ValidationError
-        return render_page(r, 422, form, ex.msg)
+        return show(env, form, 422, ex.msg)
       end
-      r.set_flash("Kurs für #{form.currency} gespeichert.")
-      r.redirect("/einstellungen/kurse")
+      redirect(env, "/einstellungen/kurse", "Kurs für #{form.currency} gespeichert.")
     end
 
-    private def delete_manual(r : Web::Request) : Nil
-      cur = r.form_value("waehrung").strip.upcase
-      begin
-        @d.store.delete_manual_fx_rate(r.me.id, cur, Domain.parse_date(r.form_value("datum")))
-      rescue Store::NotFound | Domain::ValidationError
-        return render_page(r, 404, ManualForm.new, "Diesen manuellen Kurs gibt es nicht (mehr).")
+    private def delete_manual(env : HTTP::Server::Context) : String
+      currency = env.form("waehrung").strip.upcase
+      gone = "Diesen manuellen Kurs gibt es nicht (mehr)."
+      date = begin
+        Domain.parse_date(env.form("datum"))
+      rescue Domain::ValidationError
+        raise Web::HTTPError.new(env, 404, gone)
       end
-      r.set_flash("Manueller Kurs für #{cur} gelöscht.")
-      r.redirect("/einstellungen/kurse")
+      or_404(env, gone) { @d.store.delete_manual_fx_rate(env.me.id, currency, date) }
+      redirect(env, "/einstellungen/kurse", "Manueller Kurs für #{currency} gelöscht.")
     end
 
-    private def refresh_now(r : Web::Request) : Nil
+    private def refresh_now(env : HTTP::Server::Context) : String
       latest = begin
-        refresh
+        @service.refresh
       rescue ex : FetchError
-        return render_page(r, 502, ManualForm.new, ex.message || "")
+        return show(env, ManualForm.new, 502, ex.message)
       end
-      r.set_flash("EZB-Kurse aktualisiert (Stand #{Domain.format_date(latest)}).")
-      r.redirect("/einstellungen/kurse")
+      redirect(env, "/einstellungen/kurse", "EZB-Kurse aktualisiert (Stand #{Domain.format_date(latest)}).")
     end
   end
 end

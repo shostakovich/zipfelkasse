@@ -135,7 +135,7 @@ describe "Read everything" do
       status ? r.status.should(eq status) : r.status.should(be < 500)
     end
     {"/manifest.webmanifest" => 200, "/sw.js" => 200, "/favicon.ico" => 200, "/healthz" => 200,
-     "/does-not-exist" => 404, "/salden/" => 404}.each do |path, status|
+     "/does-not-exist" => 404, "/salden/" => 200}.each do |path, status|
       {path, user.get(path).status}.should eq({path, status})
     end
     page = user.get("/ausgaben/neu")

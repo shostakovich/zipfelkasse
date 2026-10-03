@@ -11,7 +11,7 @@ module E2E
       "X-Content-Type-Options"  => "nosniff",
       "Referrer-Policy"         => "same-origin",
       "X-Frame-Options"         => "DENY",
-      "Content-Security-Policy" => "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'",
+      "Content-Security-Policy" => "default-src 'self'; img-src 'self' data:; style-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'",
     }
 
     def self.form_body(form : Enumerable({String, String})) : String
@@ -30,6 +30,17 @@ module E2E
       headers = HTTP::Headers{"Content-Type" => content_type}
       headers.merge!(extra)
       user.run { |b| b.request("POST", path, headers, body, chunked) }
+    end
+
+    # Sends raw bytes to the app and returns everything it answers until it
+    # closes the connection.
+    def self.exchange(app : App, request : String) : String
+      TCPSocket.open("127.0.0.1", app.port) do |socket|
+        socket.read_timeout = 10.seconds
+        socket << request
+        socket.flush
+        socket.gets_to_end
+      end
     end
 
     # Puts a cookie into the user's jar.

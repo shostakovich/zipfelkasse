@@ -9,14 +9,6 @@ module Zipfelkasse::Web
 
     HASHES = FILES.to_h { |name, bytes| {name, Digest::SHA256.hexdigest(bytes)[0, 10]} }
 
-    def self.url(name : String) : String
-      if h = HASHES[name]?
-        "/static/#{name}?v=#{h}"
-      else
-        "/static/#{name}"
-      end
-    end
-
     CONTENT_TYPES = {
       ".css"  => "text/css; charset=utf-8",
       ".js"   => "text/javascript; charset=utf-8",
@@ -25,19 +17,24 @@ module Zipfelkasse::Web
       ".webp" => "image/webp",
     }
 
-    def self.content_type(name : String) : String
-      CONTENT_TYPES[File.extname(name)]? || "application/octet-stream"
+    def self.url(name : String) : String
+      "/static/#{name}?v=#{HASHES[name]}"
     end
 
-    def self.serve(req : Request) : Nil
-      name = req.path.lchop("/static/")
-      bytes = FILES[name]? || return Web.text_error(req.ctx, 404, "404 page not found")
-      res = req.response
-      res.headers["Cache-Control"] = req.query("v").empty? ? "public, max-age=300" : "public, max-age=31536000, immutable"
-      res.content_type = content_type(name)
-      res.headers["Accept-Ranges"] = "bytes"
-      res.content_length = bytes.size
-      res.write(bytes)
+    def self.send(env : HTTP::Server::Context, name : String, cache_control : String) : String
+      bytes = FILES[name]? || raise Kemal::Exceptions::RouteNotFound.new(env)
+      etag = %("#{HASHES[name]}")
+      response = env.response
+      response.headers["ETag"] = etag
+      response.headers["Cache-Control"] = cache_control
+      if env.request.headers["If-None-Match"]?.try(&.split(',').any? { |tag| tag.strip.lchop("W/") == etag })
+        response.status_code = 304
+      else
+        response.content_type = CONTENT_TYPES[File.extname(name)]? || "application/octet-stream"
+        response.content_length = bytes.size
+        response.write(bytes)
+      end
+      ""
     end
   end
 end

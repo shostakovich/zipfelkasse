@@ -5,48 +5,91 @@ module Zipfelkasse
   BACKUP_KEEP = 7
 
   class App
-    getter d : Web::Deps
-    getter handlers = [] of HTTP::Handler
+    getter deps : Web::Deps
+    getter fx : FX::Service
+    getter recurring : Recurring::Service
+    getter ynab : YNAB::Service
+    getter handlers : Array(HTTP::Handler)
     # Background jobs: each runs in its own fiber until the stopper fires.
-    getter jobs = [] of Proc(Stopper, Nil)
+    getter jobs : Array(Proc(Stopper, Nil))
 
+    # Kemal keeps routes, filters and handlers in global state: build one App
+    # per process (specs reset it, see spec/web/web_helper.cr).
     def initialize(config : Config, store : Store)
       Web.location = config.location
-      @d = Web::Deps.new(config, store, Web::Renderer.new(store))
-      Web.reset_kemal
-      mcp = Web::MCPMount.new
-      Web::Handlers.new(@d).register
-      App.wire_features(self, @d, mcp)
-      @handlers = Web.handlers(@d, mcp)
+      @deps = Web::Deps.new(config, store)
+      @fx = FX::Service.new(@deps)
+      @deps.fx = @fx
+      @recurring = Recurring::Service.new(@deps)
+      @ynab = YNAB::Service.new(@deps)
+      @jobs = [
+        ->(stopper : Stopper) { @fx.run(stopper) },
+        ->(stopper : Stopper) { @recurring.run(stopper) },
+        ->(stopper : Stopper) { @ynab.run(stopper) },
+      ]
+      configure_kemal
+      mount_mcp
+      Web::Gate.new(@deps).install
+      Web.install_errors(store)
+      register_routes
+      Kemal.config.setup
+      @handlers = Kemal.config.handlers.dup
     end
 
-    # Feature packages (fx, recurring, ynab, export, mcp) hook in here:
-    # each defines `App.wire_<name>(app, d, mcp)`, which registers routes and
-    # background jobs. Order: fx first (it becomes d.fx), then recurring, ynab,
-    # export, mcp.
-    def self.wire_features(app : App, d : Web::Deps, mcp : Web::MCPMount) : Nil
-      {% for name in %w(fx recurring ynab export mcp) %}
-        {% if App.class.has_method?("wire_#{name.id}") %}
-          App.wire_{{ name.id }}(app, d, mcp)
-        {% end %}
-      {% end %}
+    private def configure_kemal : Nil
+      Kemal.config.app_name = "Zipfelkasse"
+      Kemal.config.env = "production"
+      Kemal.config.logging = false
+      Kemal.config.serve_static = false
+      Kemal.config.max_request_body_size = Web::MAX_BODY_BYTES
+      # Shorter than the 10 seconds `docker stop` waits before it kills the process.
+      Kemal.config.shutdown_timeout = 5.seconds
+      use Web::SecurityHeaders.new
+      use Web::QuietDisconnects.new
+    end
+
+    private def mount_mcp : Nil
+      if @deps.config.mcp_secret.empty?
+        Log.info { "MCP disabled (MCP_SECRET is empty)" }
+        return
+      end
+      use MCP::Mount.new(MCP::Server.new(@deps))
+      Log.info(&.emit("MCP enabled", path: "/mcp/***", allowed: @deps.config.mcp_allowed_cidrs.map(&.to_s),
+        proxies: @deps.config.trusted_proxies.map(&.to_s)))
+    end
+
+    private def register_routes : Nil
+      Web::PublicController.new(@deps).register
+      Web::WhoController.new(@deps).register
+      Web::ExpensesController.new(@deps).register
+      Web::BalancesController.new(@deps).register
+      Web::ActivityController.new(@deps).register
+      Web::SettingsController.new(@deps).register
+      FX::Handlers.new(@deps, @fx).register
+      Recurring::Handlers.new(@deps, @recurring).register
+      YNAB::Handlers.new(@deps, @ynab).register
+      Export::Handlers.new(@deps, Export::Service.new(@deps)).register
     end
   end
 
   module CLI
+    # A failure the user can fix: it is printed without a backtrace.
+    class Error < Exception
+    end
+
     def self.run(args : Array(String)) : Int32
       cmd = args[0]? || "serve"
       case cmd
       when "serve"
         serve
       when "healthcheck"
-        healthcheck(ENV["ZIPFELKASSE_ADDR"]? || "")
+        healthcheck(ENV["ZIPFELKASSE_ADDR"]?.try(&.strip) || "")
       else
         STDERR.print "unknown command #{cmd.inspect}\nusage: zipfelkasse [serve|healthcheck]\n"
         return 2
       end
       0
-    rescue ex
+    rescue ex : Config::Error | Store::Error | Error | IO::Error
       STDERR.puts "zipfelkasse: #{messages(ex).join(": ")}"
       1
     end
@@ -65,38 +108,29 @@ module Zipfelkasse
       Zipfelkasse.setup_logging
       store = Store.open(config.db_path)
       store.clock = -> { config.now }
+      stopper = Stopper.new
+      jobs = WaitGroup.new
       begin
         app = App.new(config, store)
         server = HTTP::Server.new(app.handlers)
         listen(server, config.addr)
-
-        stopper = Stopper.new
-        jobs = WaitGroup.new
+        Kemal.config.server = server
         (app.jobs + [->(s : Stopper) { backup_loop(s, store, config) }]).each do |job|
           jobs.spawn { job.call(stopper) }
         end
-
-        shutdown = Channel(Nil).new
-        {Signal::INT, Signal::TERM}.each { |sig| sig.trap { shutdown.close unless shutdown.closed? } }
-        served = Channel(Exception?).new
-        spawn do
-          server.listen
-          served.send(nil)
-        rescue ex
-          served.send(ex)
+        Process.on_terminate do
+          if Kemal.config.running
+            Log.info { "shutting down" }
+            Kemal.stop
+          else
+            exit
+          end
         end
         Log.info(&.emit("Zipfelkasse running", addr: config.addr, db: config.db_path, tz: config.location_name))
-
-        select
-        when err = served.receive
-          raise err if err
-        when shutdown.receive?
-          Log.info { "shutting down" }
-          server.close
-        end
+        Kemal.run(args: [] of String, trap_signal: false)
+      ensure
         stopper.stop
         jobs.wait
-      ensure
         store.close
       end
     end
@@ -117,7 +151,7 @@ module Zipfelkasse
     private def self.listen(server : HTTP::Server, addr : String) : Nil
       host, _, port = addr.rpartition(':')
       host = host.lchop('[').rchop(']')
-      port_num = port.to_i? || raise Exception.new("cannot listen on #{addr}: missing port")
+      port_num = port.to_i? || raise Error.new("cannot listen on #{addr}: missing port")
       if host.empty?
         begin
           server.bind(TimeoutServer.new("::", port_num))
@@ -128,19 +162,21 @@ module Zipfelkasse
         server.bind(TimeoutServer.new(host, port_num))
       end
     rescue ex : Socket::Error
-      raise Exception.new("cannot listen on #{addr}", cause: ex)
+      raise Error.new("cannot listen on #{addr}", cause: ex)
     end
 
+    # One backup a day at 03:00 local time, on the configured clock.
     def self.backup_loop(stopper : Stopper, store : Store, config : Config) : Nil
-      loop do
-        now = Time.local(config.location)
-        return unless stopper.wait(next_backup(now) - now)
+      local = -> { config.now.in(config.location) }
+      due = next_backup(local.call)
+      while stopper.wait(due - local.call)
         begin
           path = store.backup(config.backup_dir, BACKUP_KEEP)
           Log.info(&.emit("backup written", path: path))
         rescue ex
           Log.error(exception: ex) { "backup failed" }
         end
+        due = next_backup(due)
       end
     end
 
@@ -152,19 +188,18 @@ module Zipfelkasse
     end
 
     def self.healthcheck(addr : String) : Nil
-      url = health_url(addr)
-      uri = URI.parse(url)
+      uri = URI.parse(health_url(addr))
       client = HTTP::Client.new(uri)
       client.connect_timeout = 3.seconds
       client.read_timeout = 3.seconds
       res = client.get(uri.path)
-      raise Exception.new("healthz: status #{res.status_code}") unless res.status_code == 200
+      raise Error.new("healthz: status #{res.status_code}") unless res.status_code == 200
     end
 
     def self.health_url(addr : String) : String
       addr = ":8080" if addr.empty?
       host, sep, port = addr.rpartition(':')
-      raise Exception.new("ZIPFELKASSE_ADDR #{addr.inspect}: missing port") if sep.empty?
+      raise Error.new("ZIPFELKASSE_ADDR #{addr.inspect}: missing port") if sep.empty?
       host = host.lchop('[').rchop(']')
       host = "127.0.0.1" if host.empty? || host == "0.0.0.0" || host == "::"
       host = "[#{host}]" if host.includes?(':')

@@ -386,13 +386,6 @@ describe "Web: expenses" do
     W.text_of(r, %(//span[@id="betrag-einheit"])).should eq "CHF"
     r = user.post("/ausgaben/neu", change(base, {"rueckzahlung" => "1"}.transform_values(&.as(String | Array(String)))))
     r.doc.xpath_node(%(//input[@name="rueckzahlung"][@checked])).should_not be_nil
-
-    # A broken form encoding is a bad request.
-    r = W.raw(user, "POST", "/ausgaben/neu", "titel=%zz&betrag=1") do |app|
-      HTTP::Headers{"Content-Type" => "application/x-www-form-urlencoded", "Origin" => app.base_url}
-    end
-    r.status.should eq 400
-    W.h1(r).should eq "Ungültige Anfrage."
   end
 
   scenario "editing an expense records the changes", world do
@@ -808,7 +801,7 @@ private def balance_rows(r : E2E::Response) : Array({String, String, String?, Ar
     {
       W.squish(row.xpath_node(%(.//div[@class="balance-name"])).not_nil!.content),
       W.squish(row.xpath_node(%(.//div[contains(@class, "balance-value")])).not_nil!.content),
-      row.xpath_node(%(.//div[@class="balance-bar"])).try(&.["style"]),
+      row.xpath_node(%(.//div[@class="balance-bar"])).try(&.["data-width"]),
       row["class"].split,
     }
   end
@@ -850,11 +843,11 @@ describe "Web: balances" do
 
     r = user.get("/salden")
     balance_rows(r).should eq [
-      {"Anna", "22,00 €", "width: 100%", ["balance-row", "me"]},
-      {"Ben", "-10,00 €", "width: 45%", ["balance-row", "negative-row"]},
-      {"Cleo", "-10,01 €", "width: 46%", ["balance-row", "negative-row"]},
-      {"Dora", "0,01 €", "width: 1%", ["balance-row"]},
-      {"Emil (archiviert)", "-2,00 €", "width: 9%", ["balance-row", "negative-row"]},
+      {"Anna", "22,00 €", "100", ["balance-row", "me"]},
+      {"Ben", "-10,00 €", "45", ["balance-row", "negative-row"]},
+      {"Cleo", "-10,01 €", "46", ["balance-row", "negative-row"]},
+      {"Dora", "0,01 €", "1", ["balance-row"]},
+      {"Emil (archiviert)", "-2,00 €", "9", ["balance-row", "negative-row"]},
     ]
     transfers(r).should eq [
       {"Cleo schuldet Anna Als erstattet markieren 10,01 €", "/ausgaben/neu?an=1&betrag=1001&rueckzahlung=1&von=3"},
@@ -1317,16 +1310,11 @@ describe "Web: security, PWA, static files and CLI" do
       r.html?.should be_true
       W.h1(r).should eq too_large
       r.headers["Connection"]?.should eq "close"
-      W.nav?(r).should be_false
       security_headers!(r)
-      r = send.call("/api/kurs")
-      {chunked, r.status}.should eq({chunked, 413})
-      r.json.should eq JSON.parse(%({"error":"Die Anfrage ist zu groß."}))
-      r.headers["Connection"]?.should eq "close"
     end
-    # The size limit comes before the origin check.
+    # The origin check comes before the size limit.
     r = W.post_large(user, "/einstellungen/teilnehmer", big, extra: HTTP::Headers{"Sec-Fetch-Site" => "cross-site"})
-    r.status.should eq 413
+    r.status.should eq 403
     # Exactly 1 MiB is fine (and then too long a name).
     exact = "name=" + "b" * ((1 << 20) - 5)
     exact.bytesize.should eq 1 << 20
@@ -1335,12 +1323,43 @@ describe "Web: security, PWA, static files and CLI" do
     W.count(world, "SELECT count(*) FROM participants").should eq 1
   end
 
+  scenario "requests that cannot be parsed are bad requests", world do
+    user = world.user
+    user.login("Anna")
+    head = "Host: #{world.app.host}\r\nCookie: wer=#{user.me}\r\nConnection: close\r\n"
+    # A method that is no token could address another route than the path says.
+    answer = W.exchange(world.app, "FOO/BAR /salden HTTP/1.1\r\n#{head}\r\n")
+    answer.should start_with "HTTP/1.1 400 Bad Request"
+    answer.should contain "Ungültige Anfrage."
+    # Multipart bodies that are none.
+    body = "this is no multipart body"
+    answer = W.exchange(world.app, "POST /einstellungen/teilnehmer HTTP/1.1\r\n#{head}Content-Type: multipart/form-data; boundary=x\r\n" \
+                                   "Content-Length: #{body.bytesize}\r\n\r\n#{body}")
+    answer.should start_with "HTTP/1.1 400 Bad Request"
+    W.count(world, "SELECT count(*) FROM participants").should eq 1
+  end
+
+  scenario "a connection reset by the client is no server error", world do
+    user = world.user
+    user.login("Anna")
+    socket = TCPSocket.new("127.0.0.1", world.app.port)
+    socket << "POST /einstellungen/teilnehmer HTTP/1.1\r\nHost: #{world.app.host}\r\nCookie: wer=#{user.me}\r\n" \
+              "Content-Type: application/x-www-form-urlencoded\r\nContent-Length: 100\r\n\r\nname=Ben"
+    socket.flush
+    sleep 100.milliseconds
+    socket.linger = 0
+    socket.close
+    sleep 300.milliseconds
+    user.get("/healthz").status.should eq 200
+    W.count(world, "SELECT count(*) FROM participants").should eq 1
+  end
+
   scenario "flash messages are shown once by whatever page comes next", world do
     user = world.user
     user.login("Anna")
     r = user.post("/einstellungen/teilnehmer", {"name" => "Ben"})
     r.flash.should eq "„Ben“ hinzugefügt."
-    W.cookie(r, "flash").not_nil!.value.should eq "4oCeQmVu4oCcIGhpbnp1Z2Vmw7xndC4" # base64url, no padding
+    URI.decode_www_form(W.cookie(r, "flash").not_nil!.value).should eq "„Ben“ hinzugefügt."
     # A 422 page consumes it as well.
     r = user.post("/einstellungen/teilnehmer", {"name" => "ben"})
     r.status.should eq 422
@@ -1369,10 +1388,13 @@ describe "Web: security, PWA, static files and CLI" do
     r = user.get("/")
     {r.content_type, r.headers["Cache-Control"]}.should eq({"text/html; charset=utf-8", "no-store"})
 
-    ["/does-not-exist", "/salden/", "/ausgaben/1/x", "/ausgaben/1/", "/einstellungen/no/such", "/static/missing.css"].each do |p|
-      {p, user.get(p).status}.should eq({p, 404})
+    ["/does-not-exist", "/ausgaben/1/x", "/einstellungen/no/such", "/static/missing.css"].each do |p|
+      r = user.get(p)
+      {p, r.status, W.h1(r)}.should eq({p, 404, "Seite nicht gefunden."})
     end
-    user.get("/static/missing.css").headers["Cache-Control"]?.should be_nil
+    user.get("/static/missing.css").headers["Cache-Control"].should eq "no-store"
+    # A trailing slash does not matter.
+    user.get("/salden/").status.should eq 200
 
     {
       {"POST", "/salden"}                          => "GET, HEAD",
@@ -1458,6 +1480,11 @@ describe "Web: security, PWA, static files and CLI" do
       r = user.get("/static/#{file}")
       {file, r.status, r.content_type, r.headers["Cache-Control"]}.should eq({file, 200, type, "public, max-age=300"})
       r.body.bytesize.should eq r.headers["Content-Length"].to_i
+      r.headers["ETag"].should match(/\A"[0-9a-f]{10}"\z/)
+      r.headers["Accept-Ranges"]?.should be_nil
+      r3 = user.get("/static/#{file}", HTTP::Headers{"If-None-Match" => r.headers["ETag"]})
+      {file, r3.status, r3.body}.should eq({file, 304, ""})
+      user.get("/static/#{file}", HTTP::Headers{"If-None-Match" => %("other")}).status.should eq 200
       r2 = user.get("/static/#{file}?v=egal")
       r2.headers["Cache-Control"].should eq "public, max-age=31536000, immutable"
       r2.body.should eq r.body

@@ -1,18 +1,12 @@
 module Zipfelkasse::Recurring
   LIST_PATH = "/einstellungen/wiederkehrend"
 
-  # The preview counts missed occurrences up to this, beyond it says
-  # "mehr als 1000".
-  MAX_MISSED_COUNT = 1000
+  # A frequency to choose in the form, with what it would do for the expense.
+  record FreqOption, preview : Preview, checked : Bool do
+    delegate next_date, to: preview
 
-  struct FreqOption
-    getter value : Domain::Frequency
-    getter next_date : Time? # first occurrence after the template
-    getter missed : Int32    # occurrences up to today (counted up to MAX_MISSED_COUNT + 1)
-    getter existing : Int32  # of these, skipped since an equal expense exists
-    getter? checked : Bool
-
-    def initialize(*, @value = Domain::Frequency::Monthly, @next_date = nil, @missed = 0, @existing = 0, @checked = false)
+    def value : Domain::Frequency
+      preview.frequency
     end
 
     def label : String
@@ -21,21 +15,22 @@ module Zipfelkasse::Recurring
 
     # What happens to the missed occurrences, e.g. "3 verpasste Termine werden
     # sofort eingetragen; 1 bereits als Ausgabe vorhandener Termin wird
-    # übersprungen"; "" if there are none.
+    # übersprungen"; empty if there are none.
     def note : String
+      missed, existing = preview.missed, preview.existing
       capped = missed > MAX_MISSED_COUNT
-      w = "sofort eingetragen"
+      when_created = "sofort eingetragen"
       if missed > MAX_INSTANCES_PER_RUN
-        w = "eingetragen – die ersten #{MAX_INSTANCES_PER_RUN} Termine sofort, der Rest in den nächsten Stunden"
+        when_created = "eingetragen – die ersten #{MAX_INSTANCES_PER_RUN} Termine sofort, der Rest in den nächsten Stunden"
       end
       parts = [] of String
-      n = missed - existing
+      created = missed - existing
       if capped
-        parts << "mehr als #{MAX_MISSED_COUNT} verpasste Termine werden #{w}"
-      elsif n == 1
-        parts << "1 verpasster Termin wird #{w}"
-      elsif n > 1
-        parts << "#{n} verpasste Termine werden #{w}"
+        parts << "mehr als #{MAX_MISSED_COUNT} verpasste Termine werden #{when_created}"
+      elsif created == 1
+        parts << "1 verpasster Termin wird #{when_created}"
+      elsif created > 1
+        parts << "#{created} verpasste Termine werden #{when_created}"
       end
       at_least = capped ? "mindestens " : ""
       if existing == 1
@@ -47,55 +42,64 @@ module Zipfelkasse::Recurring
     end
   end
 
-  class Service
+  module Views
+    record RuleRow, rule : Store::Recurring, paid_by_name : String?
+
+    record Index, rules : Array(RuleRow) do
+      Web.view "recurring/index.ecr"
+    end
+
+    # expense is nil without a chosen expense; options are empty until a
+    # frequency can be chosen.
+    record New, expense : Store::Expense?, options : Array(FreqOption) do
+      Web.view "recurring/new.ecr"
+
+      def existing : Int64?
+        expense.try(&.recurring_id)
+      end
+    end
+  end
+
+  class Handlers < Web::Controller
+    def initialize(deps : Web::Deps, @service : Service)
+      super(deps)
+    end
+
     def register : Nil
-      Web.route(@d, "GET", LIST_PATH) { |r| list(r) }
-      Web.route(@d, "GET", "#{LIST_PATH}/neu") { |r| new_page(r) }
-      Web.route(@d, "POST", "#{LIST_PATH}/neu") { |r| create(r) }
-      Web.route(@d, "POST", "#{LIST_PATH}/:id/pausieren") { |r| set_active(r, false) }
-      Web.route(@d, "POST", "#{LIST_PATH}/:id/fortsetzen") { |r| set_active(r, true) }
-      Web.route(@d, "POST", "#{LIST_PATH}/:id/vorlage") { |r| refresh_template(r) }
-      Web.route(@d, "POST", "#{LIST_PATH}/:id/loeschen") { |r| delete(r) }
+      get(LIST_PATH) { |env| list(env) }
+      get("#{LIST_PATH}/neu") { |env| new_form(env) }
+      post("#{LIST_PATH}/neu") { |env| create(env) }
+      post("#{LIST_PATH}/:id/pausieren") { |env| set_active(env, false) }
+      post("#{LIST_PATH}/:id/fortsetzen") { |env| set_active(env, true) }
+      post("#{LIST_PATH}/:id/vorlage") { |env| refresh_template(env) }
+      post("#{LIST_PATH}/:id/loeschen") { |env| delete(env) }
     end
 
-    private def rule_not_found : Web::HTTPError
-      Web::HTTPError.not_found("Wiederkehrende Ausgabe nicht gefunden.")
-    end
-
-    private def list(r : Web::Request) : Nil
+    private def list(env : HTTP::Server::Context) : String
       names = @d.store.list_participants(true).to_h { |p| {p.id, p.name} }
-      rules = @d.store.list_recurring.map { |rule| {rule, names[rule.template.paid_by]? || ""} }
-      r.page(200, Web::Page.new(title: "Wiederkehrende Ausgaben", nav: Web::NAV_SETTINGS)) do |__io__|
-        Web.template __io__, "recurring/wiederkehrend.ecr"
-      end
+      rows = @d.store.list_recurring.map { |rule| Views::RuleRow.new(rule, rule.template.paid_by.try { |id| names[id]? }) }
+      page(env, Views::Index.new(rows), "Wiederkehrende Ausgaben", Web::Nav::Settings)
     end
 
-    private def path_rule_id(r : Web::Request) : Int64
-      id = r.path_id
-      raise rule_not_found if id == 0
-      id
+    private def rule_id(env : HTTP::Server::Context) : Int64
+      path_id(env) || raise Web::HTTPError.new(env, 404, "Wiederkehrende Ausgabe nicht gefunden.")
     end
 
-    private def set_active(r : Web::Request, active : Bool) : Nil
-      id = path_rule_id(r)
-      begin
-        @d.store.set_recurring_active(r.me.id, id, active, today)
-      rescue Store::NotFound
-        raise rule_not_found
-      end
-      msg = "Pausiert."
+    private def set_active(env : HTTP::Server::Context, active : Bool) : String
+      id = rule_id(env)
+      or_404(env, "Wiederkehrende Ausgabe nicht gefunden.") { @d.store.set_recurring_active(env.me.id, id, active, @d.today) }
+      message = "Pausiert."
       if active
-        msg = "Fortgesetzt."
-        n = materialize_logged(id)
-        msg += " #{count_text(n)} angelegt." if n > 0
+        message = "Fortgesetzt."
+        created = materialize_logged(id)
+        message += " #{count_text(created)} angelegt." if created > 0
       end
-      r.set_flash(msg)
-      r.redirect(LIST_PATH)
+      redirect(env, LIST_PATH, message)
     end
 
     # Errors are only logged: the rule itself was changed.
     private def materialize_logged(id : Int64) : Int32
-      materialize_rule(id, today)
+      @service.materialize_rule(id, @d.today)
     rescue ex : Error
       Log.error(exception: ex) { "recurring expenses" }
       ex.created
@@ -104,98 +108,61 @@ module Zipfelkasse::Recurring
       0
     end
 
-    private def refresh_template(r : Web::Request) : Nil
-      id = path_rule_id(r)
-      begin
-        @d.store.update_recurring_template_from_latest(r.me.id, id)
-        r.set_flash("Vorlage aus der letzten Ausgabe übernommen.")
-      rescue Store::NotFound
-        raise rule_not_found
+    private def refresh_template(env : HTTP::Server::Context) : String
+      id = rule_id(env)
+      message = begin
+        or_404(env, "Wiederkehrende Ausgabe nicht gefunden.") { @d.store.update_recurring_template_from_latest(env.me.id, id) }
+        "Vorlage aus der letzten Ausgabe übernommen."
       rescue Store::NoInstance
-        r.set_flash("Es gibt keine Ausgabe dieser Wiederholung mehr, aus der die Vorlage übernommen werden könnte.")
+        "Es gibt keine Ausgabe dieser Wiederholung mehr, aus der die Vorlage übernommen werden könnte."
       end
-      r.redirect(LIST_PATH)
+      redirect(env, LIST_PATH, message)
     end
 
-    private def delete(r : Web::Request) : Nil
-      id = path_rule_id(r)
-      begin
-        @d.store.delete_recurring(r.me.id, id)
-      rescue Store::NotFound
-        raise rule_not_found
-      end
-      r.set_flash("Wiederholung gelöscht. Bereits angelegte Ausgaben bleiben erhalten.")
-      r.redirect(LIST_PATH)
+    private def delete(env : HTTP::Server::Context) : String
+      id = rule_id(env)
+      or_404(env, "Wiederkehrende Ausgabe nicht gefunden.") { @d.store.delete_recurring(env.me.id, id) }
+      redirect(env, LIST_PATH, "Wiederholung gelöscht. Bereits angelegte Ausgaben bleiben erhalten.")
     end
 
-    # The preview of each frequency: next occurrence and how many missed
-    # occurrences would be created or skipped.
-    def options(e : Store::Expense, selected : Domain::Frequency?) : Array(FreqOption)
-      today = self.today
-      existing = Set(Time).new
-      if e.date < today
-        existing = @d.store.expense_dates_like(e.to_input, e.date.shift(days: 1), today)
-      end
-      Domain::Frequency.values.map do |f|
-        first = Domain.next_date(f, e.date, e.date)
-        missed = skipped = 0
-        d = first
-        while d <= today && missed <= MAX_MISSED_COUNT
-          missed += 1
-          skipped += 1 if existing.includes?(d)
-          d = Domain.next_date(f, e.date, d)
-        end
-        FreqOption.new(value: f, next_date: first, missed: missed, existing: skipped, checked: f == selected)
-      end
+    private def find_expense(env : HTTP::Server::Context, value : String) : Store::Expense
+      id = Web.positive_id?(value)
+      expense = or_404(env, "Ausgabe nicht gefunden.", id && @d.store.get_expense?(id))
+      raise Web::HTTPError.new(env, 404, "Ausgabe nicht gefunden.") if expense.deleted?
+      expense
     end
 
-    private def render_new(r : Web::Request, status : Int32, expense : Store::Expense?,
-                           options = [] of FreqOption, error = "") : Nil
-      existing = expense.try(&.recurring_id)
-      r.page(status, Web::Page.new(title: "Wiederkehrende Ausgabe anlegen", nav: Web::NAV_SETTINGS, error: error)) do |__io__|
-        Web.template __io__, "recurring/wiederkehrend_neu.ecr"
-      end
+    private def new_form(env : HTTP::Server::Context) : String
+      value = env.query("ausgabe")
+      return show_form(env, nil) if value.empty?
+      expense = find_expense(env, value)
+      show_form(env, expense, @service.previews(expense), Domain::Frequency::Monthly)
     end
 
-    # The expense from the "ausgabe" parameter (query or body).
-    private def load_expense(r : Web::Request) : Store::Expense
-      not_found = Web::HTTPError.not_found("Ausgabe nicht gefunden.")
-      id = Web.form_id(r.form_value("ausgabe"), trim: false)
-      raise not_found if id == 0
-      e = begin
-        @d.store.get_expense(id)
-      rescue Store::NotFound
-        raise not_found
-      end
-      raise not_found if e.deleted?
-      e
-    end
-
-    private def new_page(r : Web::Request) : Nil
-      return render_new(r, 200, nil) if r.form_value("ausgabe").empty?
-      e = load_expense(r)
-      render_new(r, 200, e, options(e, Domain::Frequency::Monthly))
-    end
-
-    private def create(r : Web::Request) : Nil
-      e = load_expense(r)
-      freq = Domain::Frequency.from_key?(r.form_value("haeufigkeit"))
+    private def create(env : HTTP::Server::Context) : String
+      expense = find_expense(env, env.form("ausgabe"))
+      frequency = Domain::Frequency.from_key?(env.form("haeufigkeit"))
       id = begin
-        @d.store.create_recurring_from_expense(r.me.id, e.id, freq || raise Domain::ValidationError.new("Bitte eine Häufigkeit wählen."))
+        @d.store.create_recurring_from_expense(env.me.id, expense.id, frequency || raise Domain::ValidationError.new("Bitte eine Häufigkeit wählen."))
       rescue ex : Domain::ValidationError
-        return render_new(r, 422, e, options(e, freq), ex.msg)
+        return show_form(env, expense, @service.previews(expense), frequency, 422, ex.msg)
       rescue Store::NotFound
-        raise Web::HTTPError.not_found("Ausgabe nicht gefunden.")
+        raise Web::HTTPError.new(env, 404, "Ausgabe nicht gefunden.")
       end
-      msg = "„#{e.title}“ wiederholt sich jetzt #{Web.frequency_adverb(freq)}."
-      n = materialize_logged(id)
-      msg += " #{count_text(n)} nachgetragen." if n > 0
-      r.set_flash(msg)
-      r.redirect(LIST_PATH)
+      message = "„#{expense.title}“ wiederholt sich jetzt #{Web.frequency_adverb(frequency)}."
+      created = materialize_logged(id)
+      message += " #{count_text(created)} nachgetragen." if created > 0
+      redirect(env, LIST_PATH, message)
     end
 
-    private def count_text(n : Int32) : String
-      n == 1 ? "1 Ausgabe" : "#{n} Ausgaben"
+    private def show_form(env : HTTP::Server::Context, expense : Store::Expense?, previews = [] of Preview,
+                          selected : Domain::Frequency? = nil, status = 200, error : String? = nil) : String
+      options = previews.map { |preview| FreqOption.new(preview, preview.frequency == selected) }
+      page(env, Views::New.new(expense, options), "Wiederkehrende Ausgabe anlegen", Web::Nav::Settings, status, error)
+    end
+
+    private def count_text(count : Int32) : String
+      count == 1 ? "1 Ausgabe" : "#{count} Ausgaben"
     end
   end
 end

@@ -5,6 +5,10 @@
   document.documentElement.classList.add("js");
 
   document.addEventListener("DOMContentLoaded", function () {
+    // Bar widths are set here, so that the CSP needs no inline styles.
+    document.querySelectorAll("[data-width]").forEach(function (el) {
+      el.style.width = el.dataset.width + "%";
+    });
     // Changing a filter select submits the form right away.
     document.querySelectorAll("select[data-autosubmit]").forEach(function (el) {
       el.addEventListener("change", function () {

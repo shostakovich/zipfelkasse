@@ -1,4 +1,3 @@
-
 <div class="stack">
   <section class="card">
     <div class="card-header">
@@ -11,7 +10,7 @@
         <input type="hidden" name="zurueck" value="<%= return_to %>">
         <%- participants.each do |p| %>
         <button class="btn btn-outline btn-block btn-lg" type="submit" name="id" value="<%= p.id %>"
-          <%- if me && me.id == p.id %> aria-current="true"<% end %>><%= p.name %></button>
+          <%- if me.try(&.id) == p.id %> aria-current="true"<% end %>><%= p.name %></button>
         <%- end %>
       </form>
       <%- else %>

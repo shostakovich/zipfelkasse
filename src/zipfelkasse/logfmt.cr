@@ -40,6 +40,10 @@ module Zipfelkasse
   end
 
   def self.setup_logging(io : IO = STDERR) : Nil
-    ::Log.setup(:info, ::Log::IOBackend.new(io, formatter: LogFormat, dispatcher: ::Log::DispatchMode::Sync))
+    backend = ::Log::IOBackend.new(io, formatter: LogFormat, dispatcher: ::Log::DispatchMode::Sync)
+    ::Log.setup do |config|
+      config.bind "*", :info, backend
+      config.bind "kemal", :warn, backend
+    end
   end
 end

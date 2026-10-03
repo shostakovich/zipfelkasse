@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <title><% unless page.title.empty? %><%= page.title %> · <% end %><%= group_name %></title>
+  <title><%= page.title %> · <%= group_name %></title>
   <meta name="color-scheme" content="light dark">
   <meta name="theme-color" content="#fcfdfe" media="(prefers-color-scheme: light)">
   <meta name="theme-color" content="#0c0a09" media="(prefers-color-scheme: dark)">
@@ -18,29 +18,29 @@
   <header class="site-header">
     <div class="container site-header-inner">
       <a class="brand" href="/"><img src="<%= static "mascot.webp" %>" alt="" width="155" height="144">Zipfelkasse</a>
-      <%- if me %>
-      <p class="whoami">Du bist <strong><%= me.name %></strong> · <a href="/wer">wechseln</a></p>
+      <%- if user = me %>
+      <p class="whoami">Du bist <strong><%= user.name %></strong> · <a href="/wer">wechseln</a></p>
       <%- end %>
     </div>
     <%- if me %>
     <div class="container">
       <nav class="tabs" aria-label="Hauptnavigation">
-        <a href="/"<% if page.nav == NAV_EXPENSES %> aria-current="page"<% end %>><%= icon "receipt" %><span>Ausgaben</span></a>
-        <a href="/salden"<% if page.nav == NAV_BALANCES %> aria-current="page"<% end %>><%= icon "scale" %><span>Salden</span></a>
-        <a href="/aktivitaet"<% if page.nav == NAV_ACTIVITY %> aria-current="page"<% end %>><%= icon "activity" %><span>Aktivität</span></a>
-        <a href="/einstellungen"<% if page.nav == NAV_SETTINGS %> aria-current="page"<% end %>><%= icon "settings" %><span>Einstellungen</span></a>
+        <a href="/"<% if page.nav == Nav::Expenses %> aria-current="page"<% end %>><%= icon "receipt" %><span>Ausgaben</span></a>
+        <a href="/salden"<% if page.nav == Nav::Balances %> aria-current="page"<% end %>><%= icon "scale" %><span>Salden</span></a>
+        <a href="/aktivitaet"<% if page.nav == Nav::Activity %> aria-current="page"<% end %>><%= icon "activity" %><span>Aktivität</span></a>
+        <a href="/einstellungen"<% if page.nav == Nav::Settings %> aria-current="page"<% end %>><%= icon "settings" %><span>Einstellungen</span></a>
       </nav>
     </div>
     <%- end %>
   </header>
   <main class="container main">
-    <%- unless flash.empty? %>
+    <%- if flash %>
     <p class="alert alert-success" role="status"><%= flash %></p>
     <%- end %>
-    <%- unless page.error.empty? %>
+    <%- if page.error %>
     <p class="alert alert-destructive" role="alert"><%= page.error %></p>
     <%- end %>
-    <%== content %>
+    <%= content %>
   </main>
   <%- page.scripts.each do |script| %>
   <script src="<%= static script %>" defer></script>

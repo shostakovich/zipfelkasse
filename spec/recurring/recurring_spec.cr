@@ -105,7 +105,7 @@ end
 
 private def flash(res : HTTP::Client::Response) : String
   c = res.cookies[Zipfelkasse::Web::FLASH_COOKIE]? || return ""
-  String.new(Base64.decode(c.value))
+  URI.decode_www_form(c.value)
 end
 
 describe Zipfelkasse::Recurring do
@@ -383,17 +383,20 @@ describe Zipfelkasse::Recurring do
 
   it "describes the missed occurrences in the preview" do
     later = "eingetragen – die ersten 400 Termine sofort, der Rest in den nächsten Stunden"
+    option = ->(missed : Int32, existing : Int32) do
+      Recurring::FreqOption.new(Recurring::Preview.new(Domain::Frequency::Monthly, date("2026-01-01"), missed, existing), false)
+    end
     {
-      {Recurring::FreqOption.new, ""},
-      {Recurring::FreqOption.new(missed: 1), "1 verpasster Termin wird sofort eingetragen"},
-      {Recurring::FreqOption.new(missed: 4, existing: 1),
+      {option.call(0, 0), ""},
+      {option.call(1, 0), "1 verpasster Termin wird sofort eingetragen"},
+      {option.call(4, 1),
        "3 verpasste Termine werden sofort eingetragen; 1 bereits als Ausgabe vorhandener Termin wird übersprungen"},
-      {Recurring::FreqOption.new(missed: 2, existing: 2), "2 bereits als Ausgabe vorhandene Termine werden übersprungen"},
-      {Recurring::FreqOption.new(missed: 400), "400 verpasste Termine werden sofort eingetragen"},
-      {Recurring::FreqOption.new(missed: 610, existing: 10),
+      {option.call(2, 2), "2 bereits als Ausgabe vorhandene Termine werden übersprungen"},
+      {option.call(400, 0), "400 verpasste Termine werden sofort eingetragen"},
+      {option.call(610, 10),
        "600 verpasste Termine werden #{later}; 10 bereits als Ausgabe vorhandene Termine werden übersprungen"},
-      {Recurring::FreqOption.new(missed: 1001), "mehr als 1000 verpasste Termine werden #{later}"},
-      {Recurring::FreqOption.new(missed: 1001, existing: 3),
+      {option.call(1001, 0), "mehr als 1000 verpasste Termine werden #{later}"},
+      {option.call(1001, 3),
        "mehr als 1000 verpasste Termine werden #{later}; mindestens 3 bereits als Ausgabe vorhandene Termine werden übersprungen"},
     }.each do |o, want|
       o.note.should eq want

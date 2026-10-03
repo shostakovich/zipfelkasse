@@ -23,7 +23,7 @@ class ExpenseGroup
   getter cleo : Int64
   getter food : Int64
 
-  def initialize(@srv : TestServer, fx : Zipfelkasse::Web::FXRater?)
+  def initialize(@srv : TestServer, fx : Zipfelkasse::Web::FXRater)
     @srv.d.fx = fx
     @anna = must_participant(store, "Anna")
     @ben = must_participant(store, "Ben")
@@ -67,7 +67,7 @@ class ExpenseGroup
   end
 end
 
-def with_expense_group(fx : Zipfelkasse::Web::FXRater? = nil, &)
+def with_expense_group(fx : Zipfelkasse::Web::FXRater = FakeFX.new, &)
   with_server { |srv| yield ExpenseGroup.new(srv, fx) }
 end
 
