@@ -18,11 +18,19 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-go@v7
-        with:
-          go-version-file: go.mod
-      - run: go vet ./...
-      - run: go test ./...
+      # The Alpine image links the same SQLite as the release build (Ubuntu's
+      # is too old for the week statistics).
+      - name: Format, specs and E2E suite
+        run: |
+          docker run --rm -v "$PWD:/src" -w /src crystallang/crystal:1.21.1-alpine sh -euc '
+            apk add --no-cache sqlite-dev tzdata
+            shards install
+            crystal tool format --check
+            crystal spec
+            mkdir -p bin
+            crystal build src/zipfelkasse.cr -o bin/zipfelkasse
+            E2E_BIN=bin/zipfelkasse crystal spec e2e/
+          '
 
   docker:
     needs: test
