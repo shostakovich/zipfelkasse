@@ -52,9 +52,11 @@ package.
   sandbox connection) through FFI.
 - **sql_query timeout** uses `sqlite3_progress_handler` with a deadline (a timer fiber cannot
   interrupt a blocking C call on one thread).
-- **Stored JSON** (`activity.details_json`, `recurring.template_json`) is written exactly like Go's
-  `encoding/json` (key order, `omitempty`, `<>&` escaped as `<…`, floats like `1` not `1.0`), so
-  rows written by Go and Crystal are indistinguishable.
+- **No Go compatibility layer** (decision of Robert): stored JSON (`activity.details_json`,
+  `recurring.template_json`), MCP answers and logs are written with Crystal's standard library. They
+  must carry the same data (Go reads Crystal's JSON and vice versa: same keys, `"date"` of templates
+  still Go's zero time `0001-01-01T00:00:00Z`), but not the same bytes (`<` vs `<`, `1` vs `1.0`).
+  The E2E diff compares JSON columns structurally.
 - **Test-only overrides** (added to the Go app in its own commit, ported identically):
   `ZIPFELKASSE_TEST_NOW` (frozen clock, RFC 3339), `ZIPFELKASSE_TEST_ECB_URL`,
   `ZIPFELKASSE_TEST_YNAB_URL`, `ZIPFELKASSE_TEST_YNAB_DELAY`. Unset in production.
@@ -79,10 +81,10 @@ package.
 
 - [x] Phase 0: inventories in `docs/porting/`, this file
 - [x] Test-only overrides in Go (commit `Add test-only overrides for the E2E suite`)
-- [ ] Phase 1: E2E suite (`e2e/`) green against the Go binary, seed data, diff mode, compatibility test
+- [x] Phase 1: E2E suite (`e2e/`) green against the Go binary (108 examples), seed data, diff mode (Go vs Go: 0 differences); the compatibility test is the read crawl on a Go-built seed
 - [ ] Phase 2: foundation (shard.yml, layout, config, CLI, DB + migrations, Kemal, escaping, assets,
       error handling, logging, Dockerfile, conventions below)
-- [ ] Phase 3, wave 1: `domain` → `store`
+- [ ] Phase 3, wave 1: `domain` (ported, being converted from GoCompat to plain Crystal) → `store` (core, participants, settings, activity done)
 - [ ] Phase 3, wave 2: `web`, `mcp`, `ynab`, `fx`, `export`, `recurring`
 - [ ] Phase 3 reviews after each wave
 - [ ] Phase 4: E2E + diff green against Crystal, Docker, CI, remove Go, docs
@@ -105,22 +107,19 @@ Each package gets its own folder; agents only write inside their folders (plus t
 
 ### Go semantics that Crystal does differently
 
-Helpers live in `src/zipfelkasse/go_compat/` (`Zipfelkasse::GoCompat`); use them instead of ad-hoc code:
+Use idiomatic Crystal (stdlib): `split`/`strip`, `downcase`, `inspect`, `to_f?`, `JSON.build`,
+`JSON::Serializable`, `Time#to_rfc3339`. Exotic Unicode differences to Go (U+0085 as whitespace, `İ`) are
+accepted. What matters for behaviour:
 
-- **Whitespace**: Go's `unicode.IsSpace` includes U+0085; Crystal's `Char#whitespace?` does not. Use
-  `GoCompat.space?`, `GoCompat.fields`, `GoCompat.trim_space` where Go uses `strings.Fields`/`TrimSpace`.
-- **Lower case**: Go's `strings.ToLower` maps rune by rune (`İ` → `i`). Use `GoCompat.to_lower`.
-- **Floats**: `GoCompat.format_float(f)` = `strconv.FormatFloat(f, 'f', -1, 64)` (shortest digits, never an
-  exponent, no `.0`). JSON floats like Go: `GoCompat.json_float`.
-- **JSON written to the database or to clients**: `GoCompat::JSON` writes like `encoding/json` (key order as
-  given, `<>&` escaped as `<…` when `html: true`, U+2028/2029 always escaped, floats like Go).
+- **User-visible number formats** stay as they are: rates like `1,0876` and `17000` (never `1.0e-5` or
+  `17000.0`): a small helper in `Domain` (e.g. `format_rate`), not a Go compatibility layer.
 - **Integer division/modulo on possibly negative numbers**: Go truncates; use `tdiv` / `remainder`, not
   `//` / `%`. Go wraps on overflow; Crystal raises. Use `Int128` or wrapping ops (`&+`) where Go relies on it.
 - **Rounding**: `math.Round` is half away from zero: `round(:ties_away)` (Crystal's default is ties-to-even).
 - **Dates**: calendar dates are `Time` at UTC midnight (`Time.utc(y, m, d)`); "not set" is `nil`
   (`Time?`), written as Go's zero time `0001-01-01T00:00:00Z` where Go stores it in JSON. Timestamps are
   written as RFC 3339 UTC without fraction (`2026-10-03T10:00:00Z`).
-- **Strings in error messages** quoted with Go's `%q`: `GoCompat.quote`.
+- **Strings in error messages** that Go quotes with `%q`: `inspect` is fine.
 - **Rune counts**: `String#size` (code points) equals Go's `len([]rune(s))`; byte counts are `bytesize`.
 
 ### Errors
