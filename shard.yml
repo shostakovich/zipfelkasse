@@ -2,7 +2,7 @@ name: zipfelkasse
 version: 1.0.0
 license: Unlicense
 
-description: Share expenses within a household (a slimmed-down Spliit port).
+description: Share expenses within a household (inspired by Spliit).
 
 crystal: ">= 1.21.0"
 

@@ -1,7 +1,7 @@
 # Zipfelkasse
 
-Zipfelkasse is a port of [Spliit](https://github.com/spliit-app/spliit): a slimmed-down, single-group
-rewrite in Crystal + SQLite for sharing expenses within a household. **The user interface is German.**
+Zipfelkasse shares expenses within a household: a slimmed-down, single-group app in Crystal + SQLite,
+inspired by [Spliit](https://github.com/spliit-app/spliit). **The user interface is German.**
 
 ## Before you use this
 
@@ -85,3 +85,7 @@ never talks to the real YNAB.
 
 - `zipfelkasse serve` (default) – starts the server
 - `zipfelkasse healthcheck` – exit code 0 if `GET /healthz` on `ZIPFELKASSE_ADDR` answers with 200
+
+## License
+
+Unlicense (public domain), see [LICENSE](LICENSE). Icons come from Lucide; see [THIRD_PARTY.md](THIRD_PARTY.md).
