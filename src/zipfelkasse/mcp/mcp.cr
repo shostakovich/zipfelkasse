@@ -4,19 +4,29 @@ module Zipfelkasse::MCP
   Log = ::Log.for(self)
 
   class Server
+    # The secret is checked in a filter so that a wrong one is a 404 for every
+    # method; only the right path may answer 405 to a GET.
     def register : Nil
+      before_all("/mcp/:secret") { |env| check_secret(env) }
       post("/mcp/:secret") { |env| serve(env) }
+    end
+
+    private def check_secret(env : HTTP::Server::Context) : Nil
+      request = env.request
+      return if Crypto::Subtle.constant_time_compare(URI.decode(request.path.lchop("/mcp/")), @d.config.mcp_secret)
+      Log.warn(&.emit("mcp: wrong secret", ip: client_ip(request).try(&.to_s) || "invalid IP", remote: request.remote_address.to_s))
+      raise Kemal::Exceptions::RouteNotFound.new(env)
+    end
+
+    private def client_ip(request : HTTP::Request) : Config::Prefix?
+      MCP.client_ip(request.remote_address, request.headers, @d.config.trusted_proxies)
     end
 
     private def serve(env : HTTP::Server::Context) : Nil
       start = Time.instant
       request = env.request
-      ip = MCP.client_ip(request.remote_address, request.headers, @d.config.trusted_proxies)
+      ip = client_ip(request)
       who = ip.try(&.to_s) || "invalid IP"
-      unless Crypto::Subtle.constant_time_compare(env.params.url["secret"], @d.config.mcp_secret)
-        Log.warn(&.emit("mcp: wrong secret", ip: who, remote: request.remote_address.to_s))
-        raise Kemal::Exceptions::RouteNotFound.new(env)
-      end
       log = {} of Symbol => String
       begin
         unless ip && @d.config.mcp_allowed_cidrs.any?(&.contains?(ip))

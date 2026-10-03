@@ -266,7 +266,8 @@ describe "MCP transport" do
     big = MK.message("tools/call", %({"name":"sql_query","arguments":{"query":"SELECT '#{"x" * (1 << 20)}'"}}))
     json_error!(MK.post(user, big), 413, -32600, "Message too large.")
 
-    # Only POST: Kemal answers other methods before the access checks.
+    # Only POST: with the right secret, other methods get a 405 before the IP
+    # and browser checks.
     %w(GET PUT DELETE PATCH OPTIONS).each do |m|
       r = MK.request(user, m)
       plain!(r, 405, "Method Not Allowed\n")
@@ -295,7 +296,13 @@ describe "MCP transport" do
       r = MK.post(user, ping, path: path)
       plain!(r, 404, "Not Found\n")
       r.body.should_not contain("mcp")
+      %w(GET HEAD PUT DELETE OPTIONS).each do |m|
+        r = MK.request(user, m, path: path)
+        r.status.should eq 404
+        r.headers["Allow"]?.should be_nil
+      end
     end
+    plain!(MK.request(user, "GET", path: "/mcp/wrong"), 404, "Not Found\n")
     plain!(MK.post(user, ping, {"Origin" => "https://claude.ai"}, path: "/mcp/wrong"), 404, "Not Found\n")
     plain!(MK.post(user, ping, content_type: "text/plain", path: "/mcp/wrong"), 404, "Not Found\n")
     plain!(MK.request(user, "GET", path: "/mcp/e2e-secret/tools"), 404, "Not Found\n")
