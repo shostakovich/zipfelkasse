@@ -30,7 +30,7 @@ module E2E
     # *env*: extra environment for the apps (e.g. MCP_ALLOWED_CIDRS).
     # *bins*: the binaries to run; default E2E_BIN and, if set, E2E_REF_BIN.
     def initialize(@name : String, @seed_db : String? = nil, @now = DEFAULT_NOW,
-                   @env = {} of String => String, @bins : Array({String, String})? = nil)
+                   @env = {} of String => String, @bins : Array({String, String})? = nil, @wait_for_rates = true)
     end
 
     def apps : Array(App)
@@ -66,7 +66,7 @@ module E2E
           ynab_state = World.ynab_state_path(seed)
           app.ynab.load(File.read(ynab_state)) if File.exists?(ynab_state)
         end
-        app.start
+        app.start(@wait_for_rates)
       end
       # A copied database may start a YNAB sync right away; let it finish.
       apps.each(&.ynab.wait_idle) if @seed_db
