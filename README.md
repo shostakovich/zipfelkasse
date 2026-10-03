@@ -31,9 +31,8 @@ Locally (Crystal 1.21, SQLite 3.46 or newer):
 
 ```sh
 shards install
-crystal run src/zipfelkasse.cr   # = serve, listens on :8080, DB in ./data/zipfelkasse.db
-crystal spec                     # unit specs
-crystal build src/zipfelkasse.cr -o bin/zipfelkasse && E2E_BIN=bin/zipfelkasse crystal spec e2e/  # black-box suite
+shards build                     # bin/zipfelkasse
+bin/zipfelkasse                  # = serve, listens on :8080, DB in ./data/zipfelkasse.db
 ```
 
 With Docker:
@@ -53,6 +52,22 @@ and every build is also tagged `sha-<commit>`. In `compose.yaml`, replace `build
 The image is based on `scratch` and runs as user `65532`. If you use a bind mount instead of a volume, the
 directory must be writable for that user (`chown 65532:65532 ./data`). The container health check runs
 `zipfelkasse healthcheck` (checks `GET /healthz`).
+
+## Tests
+
+```sh
+crystal spec                                                          # unit specs
+shards build -Dtest_hooks && E2E_BIN=bin/zipfelkasse crystal spec e2e/ # black-box suite
+```
+
+The E2E suite needs a binary built with `-Dtest_hooks` (it reads the `ZIPFELKASSE_TEST_*` variables only
+then) and the libxml2 development files, because it parses the HTML answers with Crystal's `XML` module
+(already present on macOS; Debian/Ubuntu: `libxml2-dev`, Alpine: `libxml2-dev`). How it works:
+[e2e/README.md](e2e/README.md).
+
+`.claude/launch.json` (for the preview in Claude Code) serves a copy of real data from `data/prod/` on
+port 8090. It builds with `-Dtest_hooks` only to point YNAB at a dead address, so that a copy of real data
+never talks to the real YNAB.
 
 ## Environment variables
 

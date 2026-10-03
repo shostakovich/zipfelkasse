@@ -13,7 +13,6 @@ module E2E
     property failure : Int32 | Symbol | Nil = nil
     getter port : Int32
     @requests = [] of String
-    @mutex = Mutex.new
 
     def initialize(@upstream : FakeECB)
       @server = HTTP::Server.new { |ctx| handle(ctx) }
@@ -26,7 +25,7 @@ module E2E
     end
 
     def requests : Array(String)
-      @mutex.synchronize { @requests.dup }
+      @requests.dup
     end
 
     def count(file : String) : Int32
@@ -39,11 +38,11 @@ module E2E
 
     private def handle(ctx)
       file = ctx.request.path.lstrip('/')
-      @mutex.synchronize { @requests << file }
+      @requests << file
       case f = @failure
       when Int32
         ctx.response.status_code = f
-        ctx.response.print "kaputt"
+        ctx.response.print "broken"
       when :empty
         ctx.response.content_type = "text/xml"
         ctx.response.print EMPTY_XML
@@ -86,28 +85,24 @@ module E2E
       t.to_s("%Y-%m-%d")
     end
 
-    def german(t : Time) : String
-      t.to_s("%d.%m.%Y")
-    end
-
     def day(s : String) : Time
       Time.parse_utc(s, "%Y-%m-%d")
     end
 
     # The ID of a row of `table` by name (participants, categories).
     def id_of(world : World, table : String, name : String) : Int64
-      Snapshot.open(world.app.db_path) do |db|
+      Database.open(world.app.db_path) do |db|
         db.scalar("SELECT id FROM #{table} WHERE name = ?", name).as(Int64)
       end
     end
 
     def newest_expense_id(world : World) : Int64
-      Snapshot.count(world.app.db_path, "SELECT max(id) FROM expenses")
+      Database.count(world.app.db_path, "SELECT max(id) FROM expenses")
     end
 
     # One row of the expenses table as strings.
     def expense_row(world : World, id : Int64) : Hash(String, String)
-      Snapshot.open(world.app.db_path) do |db|
+      Database.open(world.app.db_path) do |db|
         db.query_one("SELECT amount_cents, original_amount_minor, original_currency, fx_rate, fx_source, date FROM expenses WHERE id = ?", id) do |rs|
           {
             "amount_cents" => rs.read(Int64).to_s, "original_amount_minor" => rs.read(Int64).to_s,

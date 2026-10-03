@@ -1,0 +1,14 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "zipfelkasse-production-copy",
+      "runtimeExecutable": "sh",
+      "runtimeArgs": [
+        "-c",
+        "shards build -Dtest_hooks && mkdir -p data/preview && { [ -f data/preview/zipfelkasse.db ] || cp data/prod/zipfelkasse.db data/preview/zipfelkasse.db; } && exec env ZIPFELKASSE_ADDR=127.0.0.1:8090 ZIPFELKASSE_DB=data/preview/zipfelkasse.db ZIPFELKASSE_TEST_YNAB_URL=http://127.0.0.1:9 TZ=Europe/Berlin bin/zipfelkasse serve"
+      ],
+      "port": 8090
+    }
+  ]
+}

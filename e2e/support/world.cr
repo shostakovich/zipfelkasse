@@ -1,12 +1,19 @@
 require "json"
+require "file_utils"
 
 module E2E
+  @@worlds_dir : String?
+
   def self.bin : String
     ENV["E2E_BIN"]? || raise "E2E_BIN is not set (path of the zipfelkasse binary to test)"
   end
 
-  def self.data_dir : String
-    File.expand_path("../data", __DIR__)
+  def self.worlds_dir : String
+    @@worlds_dir ||= File.tempname("zipfelkasse-e2e", nil).tap { |dir| Dir.mkdir_p(dir) }
+  end
+
+  def self.keep_worlds? : Bool
+    !ENV["E2E_KEEP"]?.nil?
   end
 
   # The binary under test with a fresh database, started on first use.
@@ -15,46 +22,37 @@ module E2E
     getter problems = [] of String
     @app : App?
     @ecb : FakeECB?
+    @ynab : FakeYNAB?
     @dir : String?
+    @log_lines = 0
 
-    # *seed_db*: start from a copy of this database instead of an empty one.
     # *env*: extra environment for the app (e.g. MCP_ALLOWED_CIDRS).
-    def initialize(@name : String, @seed_db : String? = nil, @now = DEFAULT_NOW,
-                   @env = {} of String => String, @wait_for_rates = true)
+    # *setup*: fills the database right after the first start.
+    def initialize(@name : String, @now = DEFAULT_NOW, @env = {} of String => String,
+                   @setup : Proc(World, Nil)? = nil)
     end
 
     def app : App
-      @app ||= start
+      @app || begin
+        app = @app = new_app(@env)
+        app.start
+        @setup.try &.call(self)
+        app
+      end
     end
 
     def ecb : FakeECB
       @ecb ||= FakeECB.new
     end
 
-    private def start : App
-      dir = @dir = File.join(E2E.data_dir, "worlds", "#{@name.gsub(/[^a-z0-9]+/i, "-")}-#{Random.new.hex(3)}")
-      app = App.new("app", E2E.bin, dir, ecb, FakeYNAB.new, @now, @env)
-      if seed = @seed_db
-        Dir.mkdir_p(app.dir)
-        File.copy(seed, app.db_path)
-        ynab_state = World.ynab_state_path(seed)
-        app.ynab.load(File.read(ynab_state)) if File.exists?(ynab_state)
-      end
-      app.start(@wait_for_rates)
-      # A copied database may start a YNAB sync right away; let it finish.
-      app.ynab.wait_idle if @seed_db
-      app
+    def ynab : FakeYNAB
+      @ynab ||= FakeYNAB.new
     end
 
-    # Where the state of the YNAB fake belonging to a database is kept.
-    def self.ynab_state_path(db : String) : String
-      db.sub(/\.db$/, "") + ".ynab.json"
-    end
-
-    # Saves the database (and its YNAB fake) for later worlds.
-    def save(path : String) : Nil
-      Snapshot.copy(app.db_path, to: path)
-      File.write(World.ynab_state_path(path), app.ynab.dump)
+    # An app that is not started, to run it into a startup error.
+    def new_app(env : Hash(String, String)) : App
+      dir = @dir ||= File.join(E2E.worlds_dir, "#{@name.gsub(/[^a-z0-9]+/i, "-")}-#{Random.new.hex(3)}")
+      App.new("app", E2E.bin, dir, ecb, ynab, @now, env)
     end
 
     # Restarts the app with another frozen "now" (same database, same
@@ -65,15 +63,11 @@ module E2E
       app.start
     end
 
-    # Stops everything; the database and log are removed unless E2E_KEEP is
-    # set.
     def stop : Nil
-      @app.try do |a|
-        a.stop
-        a.ynab.close
-      end
+      @app.try &.stop
+      @ynab.try &.close
       @ecb.try &.close
-      if (dir = @dir) && !ENV["E2E_KEEP"]?
+      if (dir = @dir) && !E2E.keep_worlds?
         FileUtils.rm_rf(dir)
       end
     end
@@ -96,13 +90,26 @@ module E2E
     # Forgets recorded problems (after a failed scenario).
     def discard : Nil
       @problems.clear
+      new_log_errors
     end
 
-    # Raises with the problems found since the last call.
-    def verify! : Nil
+    # Raises with the problems found since the last call: injected scripts
+    # and errors in the app log, except those containing one of *errors*.
+    def verify!(errors = [] of String) : Nil
       msgs = @problems.dup
       @problems.clear
+      new_log_errors.each do |line|
+        msgs << "app log: #{line}" unless errors.any? { |e| line.includes?(e) }
+      end
       raise msgs.first(5).join("\n\n") + (msgs.size > 5 ? "\n\n… and #{msgs.size - 5} more" : "") unless msgs.empty?
+    end
+
+    private def new_log_errors : Array(String)
+      return [] of String unless app = @app
+      lines = app.log.lines
+      fresh = lines[@log_lines..]
+      @log_lines = lines.size
+      fresh.select { |line| line.includes?("level=ERROR") || line.includes?("Unhandled exception") }
     end
   end
 

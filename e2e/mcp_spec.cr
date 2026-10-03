@@ -267,15 +267,15 @@ describe "MCP transport" do
 
     # Wrong secret (or none): a plain 404 that does not give MCP away – also
     # for other methods and browsers.
-    ["/mcp/falsch", "/mcp/e2e-gehei", "/mcp/e2e-geheim2", "/mcp/E2E-GEHEIM", "/mcp/e2e-geheim/tools", "/mcp/"].each do |path|
+    ["/mcp/wrong", "/mcp/e2e-secre", "/mcp/e2e-secret2", "/mcp/E2E-SECRET", "/mcp/e2e-secret/tools", "/mcp/"].each do |path|
       r = MK.post(user, ping, path: path)
       plain!(r, 404, "404 page not found\n")
       r.body.should_not contain("mcp")
     end
-    plain!(MK.request(user, "GET", path: "/mcp/falsch"), 404, "404 page not found\n")
-    plain!(MK.request(user, "DELETE", path: "/mcp/falsch"), 404, "404 page not found\n")
-    plain!(MK.post(user, ping, {"Origin" => "https://claude.ai"}, path: "/mcp/falsch"), 404, "404 page not found\n")
-    plain!(MK.post(user, ping, content_type: "text/plain", path: "/mcp/falsch"), 404, "404 page not found\n")
+    plain!(MK.request(user, "GET", path: "/mcp/wrong"), 404, "404 page not found\n")
+    plain!(MK.request(user, "DELETE", path: "/mcp/wrong"), 404, "404 page not found\n")
+    plain!(MK.post(user, ping, {"Origin" => "https://claude.ai"}, path: "/mcp/wrong"), 404, "404 page not found\n")
+    plain!(MK.post(user, ping, content_type: "text/plain", path: "/mcp/wrong"), 404, "404 page not found\n")
   end
 
   scenario "JSON-RPC ids are echoed verbatim", world do
@@ -321,7 +321,7 @@ describe "MCP transport" do
     MK.result(MK.post(user, ping, {"X-Forwarded-For" => "garbage"})).should eq MK.json("{}")
     # Logged out: no redirect to /wer below /mcp/.
     anonymous = world.user
-    plain!(anonymous.run { |b| b.request("GET", "/mcp/falsch", HTTP::Headers.new) }, 404, "404 page not found\n")
+    plain!(anonymous.run { |b| b.request("GET", "/mcp/wrong", HTTP::Headers.new) }, 404, "404 page not found\n")
     plain!(anonymous.run { |b| b.request("GET", "/mcp/", HTTP::Headers.new) }, 404, "404 page not found\n")
     MK.result(anonymous.run(&.mcp("ping"))).should eq MK.json("{}")
     # The web app itself is unchanged.
@@ -437,7 +437,7 @@ describe "MCP access by client IP" do
     json_error!(MK.post(user, ping, {"X-Forwarded-For" => "10.1.2.3"}), 403, -32000, not_allowed)
     json_error!(MK.post(user, ping, {"X-Real-IP" => "10.1.2.3"}), 403, -32000, not_allowed)
     # The IP check comes after the secret and before everything else.
-    plain!(MK.post(user, ping, path: "/mcp/falsch"), 404, "404 page not found\n")
+    plain!(MK.post(user, ping, path: "/mcp/wrong"), 404, "404 page not found\n")
     json_error!(MK.request(user, "GET"), 403, -32000, not_allowed)
     json_error!(MK.post(user, ping, {"Origin" => "https://claude.ai"}), 403, -32000, not_allowed)
     json_error!(MK.post(user, ping, content_type: "text/plain"), 403, -32000, not_allowed)
@@ -490,14 +490,14 @@ describe "MCP access by client IP" do
     MK.result(multi.call(["6.6.6.6", "10.1.2.3"])).should eq MK.json("{}")
     json_error!(multi.call(["10.1.2.3", "6.6.6.6"]), 403, -32000, not_allowed)
     # Allowed clients still need the right secret and no browser.
-    plain!(MK.post(user, ping, {"X-Forwarded-For" => "10.1.2.3"}, path: "/mcp/falsch"), 404, "404 page not found\n")
+    plain!(MK.post(user, ping, {"X-Forwarded-For" => "10.1.2.3"}, path: "/mcp/wrong"), 404, "404 page not found\n")
     json_error!(MK.post(user, ping, {"X-Forwarded-For" => "10.1.2.3", "Origin" => "https://claude.ai"}), 403, -32000, "Access from a browser is not allowed.")
     MK.data(user.run { |b| b.post_raw(MK::PATH, MK.body("tools/call", %({"name":"balances"})), "application/json", MK.headers({"X-Forwarded-For" => "10.1.2.3"})) })["balances"].should eq MK.json("[]")
   end
 
   scenario "without MCP_SECRET there is no MCP endpoint", disabled do
     user = disabled.user
-    ["/mcp/e2e-geheim", "/mcp/", "/mcp/x"].each do |path|
+    ["/mcp/e2e-secret", "/mcp/", "/mcp/x"].each do |path|
       plain!(MK.post(user, ping, path: path), 404, "404 page not found\n")
       plain!(MK.request(user, "GET", path: path), 404, "404 page not found\n")
     end
@@ -607,7 +607,7 @@ describe "MCP tools" do
     MK.decode_fail(user, "create_expense", %({#{x},"currency":"USD","fx_rate":"1.2"}), "fx_rate")
     MK.decode_fail(user, "create_expense", %({#{x},"weights":["Anna"]}), "weights")
 
-    E2E::Snapshot.count(world.app.db_path, "SELECT count(*) FROM expenses").should eq 0
+    E2E::Database.count(world.app.db_path, "SELECT count(*) FROM expenses").should eq 0
   end
 
   scenario "create_reimbursement: every refusal", world do
@@ -635,7 +635,7 @@ describe "MCP tools" do
     MK.decode_fail(user, "create_reimbursement", %({"from":"Ben","to":"Anna","amount":"5","title":"Rückzahlung"}), "title")
     MK.decode_fail(user, "create_reimbursement", %({"from":"Ben","to":"Anna","amount":"5","split":"equal"}), "split")
     MK.decode_fail(user, "create_reimbursement", %({"from":["Ben"],"to":"Anna","amount":"5"}), "from")
-    E2E::Snapshot.count(world.app.db_path, "SELECT count(*) FROM expenses").should eq 0
+    E2E::Database.count(world.app.db_path, "SELECT count(*) FROM expenses").should eq 0
   end
 
   scenario "create_expense and create_reimbursement store entries", world do
@@ -1004,9 +1004,9 @@ describe "MCP tools" do
     # Nothing has changed.
     rows.call("SELECT count(*) FROM expenses")["rows"].should eq MK.json("[[7]]")
     db = world.app.db_path
-    E2E::Snapshot.count(db, "SELECT count(*) FROM expenses").should eq 7
-    E2E::Snapshot.count(db, "SELECT count(*) FROM settings WHERE key = 'a'").should eq 0
-    E2E::Snapshot.count(db, "SELECT count(*) FROM participants WHERE name = 'x'").should eq 0
+    E2E::Database.count(db, "SELECT count(*) FROM expenses").should eq 7
+    E2E::Database.count(db, "SELECT count(*) FROM settings WHERE key = 'a'").should eq 0
+    E2E::Database.count(db, "SELECT count(*) FROM participants WHERE name = 'x'").should eq 0
     MK.decode_fail(user, "sql_query", %({"query":"SELECT 1","limit":5}), "limit")
     MK.decode_fail(user, "sql_query", %({"query":["SELECT 1"]}), "query")
 
@@ -1088,12 +1088,10 @@ describe "MCP tools" do
 end
 
 describe "MCP on the seed household" do
-  db = E2E.seed_db
-  world = E2E::World.new("mcp-seed", seed_db: db)
-  after_all { world.stop }
+  world = E2E.seeded_world
 
   sql = ->(query : String) do
-    E2E::Snapshot.open(world.app.db_path) do |d|
+    E2E::Database.open(world.app.db_path) do |d|
       d.query_all(query) { |rs| Array(DB::Any).new(rs.column_count) { rs.read } }
     end
   end
@@ -1209,7 +1207,7 @@ describe "MCP on the seed household" do
 
   scenario "sql_query on real data hides YNAB", world do
     user = world.user
-    E2E::Snapshot.count(world.app.db_path, "SELECT count(*) FROM ynab_config").should be > 0
+    E2E::Database.count(world.app.db_path, "SELECT count(*) FROM ynab_config").should be > 0
     count = sql.call("SELECT count(*) FROM expenses")[0][0]
     MK.ok(user, "sql_query", %({"query":"SELECT count(*) AS n FROM expenses"}))["rows"].should eq MK.json("[[#{count}]]")
     d = MK.ok(user, "sql_query", %({"query":"SELECT * FROM expenses ORDER BY id"}))

@@ -29,10 +29,6 @@ module E2E
       content_type.starts_with?("text/html")
     end
 
-    def json? : Bool
-      content_type.starts_with?("application/json") || content_type.starts_with?("application/manifest+json")
-    end
-
     def json : JSON::Any
       JSON.parse(@body)
     end
@@ -107,11 +103,11 @@ module E2E
       request("POST", path, headers, body)
     end
 
-    def request(method : String, path : String, headers : HTTP::Headers, body : String? = nil) : Response
+    def request(method : String, path : String, headers : HTTP::Headers, body : String? = nil, chunked = false) : Response
       headers = headers.dup
       @jar.add_request_headers(headers) unless headers.has_key?("Cookie")
-      res = if body && body.bytesize > LARGE_BODY
-              exec_writing_aside(method, path, headers, body)
+      res = if body && (chunked || body.bytesize > LARGE_BODY)
+              exec_raw(method, path, headers, body, chunked)
             else
               HTTP::Client.new(URI.parse(@app.base_url)) do |client|
                 client.read_timeout = 30.seconds
@@ -129,20 +125,32 @@ module E2E
     end
 
     LARGE_BODY = 64 << 10
+    CHUNK_SIZE = 64 << 10
 
     # A server may answer a large body before reading it and then close the
     # connection; HTTP::Client would fail writing and never see the answer.
-    private def exec_writing_aside(method : String, path : String, headers : HTTP::Headers, body : String) : HTTP::Client::Response
-      uri = URI.parse(@app.base_url)
-      socket = TCPSocket.new(uri.host.not_nil!, uri.port.not_nil!)
+    # The body is written in a fiber while the answer is read.
+    private def exec_raw(method : String, path : String, headers : HTTP::Headers, body : String, chunked : Bool) : HTTP::Client::Response
+      socket = TCPSocket.new("127.0.0.1", @app.port)
       socket.read_timeout = 30.seconds
-      socket << method << ' ' << path << " HTTP/1.1\r\n"
-      socket << "Host: " << uri.authority << "\r\nContent-Length: " << body.bytesize << "\r\n"
+      socket << method << ' ' << path << " HTTP/1.1\r\nHost: " << @app.host << "\r\n"
+      socket << (chunked ? "Transfer-Encoding: chunked" : "Content-Length: #{body.bytesize}") << "\r\n"
       headers.each { |name, values| values.each { |v| socket << name << ": " << v << "\r\n" } }
       socket << "\r\n"
       socket.flush
       spawn do
-        socket.write(body.to_slice)
+        if chunked
+          bytes = body.to_slice
+          (0...bytes.size).step(CHUNK_SIZE) do |pos|
+            part = bytes[pos, Math.min(CHUNK_SIZE, bytes.size - pos)]
+            socket << part.size.to_s(16) << "\r\n"
+            socket.write(part)
+            socket << "\r\n"
+          end
+          socket << "0\r\n\r\n"
+        else
+          socket << body
+        end
         socket.flush
       rescue IO::Error
       end
@@ -154,10 +162,6 @@ module E2E
     # The participant ID this browser is logged in as (cookie `wer`).
     def me : Int64?
       @jar["wer"]?.try(&.value.to_i64?)
-    end
-
-    def logout : Nil
-      @jar.delete("wer")
     end
 
     # Calls an MCP tool via JSON-RPC (legacy protocol, no headers needed).

@@ -71,7 +71,7 @@ module FxExportSpec
       count.call(nf).should eq 1
       count.call(zip).should eq 0
       days = (0...90).map { |i| last - i.days }.select { |d| E2E::FakeECB.business_day?(d) }
-      E2E::Snapshot.open(world.app.db_path) do |db|
+      E2E::Database.open(world.app.db_path) do |db|
         db.query_one("SELECT count(*), count(DISTINCT currency), min(date), max(date) FROM fx_rates WHERE source = 'ezb'",
           as: {Int64, Int64, String, String}).should eq({days.size * 16, 16, "2026-07-06", "2026-10-02"})
         db.scalar("SELECT count(*) FROM fx_rates WHERE source <> 'ezb'").should eq 0
@@ -167,7 +167,7 @@ module FxExportSpec
       r = user.get("/api/kurs?waehrung=USD&datum=2024-05-19") # Sunday
       {r.status, r.body}.should eq({200, kurs_json("USD", "2024-05-17", rate.call("USD", "2024-05-17"), "ezb")})
       count.call(zip).should eq 1
-      E2E::Snapshot.open(world.app.db_path) do |db|
+      E2E::Database.open(world.app.db_path) do |db|
         db.scalar("SELECT value FROM settings WHERE key = 'fx.ezb_hist_bis'").should eq "2026-10-02"
         db.scalar("SELECT min(date) FROM fx_rates WHERE source = 'ezb'").should eq "2023-12-01"
       end
@@ -257,13 +257,13 @@ module FxExportSpec
         .should eq [{"waehrung", "IDR"}, {"datum", "2026-09-04"}]
       page.doc.xpath_nodes(%(//datalist[@id="kurs-waehrungen"]/option)).map(&.["value"]).should eq (currencies + ["KWD", "VND", "XAF"]).sort
 
-      manual_rows = -> { E2E::Snapshot.count(world.app.db_path, "SELECT count(*) FROM fx_rates WHERE source = 'manuell'") }
+      manual_rows = -> { E2E::Database.count(world.app.db_path, "SELECT count(*) FROM fx_rates WHERE source = 'manuell'") }
       saved = manual_rows.call
       bad_rate = ->(s : String) { "Ungültiger Wechselkurs „#{s}“ – bitte eine Zahl größer als 0 angeben (Einheiten der Währung pro 1 €)." }
       [
         {"usd", "", "1", "Bitte ein Datum angeben."},
         {"usd", "   ", "1", "Bitte ein Datum angeben."},
-        {"usd", "kaputt", "1", "Ungültiges Datum „kaputt“."},
+        {"usd", "broken", "1", "Ungültiges Datum „broken“."},
         {"usd", "30.02.2026", "1", "Ungültiges Datum „30.02.2026“."},
         {"usd", "1999-12-31", "1", "Das Datum „1999-12-31“ liegt nicht zwischen 2000 und 2100."},
         {"usd", "01.01.2101", "1", "Das Datum „01.01.2101“ liegt nicht zwischen 2000 und 2100."},
@@ -281,7 +281,7 @@ module FxExportSpec
         {"U5D", "2026-10-01", "1", "Bitte einen dreistelligen Währungscode angeben (z. B. USD)."},
         {"usd", "2026-10-01", "1.000.000.001", "Der Kurs muss größer als 0 sein."},
         # The date is checked first, then the rate, then the currency.
-        {"US", "kaputt", "abc", "Ungültiges Datum „kaputt“."},
+        {"US", "broken", "abc", "Ungültiges Datum „broken“."},
         {"eur", "2026-10-01", "abc", bad_rate.call("abc")},
       ].each do |cur, date, input, msg|
         r = user.post("/einstellungen/kurse", {"waehrung" => cur, "datum" => date, "kurs" => input})
@@ -304,13 +304,13 @@ module FxExportSpec
       [
         {"USD", "2026-10-01"}, # already deleted
         {"USD", "2026-10-02"}, # only an ECB rate
-        {"USD", "kaputt"},
+        {"USD", "broken"},
         {"", "2026-09-30"},
       ].each do |cur, date|
         r = user.post("/einstellungen/kurse/loeschen", {"waehrung" => cur, "datum" => date})
         {cur, date, r.status, r.error_message}.should eq({cur, date, 404, "Diesen manuellen Kurs gibt es nicht (mehr)."})
       end
-      E2E::Snapshot.count(world.app.db_path, "SELECT count(*) FROM fx_rates WHERE currency = 'USD' AND date = '2026-10-02' AND source = 'ezb'").should eq 1
+      E2E::Database.count(world.app.db_path, "SELECT count(*) FROM fx_rates WHERE currency = 'USD' AND date = '2026-10-02' AND source = 'ezb'").should eq 1
       manual_rows.call.should eq saved - 2
 
       activity = user.get("/aktivitaet").text
@@ -432,7 +432,7 @@ module FxExportSpec
     scenario "after a restart nothing is downloaded again", world do
       requests = {count.call(nf), count.call(zip)}
       world.restart(E2E::DEFAULT_NOW)
-      sleep 700.milliseconds
+      sleep 250.milliseconds
       user = world.user
       user.login("Anna")
       user.get("/api/kurs?waehrung=JPY&datum=2024-05-17").body.should eq kurs_json("JPY", "2024-05-17", rate.call("JPY", "2024-05-17"), "ezb")
@@ -492,10 +492,8 @@ module FxExportSpec
     end
   end
 
-  # The FX job waits for the next 16:30 after the frozen "now" with a timer on
-  # the real clock; once that moment lies in the real past, the job would refresh the
-  # daily file in a tight loop. These scenarios count downloads exactly, so
-  # they use a "now" far in the future where the timer never fires.
+  # The frozen clock does not advance, so the FX job's wait for the next 16:30
+  # never ends within a scenario and downloads can be counted exactly.
   describe "ECB schedule" do
     fri = Time.utc(2036, 11, 7)
     mon = fri + 3.days
@@ -509,14 +507,14 @@ module FxExportSpec
       ecb.close
       fakes.each(&.close)
     end
-    newest = -> { E2E::Snapshot.open(world.app.db_path) { |db| db.scalar("SELECT max(date) FROM fx_rates WHERE source = 'ezb'").as(String) } }
+    newest = -> { E2E::Database.open(world.app.db_path) { |db| db.scalar("SELECT max(date) FROM fx_rates WHERE source = 'ezb'").as(String) } }
     # Restarts at *now* (UTC) and checks which files the startup fetched.
     restart = ->(now : String, files : Array(String)) do
       before = ecb.requests.size
       world.restart(now)
       expected = files
       E2E.wait_until("startup downloads at #{now}", 10.seconds) { ecb.requests.size >= before + expected.size }
-      sleep 700.milliseconds # nothing else follows
+      sleep 250.milliseconds # nothing else follows
       ecb.requests[before..].sort.should eq expected.sort
     end
 
@@ -551,7 +549,7 @@ module FxExportSpec
       ecb.upstream = fakes[2]
       restart.call("2036-11-15T11:00:00Z", ["eurofxref-hist-90d.xml"])
       newest.call.should eq "2036-11-14"
-      E2E::Snapshot.count(world.app.db_path, "SELECT count(DISTINCT date) FROM fx_rates WHERE source = 'ezb' AND date > '2036-11-10'").should eq 4
+      E2E::Database.count(world.app.db_path, "SELECT count(DISTINCT date) FROM fx_rates WHERE source = 'ezb' AND date > '2036-11-10'").should eq 4
       # Sunday evening: still Friday's rates.
       restart.call("2036-11-16T19:00:00Z", [] of String)
       user.get("/api/kurs?waehrung=GBP&datum=2036-11-16").body.should eq kurs_json("GBP", "2036-11-14", fakes[2].rate("GBP", later), "ezb")
@@ -775,8 +773,8 @@ module FxExportSpec
       {page.status, input_value(page, "von"), input_value(page, "bis")}.should eq({200, "2026-09-01", "2026-09-30"})
 
       {
-        "von=kaputt"                    => "Ungültiges Datum „kaputt“.",
-        "von=kaputt&bis=2026-09-30"     => "Ungültiges Datum „kaputt“.",
+        "von=broken"                    => "Ungültiges Datum „broken“.",
+        "von=broken&bis=2026-09-30"     => "Ungültiges Datum „broken“.",
         "von=2026-09-01&bis=31.02.2026" => "Ungültiges Datum „31.02.2026“.",
         "bis=1999-12-31"                => "Das Datum „1999-12-31“ liegt nicht zwischen 2000 und 2100.",
         "von=%20"                       => "Bitte ein Datum angeben.",
