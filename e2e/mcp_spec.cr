@@ -1,7 +1,7 @@
 require "./e2e_helper"
 
-# The MCP server at /mcp/<secret>: transport and access rules, both protocol
-# eras, every tool with its results and messages, the SQL sandbox and the
+# The MCP server at /mcp/<secret>: transport and access rules of protocol
+# 2026-07-28, every tool with its results and messages, the SQL sandbox and the
 # write tools. The wording of argument decoding errors is not part of the
 # contract: such calls only have to fail and name the offending field
 # (MCPKit.decode_fail).
@@ -38,33 +38,30 @@ describe "MCP transport" do
   world = E2E::World.new("mcp-transport")
   after_all { world.stop }
 
-  scenario "initialize negotiates the version and explains the server", world do
+  server_info = MK.json(%({"name":"zipfelkasse","title":"Zipfelkasse – shared expenses","version":"1.1.0"}))
+  meta = MK.json({"io.modelcontextprotocol/serverInfo" => server_info}.to_json)
+
+  scenario "server/discover explains the server", world do
     user = world.user
-    r = MK.rpc(user, "initialize", %({"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"e2e","version":"1"}}), id: "0")
+    r = MK.rpc(user, "server/discover", id: "0")
     r.status.should eq 200
     r.content_type.should eq "application/json"
     r.headers["Mcp-Session-Id"]?.should be_nil
     security_headers!(r)
     r.json["id"].should eq 0
     res = MK.result(r)
-    res.as_h.keys.sort.should eq %w(capabilities instructions protocolVersion serverInfo)
-    res["protocolVersion"].should eq "2025-06-18"
+    res.as_h.keys.sort.should eq %w(_meta cacheScope capabilities instructions resultType supportedVersions ttlMs)
+    res["_meta"].should eq meta
+    res["cacheScope"].should eq "public"
     res["capabilities"].should eq MK.json(%({"tools":{"listChanged":false}}))
-    res["serverInfo"].should eq MK.json(%({"name":"zipfelkasse","title":"Zipfelkasse – shared expenses","version":"1.1.0"}))
+    res["resultType"].should eq "complete"
+    res["supportedVersions"].should eq MK.json(%(["2026-07-28"]))
+    res["ttlMs"].should eq 3600000
     res["instructions"].should eq MK::INSTRUCTIONS + "\n" + MK.today_line("2026-10-03", "Saturday") +
                                   "\nData overview: there are no expenses yet."
 
-    # Supported legacy versions are echoed, anything else gets the newest.
-    {"2025-11-25" => "2025-11-25", "2025-03-26" => "2025-03-26", "2024-11-05" => "2025-11-25",
-     "2026-07-28" => "2025-11-25", "" => "2025-11-25"}.each do |asked, got|
-      MK.result(MK.rpc(user, "initialize", %({"protocolVersion":#{asked.to_json}})))["protocolVersion"].should eq got
-    end
-    MK.result(MK.rpc(user, "initialize"))["protocolVersion"].should eq "2025-11-25"
-    MK.result(MK.rpc(user, "initialize", "null"))["protocolVersion"].should eq "2025-11-25"
-    # initialize ignores the version header.
-    MK.result(MK.rpc(user, "initialize", %({"protocolVersion":"2025-06-18"}), extra: {"MCP-Protocol-Version" => "1999-01-01"}))["protocolVersion"].should eq "2025-06-18"
-
-    r = MK.rpc(user, "notifications/initialized", id: nil)
+    # Notifications need neither _meta nor headers.
+    r = MK.post(user, MK.body("notifications/cancelled", %({"requestId":"a-0"}), id: nil), protocol: false)
     r.status.should eq 202
     r.body.should eq ""
     r.headers["Content-Type"]?.should be_nil
@@ -72,14 +69,15 @@ describe "MCP transport" do
 
     # The data overview follows the data: adding a person is a settings change.
     user.login("Anna").status.should eq 303
-    MK.result(MK.rpc(user, "initialize", %({"protocolVersion":"2025-06-18"})))["instructions"].as_s
+    MK.result(MK.rpc(user, "server/discover"))["instructions"].as_s
       .should end_with(MK.today_line("2026-10-03", "Saturday") + "\nData overview: there are no expenses yet. Values of activity.action: settings_updated.")
   end
 
   scenario "tools/list names, schemas and annotations", world do
     user = world.user
     res = MK.result(MK.rpc(user, "tools/list"))
-    res.as_h.keys.should eq ["tools"]
+    res.as_h.keys.sort.should eq %w(_meta cacheScope resultType tools ttlMs)
+    {res["ttlMs"], res["cacheScope"], res["resultType"], res["_meta"]}.should eq({3600000, "public", "complete", meta})
     tools = res["tools"].as_a
     tools.map(&.["name"].as_s).should eq READ_TOOLS + WRITE_TOOLS
     tools.map(&.["title"].as_s).should eq ["Balances and settlement", "Balance history", "Search expenses", "Statistics",
@@ -134,34 +132,30 @@ describe "MCP transport" do
       "create_expense"       => "Creates an expense, as if the payer had entered it in the app. Ask the user before calling it if anything is unclear (amount, payer, who takes part); then tell them what was created. Without participants and weights, the amount is split equally among all active people. An entry with the same date, payer, amount and title is refused unless allow_duplicate is set. Settlement payments between people are not expenses: use create_reimbursement for them.",
       "create_reimbursement" => "Records a settlement payment: from paid amount to to (e.g. a bank transfer to settle up). It changes the balances, but is not an expense. An entry with the same date, payer, amount and recipient is refused unless allow_duplicate is set.",
     }.each { |name, desc| tool.call(name)["description"].should eq desc }
-
-    # The same with the version header of a legacy client.
-    MK.result(MK.rpc(user, "tools/list", extra: {"MCP-Protocol-Version" => "2025-06-18"}))["tools"].as_a.size.should eq 9
   end
 
-  scenario "legacy requests: ping, versions, unknown methods and tools", world do
+  scenario "protocol 2026-07-28 only: versions, unknown methods and tools", world do
     user = world.user
-    MK.result(MK.rpc(user, "ping")).should eq MK.json("{}")
-    MK::LEGACY.each { |v| MK.result(MK.rpc(user, "ping", extra: {"MCP-Protocol-Version" => v})).should eq MK.json("{}") }
+    MK.result(MK.rpc(user, "ping")).should eq MK.json({"_meta" => meta, "resultType" => "complete"}.to_json)
 
-    j = json_error!(MK.rpc(user, "ping", id: "3", extra: {"MCP-Protocol-Version" => "1999-01-01"}), 400, -32022, "Unsupported protocol version.")
+    # Without the version in _meta, or with any other one, a request is refused.
+    j = json_error!(MK.post(user, MK.body("ping", id: "3")), 400, -32022, "Unsupported protocol version.")
     j["id"].should eq 3
-    j["error"]["data"].should eq MK.json(%({"requested":"1999-01-01","supported":["2026-07-28","2025-11-25","2025-06-18","2025-03-26"]}))
-    json_error!(MK.rpc(user, "ping", extra: {"MCP-Protocol-Version" => "2026-07-28"}), 400, -32020,
-      %(Header MCP-Protocol-Version is 2026-07-28, but params._meta["io.modelcontextprotocol/protocolVersion"] is missing.))
-    # Notifications: fine with a legacy version, refused (without id) otherwise.
-    r = MK.rpc(user, "notifications/cancelled", %({"requestId":1}), id: nil, extra: {"MCP-Protocol-Version" => "2025-11-25"})
-    {r.status, r.body}.should eq({202, ""})
-    j = json_error!(MK.rpc(user, "notifications/initialized", id: nil, extra: {"MCP-Protocol-Version" => "1999"}), 400, -32022, "Unsupported protocol version.")
-    j.as_h.has_key?("id").should be_false
-    j["error"]["data"]["requested"].should eq "1999"
+    j["error"]["data"].should eq MK.json(%({"supported":["2026-07-28"],"requested":null}))
+    ["2025-11-25", "2025-06-18", "2025-03-26", "2099-01-01"].each do |version|
+      j = json_error!(MK.rpc(user, "ping", id: %("a-1"), version: version), 400, -32022, "Unsupported protocol version.")
+      j["id"].should eq "a-1"
+      j["error"]["data"].should eq MK.json({supported: ["2026-07-28"], requested: version}.to_json)
+    end
+    json_error!(MK.rpc(user, "initialize", %({"protocolVersion":"2025-06-18"})), 404, -32601, "Unknown method: initialize")
+    json_error!(MK.post(user, MK.body("initialize", %({"protocolVersion":"2025-06-18"}))), 400, -32022, "Unsupported protocol version.")
 
-    j = json_error!(MK.rpc(user, "resources/list", id: "4"), 200, -32601, "Unknown method: resources/list")
+    j = json_error!(MK.rpc(user, "resources/list", id: "4"), 404, -32601, "Unknown method: resources/list")
     j["id"].should eq 4
-    json_error!(MK.rpc(user, "initialize/extra"), 200, -32601, "Unknown method: initialize/extra")
+    json_error!(MK.rpc(user, "initialize/extra"), 404, -32601, "Unknown method: initialize/extra")
     json_error!(MK.call(user, "nope"), 200, -32602, "Unknown tool: nope")
     json_error!(MK.call(user, "Balances"), 200, -32602, "Unknown tool: Balances")
-    json_error!(MK.rpc(user, "tools/call", %({"arguments":{}})), 200, -32602, "Unknown tool: ")
+    json_error!(MK.rpc(user, "tools/call", %({"arguments":{}})), 400, -32020, "Header mismatch: header Mcp-Name is missing.")
 
     # Missing or null arguments count as {}.
     expected = MK.json(%({"balances":[{"person":"Anna","balance":"0.00","balance_cents":0,"status":"settled"}],"note":"Positive balance = is owed money, negative = owes money. settlements: the transfers needed so that everyone ends at 0.","settlements":[]}))
@@ -169,7 +163,38 @@ describe "MCP transport" do
     MK.data(MK.call(user, "balances", "null")).should eq expected
     MK.data(MK.call(user, "balances", "{}")).should eq expected
     r = MK.call(user, "balances")
-    MK.result(r).as_h.keys.sort.should eq %w(content isError)
+    res = MK.result(r)
+    res.as_h.keys.sort.should eq %w(_meta content isError resultType)
+    {res["_meta"], res["resultType"], res["isError"]}.should eq({meta, "complete", false})
+
+    # A failed tool call is a result as well.
+    r = MK.call(user, "sql_query", %({"query":"DELETE FROM expenses"}))
+    MK.text(r, error: true).should eq "Only a single read-only query is allowed (SELECT … or WITH … SELECT …)."
+    {MK.result(r)["resultType"], MK.result(r)["_meta"]}.should eq({"complete", meta})
+  end
+
+  scenario "the headers must match the body", world do
+    user = world.user
+    # Mcp-Name may be Base64 encoded (with or without padding), header names are case-insensitive.
+    MK.data(MK.rpc(user, "tools/call", %({"name":"balances"}), headers: MK.protocol_headers("tools/call", MK.b64("balances"))))["note"].as_s.should start_with("Positive")
+    MK.data(MK.rpc(user, "tools/call", %({"name":"balances"}), headers: MK.protocol_headers("tools/call", MK.b64("balances").sub("=?=", "?="))))
+    MK.data(MK.rpc(user, "tools/call", %({"name":"balances"}), headers: {"mcp-protocol-version" => MK::VERSION, "MCP-METHOD" => "tools/call", "mcp-name" => "balances"}))
+
+    mismatch = ->(method : String, params : String, h : Hash(String, String), msg : String) do
+      j = json_error!(MK.rpc(user, method, params, id: %("a-1"), headers: h), 400, -32020, msg)
+      j["id"].should eq "a-1"
+    end
+    call = %({"name":"balances"})
+    mismatch.call("ping", "{}", {"Mcp-Method" => "ping"}, "Header mismatch: header MCP-Protocol-Version is missing.")
+    mismatch.call("ping", "{}", {"MCP-Protocol-Version" => "x", "Mcp-Method" => "ping"}, %(Header mismatch: MCP-Protocol-Version "x" does not match _meta "2026-07-28".))
+    mismatch.call("ping", "{}", {"MCP-Protocol-Version" => "2025-06-18", "Mcp-Method" => "ping"}, %(Header mismatch: MCP-Protocol-Version "2025-06-18" does not match _meta "2026-07-28".))
+    mismatch.call("ping", "{}", {"MCP-Protocol-Version" => MK::VERSION}, "Header mismatch: header Mcp-Method is missing.")
+    mismatch.call("ping", "{}", MK.protocol_headers("tools/list"), %(Header mismatch: Mcp-Method "tools/list" does not match method "ping".))
+    mismatch.call("tools/call", call, MK.protocol_headers("tools/call"), "Header mismatch: header Mcp-Name is missing.")
+    mismatch.call("tools/call", call, MK.protocol_headers("tools/call", "schema"), %(Header mismatch: Mcp-Name "schema" does not match params.name "balances".))
+    mismatch.call("tools/call", call, MK.protocol_headers("tools/call", MK.b64("schema")), %(Header mismatch: Mcp-Name "schema" does not match params.name "balances".))
+    mismatch.call("tools/call", call, MK.protocol_headers("tools/call", "=?base64?!!!?="), "Header mismatch: Mcp-Name is not valid Base64.")
+    mismatch.call("tools/call", call, MK.protocol_headers("tools/call", "Balances"), %(Header mismatch: Mcp-Name "Balances" does not match params.name "balances".))
   end
 
   scenario "malformed messages", world do
@@ -194,15 +219,15 @@ describe "MCP transport" do
     j = json_error!(MK.post(user, %(  \n [])), 400, -32600, "JSON-RPC batches are not supported.")
     j.as_h.has_key?("id").should be_false
 
-    j = json_error!(MK.rpc(user, "ping", %({"_meta":{"io.modelcontextprotocol/protocolVersion":7}})), 400, -32602,
+    j = json_error!(MK.post(user, MK.body("ping", %({"_meta":{"io.modelcontextprotocol/protocolVersion":7}}))), 400, -32602,
       "_meta.io.modelcontextprotocol/protocolVersion must be a non-empty string.")
     j["id"].should eq 1
-    json_error!(MK.rpc(user, "ping", %({"_meta":{"io.modelcontextprotocol/protocolVersion":""}})), 400, -32602,
+    json_error!(MK.post(user, MK.body("ping", %({"_meta":{"io.modelcontextprotocol/protocolVersion":""}}))), 400, -32602,
       "_meta.io.modelcontextprotocol/protocolVersion must be a non-empty string.")
 
     # Parse errors and wrongly typed params carry decoder texts: only the
     # code and the prefix are fixed.
-    [%({broken), "", %({"jsonrpc":"2.0","id":1,"method":"ping"} x), %({"jsonrpc":"2.0","id":1,"method":5})].each do |b|
+    [%({broken), "", "null", %({"jsonrpc":"2.0","id":1,"method":"ping"} x), %({"jsonrpc":"2.0","id":1,"method":5})].each do |b|
       r = MK.post(user, b)
       r.status.should eq 400
       code, msg = MK.error(r)
@@ -222,9 +247,9 @@ describe "MCP transport" do
 
   scenario "transport: content type, size, methods, origin, secret", world do
     user = world.user
-    ping = MK.body("ping")
+    ping = MK.message("ping")
     ["application/json; charset=utf-8", "Application/JSON", "application/json;charset=UTF-8"].each do |ct|
-      MK.result(MK.post(user, ping, content_type: ct)).should eq MK.json("{}")
+      MK.result(MK.post(user, ping, content_type: ct))
     end
     ["text/plain", "application/x-www-form-urlencoded", "application/jsonx", "application/json-rpc"].each do |ct|
       r = json_error!(MK.post(user, ping, content_type: ct), 415, -32600, "Content-Type must be application/json.")
@@ -236,12 +261,12 @@ describe "MCP transport" do
     # 1 MiB is fine, one byte more is not.
     exact = ping + " " * ((1 << 20) - ping.bytesize)
     exact.bytesize.should eq 1 << 20
-    MK.result(MK.post(user, exact)).should eq MK.json("{}")
-    json_error!(MK.post(user, exact + " "), 413, -32600, "Message too large or incomplete.")
-    big = MK.body("tools/call", %({"name":"sql_query","arguments":{"query":"SELECT '#{"x" * (1 << 20)}'"}}))
-    json_error!(MK.post(user, big), 413, -32600, "Message too large or incomplete.")
+    MK.result(MK.post(user, exact))
+    json_error!(MK.post(user, exact + " "), 413, -32600, "Message too large.")
+    big = MK.message("tools/call", %({"name":"sql_query","arguments":{"query":"SELECT '#{"x" * (1 << 20)}'"}}))
+    json_error!(MK.post(user, big), 413, -32600, "Message too large.")
 
-    # Only POST.
+    # Only POST: Kemal answers other methods before the access checks.
     %w(GET PUT DELETE PATCH OPTIONS).each do |m|
       r = MK.request(user, m)
       plain!(r, 405, "Method Not Allowed\n")
@@ -251,31 +276,29 @@ describe "MCP transport" do
     {r.status, r.headers["Allow"]?}.should eq({405, "POST"})
     r = MK.request(user, "GET", {"Accept" => "text/event-stream"})
     {r.status, r.headers["Allow"]?}.should eq({405, "POST"})
+    plain!(MK.request(user, "GET", {"Origin" => "https://evil.example"}), 405, "Method Not Allowed\n")
 
     # A browser (any Origin header, also "null") is refused – before the
-    # method and content type are looked at.
+    # content type is looked at.
     ["https://claude.ai", "null", "http://127.0.0.1"].each do |origin|
       json_error!(MK.post(user, ping, {"Origin" => origin}), 403, -32000, "Access from a browser is not allowed.")
     end
-    json_error!(MK.request(user, "GET", {"Origin" => "https://evil.example"}), 403, -32000, "Access from a browser is not allowed.")
     json_error!(MK.post(user, ping, {"Origin" => "x"}, content_type: "text/plain"), 403, -32000, "Access from a browser is not allowed.")
     security_headers!(MK.post(user, ping, {"Origin" => "x"}))
-    # The check order: method before content type, content type before size.
-    plain!(MK.request(user, "GET", {"Content-Type" => "text/plain"}), 405, "Method Not Allowed\n")
+    # The check order: content type before size.
     json_error!(MK.post(user, exact + " ", content_type: "text/plain"), 415, -32600, "Content-Type must be application/json.")
-    json_error!(MK.post(user, "[" + " " * (1 << 20) + "]"), 413, -32600, "Message too large or incomplete.")
+    json_error!(MK.post(user, "[" + " " * (1 << 20) + "]"), 413, -32600, "Message too large.")
 
     # Wrong secret (or none): a plain 404 that does not give MCP away – also
-    # for other methods and browsers.
+    # for browsers.
     ["/mcp/wrong", "/mcp/e2e-secre", "/mcp/e2e-secret2", "/mcp/E2E-SECRET", "/mcp/e2e-secret/tools", "/mcp/"].each do |path|
       r = MK.post(user, ping, path: path)
-      plain!(r, 404, "404 page not found\n")
+      plain!(r, 404, "Not Found\n")
       r.body.should_not contain("mcp")
     end
-    plain!(MK.request(user, "GET", path: "/mcp/wrong"), 404, "404 page not found\n")
-    plain!(MK.request(user, "DELETE", path: "/mcp/wrong"), 404, "404 page not found\n")
-    plain!(MK.post(user, ping, {"Origin" => "https://claude.ai"}, path: "/mcp/wrong"), 404, "404 page not found\n")
-    plain!(MK.post(user, ping, content_type: "text/plain", path: "/mcp/wrong"), 404, "404 page not found\n")
+    plain!(MK.post(user, ping, {"Origin" => "https://claude.ai"}, path: "/mcp/wrong"), 404, "Not Found\n")
+    plain!(MK.post(user, ping, content_type: "text/plain", path: "/mcp/wrong"), 404, "Not Found\n")
+    plain!(MK.request(user, "GET", path: "/mcp/e2e-secret/tools"), 404, "Not Found\n")
   end
 
   scenario "JSON-RPC ids are echoed verbatim", world do
@@ -292,13 +315,13 @@ describe "MCP transport" do
     r.status.should eq 200
     r.json.as_h.has_key?("id").should be_true
     r.json["id"].raw.should be_nil
-    MK.result(r).should eq MK.json("{}")
+    MK.result(r)
     # A request with id null is answered; only a missing id is a notification.
     r = MK.rpc(user, "tools/list", id: "null")
     MK.result(r)["tools"].as_a.size.should eq 9
     r = MK.rpc(user, "tools/list", id: nil)
     {r.status, r.body}.should eq({202, ""})
-    j = json_error!(MK.rpc(user, "nix", id: %("x-1")), 200, -32601, "Unknown method: nix")
+    j = json_error!(MK.rpc(user, "nix", id: %("x-1")), 404, -32601, "Unknown method: nix")
     j["id"].should eq "x-1"
     j = json_error!(MK.call(user, "nope"), 200, -32602, "Unknown tool: nope")
     j["id"].should eq 1
@@ -307,116 +330,46 @@ describe "MCP transport" do
   scenario "outside the web app: no identity, no CSRF check, client IP from the connection", world do
     user = world.user
     user.login("Anna")
-    ping = MK.body("ping")
+    ping = MK.message("ping")
+    pong = MK.json({"_meta" => meta, "resultType" => "complete"}.to_json)
     # The identity cookie neither helps nor hurts.
-    MK.result(user.run { |b| b.post_raw(MK::PATH, ping, "application/json", HTTP::Headers{"Cookie" => "wer=#{b.me}"}) }).should eq MK.json("{}")
-    MK.result(MK.post(user, ping, {"Cookie" => "wer=999"})).should eq MK.json("{}")
-    MK.result(MK.post(user, ping)).should eq MK.json("{}")
+    MK.result(user.run { |b| b.post_raw(MK::PATH, ping, "application/json", MK.headers(MK.protocol_headers("ping").merge({"Cookie" => "wer=#{b.me}"}))) }).should eq pong
+    MK.result(MK.post(user, ping, {"Cookie" => "wer=999"})).should eq pong
+    MK.result(MK.post(user, ping)).should eq pong
     # The web app's cross-origin protection does not apply (no Origin header).
-    MK.result(MK.post(user, ping, {"Sec-Fetch-Site" => "cross-site"})).should eq MK.json("{}")
-    MK.result(MK.post(user, ping, {"Sec-Fetch-Site" => "cross-site", "Sec-Fetch-Mode" => "cors"})).should eq MK.json("{}")
+    MK.result(MK.post(user, ping, {"Sec-Fetch-Site" => "cross-site"})).should eq pong
+    MK.result(MK.post(user, ping, {"Sec-Fetch-Site" => "cross-site", "Sec-Fetch-Mode" => "cors"})).should eq pong
     # Without a trusted proxy, forwarding headers are ignored (127.0.0.1 is allowed).
-    MK.result(MK.post(user, ping, {"X-Forwarded-For" => "6.6.6.6"})).should eq MK.json("{}")
-    MK.result(MK.post(user, ping, {"X-Real-IP" => "6.6.6.6"})).should eq MK.json("{}")
-    MK.result(MK.post(user, ping, {"X-Forwarded-For" => "garbage"})).should eq MK.json("{}")
+    MK.result(MK.post(user, ping, {"X-Forwarded-For" => "6.6.6.6"})).should eq pong
+    MK.result(MK.post(user, ping, {"X-Real-IP" => "6.6.6.6"})).should eq pong
+    MK.result(MK.post(user, ping, {"X-Forwarded-For" => "garbage"})).should eq pong
     # Logged out: no redirect to /wer below /mcp/.
     anonymous = world.user
-    plain!(anonymous.run { |b| b.request("GET", "/mcp/wrong", HTTP::Headers.new) }, 404, "404 page not found\n")
-    plain!(anonymous.run { |b| b.request("GET", "/mcp/", HTTP::Headers.new) }, 404, "404 page not found\n")
-    MK.result(anonymous.run(&.mcp("ping"))).should eq MK.json("{}")
+    plain!(anonymous.run { |b| b.request("POST", "/mcp/wrong", HTTP::Headers.new) }, 404, "Not Found\n")
+    plain!(anonymous.run { |b| b.request("GET", "/mcp/", HTTP::Headers.new) }, 404, "Not Found\n")
+    MK.result(anonymous.run(&.mcp("ping"))).should eq pong
     # The web app itself is unchanged.
     anonymous.get("/").status.should eq 303
-  end
-
-  scenario "modern protocol 2026-07-28: _meta and headers", world do
-    user = world.user
-    server_info = MK.json(%({"name":"zipfelkasse","title":"Zipfelkasse – shared expenses","version":"1.1.0"}))
-    meta = MK.json({"io.modelcontextprotocol/serverInfo" => server_info}.to_json)
-
-    r = MK.modern(user, "server/discover")
-    r.json["id"].should eq "a-1"
-    res = MK.result(r)
-    res.as_h.keys.sort.should eq %w(_meta cacheScope capabilities instructions resultType supportedVersions ttlMs)
-    res["_meta"].should eq meta
-    res["cacheScope"].should eq "public"
-    res["capabilities"].should eq MK.json(%({"tools":{"listChanged":false}}))
-    res["resultType"].should eq "complete"
-    res["supportedVersions"].should eq MK.json(MK::ALL.to_json)
-    res["ttlMs"].should eq 3600000
-    res["instructions"].as_s.should start_with(MK::INSTRUCTIONS + "\n" + MK.today_line("2026-10-03", "Saturday") + "\nData overview: ")
-    # server/discover also works for legacy clients (without resultType).
-    legacy = MK.result(MK.rpc(user, "server/discover"))
-    legacy["supportedVersions"].should eq MK.json(MK::ALL.to_json)
-    legacy.as_h.has_key?("resultType").should be_false
-
-    res = MK.result(MK.modern(user, "tools/list"))
-    res["tools"].as_a.map(&.["name"].as_s).should eq READ_TOOLS + WRITE_TOOLS
-    {res["ttlMs"], res["cacheScope"], res["resultType"], res["_meta"]}.should eq({3600000, "public", "complete", meta})
-
-    MK.result(MK.modern(user, "ping")).should eq MK.json({"_meta" => meta, "resultType" => "complete"}.to_json)
-
-    r = MK.modern(user, "tools/call", %({"name":"balances","arguments":{}}))
-    res = MK.result(r)
-    res.as_h.keys.sort.should eq %w(_meta content isError resultType)
-    {res["_meta"], res["resultType"], res["isError"]}.should eq({meta, "complete", false})
-    MK.data(r)["balances"].as_a.map(&.["person"]).should eq ["Anna"]
-    # Mcp-Name may be Base64 encoded (with or without padding), header names are case-insensitive.
-    MK.data(MK.modern(user, "tools/call", %({"name":"balances"}), headers: MK.modern_headers("tools/call", MK.b64("balances"))))["note"].as_s.should start_with("Positive")
-    MK.data(MK.modern(user, "tools/call", %({"name":"balances"}), headers: MK.modern_headers("tools/call", MK.b64("balances").sub("=?=", "?="))))
-    MK.data(MK.modern(user, "tools/call", %({"name":"balances"}), headers: {"mcp-protocol-version" => MK::MODERN, "MCP-METHOD" => "tools/call", "mcp-name" => "balances"}))
-    # A failed tool call is a result as well.
-    r = MK.modern(user, "tools/call", %({"name":"sql_query","arguments":{"query":"DELETE FROM expenses"}}))
-    MK.text(r, error: true).should eq "Only a single read-only query is allowed (SELECT … or WITH … SELECT …)."
-    {MK.result(r)["resultType"], MK.result(r)["_meta"]}.should eq({"complete", meta})
-
-    mismatch = ->(method : String, params : String, h : Hash(String, String), msg : String) do
-      j = json_error!(MK.modern(user, method, params, headers: h), 400, -32020, msg)
-      j["id"].should eq "a-1"
-    end
-    call = %({"name":"balances"})
-    mismatch.call("ping", "{}", {"Mcp-Method" => "ping"}, "Header mismatch: header MCP-Protocol-Version is missing.")
-    mismatch.call("ping", "{}", {"MCP-Protocol-Version" => "x", "Mcp-Method" => "ping"}, %(Header mismatch: MCP-Protocol-Version "x" does not match _meta "2026-07-28".))
-    mismatch.call("ping", "{}", {"MCP-Protocol-Version" => "2025-06-18", "Mcp-Method" => "ping"}, %(Header mismatch: MCP-Protocol-Version "2025-06-18" does not match _meta "2026-07-28".))
-    mismatch.call("ping", "{}", {"MCP-Protocol-Version" => MK::MODERN}, "Header mismatch: header Mcp-Method is missing.")
-    mismatch.call("ping", "{}", MK.modern_headers("tools/list"), %(Header mismatch: Mcp-Method "tools/list" does not match method "ping".))
-    mismatch.call("tools/call", call, MK.modern_headers("tools/call"), "Header mismatch: header Mcp-Name is missing.")
-    mismatch.call("tools/call", call, MK.modern_headers("tools/call", "schema"), %(Header mismatch: Mcp-Name "schema" does not match params.name "balances".))
-    mismatch.call("tools/call", call, MK.modern_headers("tools/call", MK.b64("schema")), %(Header mismatch: Mcp-Name "schema" does not match params.name "balances".))
-    mismatch.call("tools/call", call, MK.modern_headers("tools/call", "=?base64?!!!?="), "Header mismatch: Mcp-Name is not valid Base64.")
-    mismatch.call("tools/call", call, MK.modern_headers("tools/call", "Balances"), %(Header mismatch: Mcp-Name "Balances" does not match params.name "balances".))
-
-    j = json_error!(MK.modern(user, "x/y"), 404, -32601, "Unknown method: x/y")
-    j["id"].should eq "a-1"
-    json_error!(MK.modern(user, "initialize", %({"protocolVersion":"2026-07-28"})), 404, -32601, "Unknown method: initialize")
-    json_error!(MK.modern(user, "tools/call", %({"name":"nope"})), 200, -32602, "Unknown tool: nope")
-    j = json_error!(MK.modern(user, "ping", version: "2099-01-01"), 400, -32022, "Unsupported protocol version.")
-    j["error"]["data"].should eq MK.json(%({"requested":"2099-01-01","supported":["2026-07-28","2025-11-25","2025-06-18","2025-03-26"]}))
-    j["id"].should eq "a-1"
-    # An older version in _meta is answered the legacy way.
-    MK.result(MK.modern(user, "ping", version: "2025-06-18")).should eq MK.json("{}")
-    MK.result(MK.modern(user, "tools/list", version: "2025-11-25")).as_h.keys.should eq ["tools"]
-    # Modern notifications need no headers.
-    r = MK.modern(user, "notifications/cancelled", %({"requestId":"a-0"}), id: nil, headers: {} of String => String)
-    {r.status, r.body}.should eq({202, ""})
   end
 
   scenario "today and the cache lifetime follow the server time zone", world do
     user = world.user
     world.restart("2026-10-03T21:30:00Z") # 23:30 in Berlin
-    MK.result(MK.rpc(user, "initialize", %({"protocolVersion":"2025-06-18"})))["instructions"].as_s
-      .should contain("\n" + MK.today_line("2026-10-03", "Saturday") + "\n")
-    MK.result(MK.modern(user, "server/discover"))["ttlMs"].should eq 1800000
-    MK.result(MK.modern(user, "tools/list"))["ttlMs"].should eq 3600000
+    res = MK.result(MK.rpc(user, "server/discover"))
+    res["instructions"].as_s.should contain("\n" + MK.today_line("2026-10-03", "Saturday") + "\n")
+    res["ttlMs"].should eq 1800000
+    MK.result(MK.rpc(user, "tools/list"))["ttlMs"].should eq 3600000
 
     world.restart("2026-10-03T22:30:00Z") # already Sunday in Berlin
-    MK.result(MK.rpc(user, "initialize"))["instructions"].as_s.should contain("\n" + MK.today_line("2026-10-04", "Sunday") + "\n")
-    MK.result(MK.modern(user, "server/discover"))["ttlMs"].should eq 3600000
+    res = MK.result(MK.rpc(user, "server/discover"))
+    res["instructions"].as_s.should contain("\n" + MK.today_line("2026-10-04", "Sunday") + "\n")
+    res["ttlMs"].should eq 3600000
     MK.text(MK.call(user, "schema")).should start_with(MK.today_line("2026-10-04", "Sunday") + "\n\nDatabase of Zipfelkasse (SQLite). A single group.\n")
   end
 end
 
 describe "MCP access by client IP" do
-  ping = MK.body("ping")
+  ping = MK.message("ping")
   not_allowed = "Access from this address is not allowed."
 
   only_10 = E2E::World.new("mcp-cidr", env: {"MCP_ALLOWED_CIDRS" => "10.0.0.0/8"})
@@ -436,9 +389,9 @@ describe "MCP access by client IP" do
     # Forwarding headers are ignored without a trusted proxy.
     json_error!(MK.post(user, ping, {"X-Forwarded-For" => "10.1.2.3"}), 403, -32000, not_allowed)
     json_error!(MK.post(user, ping, {"X-Real-IP" => "10.1.2.3"}), 403, -32000, not_allowed)
-    # The IP check comes after the secret and before everything else.
-    plain!(MK.post(user, ping, path: "/mcp/wrong"), 404, "404 page not found\n")
-    json_error!(MK.request(user, "GET"), 403, -32000, not_allowed)
+    # The IP check comes after the secret and before the body is looked at.
+    plain!(MK.post(user, ping, path: "/mcp/wrong"), 404, "Not Found\n")
+    plain!(MK.request(user, "GET"), 405, "Method Not Allowed\n")
     json_error!(MK.post(user, ping, {"Origin" => "https://claude.ai"}), 403, -32000, not_allowed)
     json_error!(MK.post(user, ping, content_type: "text/plain"), 403, -32000, not_allowed)
     json_error!(MK.post(user, "{broken"), 403, -32000, not_allowed)
@@ -448,7 +401,7 @@ describe "MCP access by client IP" do
 
   scenario "behind a trusted proxy the rightmost untrusted X-Forwarded-For hop counts", proxied do
     user = proxied.user
-    allowed = ->(h : Hash(String, String)) { MK.result(MK.post(user, ping, h)).should eq MK.json("{}") }
+    allowed = ->(h : Hash(String, String)) { MK.result(MK.post(user, ping, h)) }
     refused = ->(h : Hash(String, String)) { json_error!(MK.post(user, ping, h), 403, -32000, not_allowed) }
     # The proxy itself (127.0.0.1) is not allowed.
     refused.call({} of String => String)
@@ -465,13 +418,13 @@ describe "MCP access by client IP" do
     # Only trusted hops: the leftmost one.
     allowed.call({"X-Forwarded-For" => "10.0.0.1, 127.0.0.1"})
     refused.call({"X-Forwarded-For" => "127.0.0.1, 10.0.0.1"})
-    # Unparsable rightmost hops fail closed; ports and IPv4-mapped IPv6 are understood.
+    # Unparsable rightmost hops (also with a port) fail closed; IPv4-mapped IPv6 is understood.
     refused.call({"X-Forwarded-For" => "garbage"})
     refused.call({"X-Forwarded-For" => "10.1.2.3, garbage"})
     refused.call({"X-Forwarded-For" => "[::1]"})
-    allowed.call({"X-Forwarded-For" => "10.1.2.3:4711"})
+    refused.call({"X-Forwarded-For" => "10.1.2.3:4711"})
     allowed.call({"X-Forwarded-For" => "::ffff:10.1.2.3"})
-    allowed.call({"X-Forwarded-For" => "[::ffff:10.1.2.3]:443"})
+    refused.call({"X-Forwarded-For" => "[::ffff:10.1.2.3]:443"})
     refused.call({"X-Forwarded-For" => "2001:db8::1"})
     # Without X-Forwarded-For, X-Real-IP is used.
     allowed.call({"X-Real-IP" => "10.9.9.9"})
@@ -482,24 +435,24 @@ describe "MCP access by client IP" do
     # Header lines are joined in order.
     multi = ->(values : Array(String)) do
       user.run do |b|
-        h = MK.headers
+        h = MK.headers(MK.protocol_headers("ping"))
         values.each { |v| h.add("X-Forwarded-For", v) }
         b.post_raw(MK::PATH, ping, "application/json", h)
       end
     end
-    MK.result(multi.call(["6.6.6.6", "10.1.2.3"])).should eq MK.json("{}")
+    MK.result(multi.call(["6.6.6.6", "10.1.2.3"]))
     json_error!(multi.call(["10.1.2.3", "6.6.6.6"]), 403, -32000, not_allowed)
     # Allowed clients still need the right secret and no browser.
-    plain!(MK.post(user, ping, {"X-Forwarded-For" => "10.1.2.3"}, path: "/mcp/wrong"), 404, "404 page not found\n")
+    plain!(MK.post(user, ping, {"X-Forwarded-For" => "10.1.2.3"}, path: "/mcp/wrong"), 404, "Not Found\n")
     json_error!(MK.post(user, ping, {"X-Forwarded-For" => "10.1.2.3", "Origin" => "https://claude.ai"}), 403, -32000, "Access from a browser is not allowed.")
-    MK.data(user.run { |b| b.post_raw(MK::PATH, MK.body("tools/call", %({"name":"balances"})), "application/json", MK.headers({"X-Forwarded-For" => "10.1.2.3"})) })["balances"].should eq MK.json("[]")
+    MK.data(MK.post(user, MK.message("tools/call", %({"name":"balances"})), {"X-Forwarded-For" => "10.1.2.3"}))["balances"].should eq MK.json("[]")
   end
 
   scenario "without MCP_SECRET there is no MCP endpoint", disabled do
     user = disabled.user
     ["/mcp/e2e-secret", "/mcp/", "/mcp/x"].each do |path|
-      plain!(MK.post(user, ping, path: path), 404, "404 page not found\n")
-      plain!(MK.request(user, "GET", path: path), 404, "404 page not found\n")
+      plain!(MK.post(user, ping, path: path), 404, "Not Found\n")
+      plain!(MK.request(user, "GET", path: path), 404, "Not Found\n")
     end
     user.get("/healthz").status.should eq 200
   end
@@ -526,7 +479,7 @@ describe "MCP tools" do
     text.should contain("\n#{people_line}\nCategories (id: name): 1: Lebensmittel, 2: Restaurant, 3: Haushalt, 4: Miete & Nebenkosten, 5: Transport, 6: Reisen, 7: Freizeit, 8: Gesundheit (archived), 9: Geschenke, 10: Sonstiges\n\nCREATE statements:\nCREATE TABLE participants (\n")
     MK.data(MK.call(user, "balances"))["balances"].as_a.map(&.["person"].as_s).should eq %w(Anna Ben Cleo Dora)
     MK.fail(user, "search_expenses", %({"person":"Zoe"})).should eq %(Unknown person "Zoe". #{all_people})
-    MK.result(MK.rpc(user, "initialize"))["instructions"].as_s.should end_with("\nData overview: there are no expenses yet. Values of activity.action: settings_updated.")
+    MK.result(MK.rpc(user, "server/discover"))["instructions"].as_s.should end_with("\nData overview: there are no expenses yet. Values of activity.action: settings_updated.")
   end
 
   scenario "create_expense: every refusal", world do
@@ -681,7 +634,7 @@ describe "MCP tools" do
     d["created"].should eq MK.json(%({"id":7,"date":"2026-10-03","title":"Taxi","paid_by":"Ben","amount":"8.90","amount_cents":890,"original":"10.00 USD","fx_rate":#{friday},"fx_source":"ezb","split":"equal","shares":[{"person":"Anna","amount":"2.23","amount_cents":223},{"person":"Ben","amount":"2.22","amount_cents":222},{"person":"Cleo","amount":"2.22","amount_cents":222},{"person":"Dora","amount":"2.23","amount_cents":223}]}))
     d["note"].should eq note.call(7, "Ben")
 
-    MK.result(MK.rpc(user, "initialize"))["instructions"].as_s.should end_with(
+    MK.result(MK.rpc(user, "server/discover"))["instructions"].as_s.should end_with(
       "\nData overview: 6 expenses and 1 reimbursements dated 2025-09-10 to 2026-10-03. 3 of the expenses (50.0%) have no category. Values of activity.action: expense_created, settings_updated.")
   end
 
@@ -690,7 +643,7 @@ describe "MCP tools" do
     note = "Positive balance = is owed money, negative = owes money. settlements: the transfers needed so that everyone ends at 0."
     MK.ok(user, "balances").should eq MK.json(%({"balances":[{"person":"Anna","balance":"-36.93","balance_cents":-3693,"status":"owes money"},{"person":"Ben","balance":"-5.52","balance_cents":-552,"status":"owes money"},{"person":"Cleo","balance":"-21.92","balance_cents":-2192,"status":"owes money"},{"person":"Dora","balance":"64.37","balance_cents":6437,"status":"is owed money"}],"note":#{note.to_json},"settlements":[{"from":"Anna","to":"Dora","amount":"36.93","amount_cents":3693},{"from":"Cleo","to":"Dora","amount":"21.92","amount_cents":2192},{"from":"Ben","to":"Dora","amount":"5.52","amount_cents":552}]}))
     MK.decode_fail(user, "balances", %({"x":1}), "x")
-    MK.text(MK.post(user, MK.body("tools/call", %({"name":"balances","arguments":[]}))), error: true).should_not contain("Internal error")
+    MK.text(MK.call(user, "balances", "[]"), error: true).should_not contain("Internal error")
 
     rows = ->(key : String, list : Array({String, Array(Int32)}), names : Array(String)) do
       MK.json(list.map { |period, cents|
@@ -1047,7 +1000,8 @@ describe "MCP tools" do
     user.login("Anna")
     r = user.run do |b|
       args = %({"title":"Gartenmöbel","amount":"23.40","paid_by":"Cleo","date":"2026-09-01","split":"amount","weights":{"Anna":"15.00","Ben":8.40}})
-      b.post_raw(MK::PATH, MK.body("tools/call", %({"name":"create_expense","arguments":#{args}})), "application/json", HTTP::Headers{"Cookie" => "wer=#{b.me}"})
+      b.post_raw(MK::PATH, MK.message("tools/call", %({"name":"create_expense","arguments":#{args}})), "application/json",
+        MK.headers(MK.protocol_headers("tools/call", "create_expense").merge({"Cookie" => "wer=#{b.me}"})))
     end
     MK.data(r).should eq MK.json(%({"created":{"id":12,"date":"2026-09-01","title":"Gartenmöbel","paid_by":"Cleo","amount":"23.40","amount_cents":2340,"split":"amount","shares":[{"person":"Anna","amount":"15.00","amount_cents":1500},{"person":"Ben","amount":"8.40","amount_cents":840}]},"note":#{note.call(12, "Cleo").to_json}}))
     # A reimbursement in a foreign currency with a manual rate (rounded half away from zero).
@@ -1135,7 +1089,7 @@ describe "MCP on the seed household" do
     e, rb, nocat, first, last = sql.call("SELECT sum(is_reimbursement = 0), sum(is_reimbursement = 1), sum(is_reimbursement = 0 AND category_id IS NULL), min(date), max(date) FROM expenses WHERE deleted_at IS NULL")[0]
     actions = sql.call("SELECT DISTINCT action FROM activity ORDER BY action").map(&.[0].as(String))
     pct = "%.1f" % (int.call(nocat) * 100.0 / int.call(e))
-    MK.result(MK.rpc(user, "initialize", %({"protocolVersion":"2025-03-26"})))["instructions"].as_s.should end_with(
+    MK.result(MK.rpc(user, "server/discover"))["instructions"].as_s.should end_with(
       "\nData overview: #{e} expenses and #{rb} reimbursements dated #{first} to #{last}. #{nocat} of the expenses (#{pct}%) have no category. Values of activity.action: #{actions.join(", ")}.")
 
     # Names with quotes and the people list including archived ones.

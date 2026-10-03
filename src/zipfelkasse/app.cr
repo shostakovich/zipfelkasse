@@ -28,7 +28,6 @@ module Zipfelkasse
         ->(stopper : Stopper) { @ynab.run(stopper) },
       ]
       configure_kemal
-      mount_mcp
       Web::Gate.new(@deps).install
       Web.install_errors(store)
       register_routes
@@ -48,12 +47,12 @@ module Zipfelkasse
       use Web::QuietDisconnects.new
     end
 
-    private def mount_mcp : Nil
+    private def register_mcp : Nil
       if @deps.config.mcp_secret.empty?
         Log.info { "MCP disabled (MCP_SECRET is empty)" }
         return
       end
-      use MCP::Mount.new(MCP::Server.new(@deps))
+      MCP::Server.new(@deps).register
       Log.info(&.emit("MCP enabled", path: "/mcp/***", allowed: @deps.config.mcp_allowed_cidrs.map(&.to_s),
         proxies: @deps.config.trusted_proxies.map(&.to_s)))
     end
@@ -69,6 +68,7 @@ module Zipfelkasse
       Recurring::Handlers.new(@deps, @recurring).register
       YNAB::Handlers.new(@deps, @ynab).register
       Export::Handlers.new(@deps, Export::Service.new(@deps)).register
+      register_mcp
     end
   end
 

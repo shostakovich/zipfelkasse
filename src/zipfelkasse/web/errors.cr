@@ -69,7 +69,7 @@ module Zipfelkasse::Web
       {error: message || text.api}.to_json
     elsif path.starts_with?("/mcp/")
       response.content_type = "text/plain; charset=utf-8"
-      status == 404 ? "404 page not found\n" : "#{text.page}\n"
+      "#{HTTP::Status.new(status).description}\n"
     else
       message ||= text.page
       render_page(env, store, status, Page.new(message), ErrorView.new(message))

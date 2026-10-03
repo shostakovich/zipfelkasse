@@ -170,9 +170,7 @@ describe "Read everything" do
     names = people.map(&.[1])
     ok = ->(tool : String, args : String) { E2E::MCPKit.text(user.tool(tool, JSON.parse(args).as_h)) }
     refused = ->(tool : String, args : String) { E2E::MCPKit.text(user.tool(tool, JSON.parse(args).as_h), error: true) }
-    init = E2E::MCPKit.result(user.mcp("initialize", {"protocolVersion" => JSON::Any.new("2025-06-18"), "capabilities" => JSON.parse("{}"),
-                                                      "clientInfo" => JSON.parse(%({"name":"e2e","version":"1"}))}))
-    init["instructions"].as_s.should contain "Zipfelkasse"
+    E2E::MCPKit.result(user.mcp("server/discover"))["instructions"].as_s.should contain "Zipfelkasse"
     E2E::MCPKit.result(user.mcp("tools/list"))["tools"].as_a.map(&.["name"].as_s).should contain "sql_query"
 
     balances = JSON.parse(ok.call("balances", "{}"))["balances"].as_a

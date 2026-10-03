@@ -30,11 +30,11 @@ describe Config do
     c.mcp_secret.should eq "secret"
     c.location.name.should eq "Europe/Berlin"
     c.location_name.should eq "Europe/Berlin"
-    c.mcp_allowed_cidrs.any?(&.contains?("10.1.2.3")).should be_true
-    c.mcp_allowed_cidrs.any?(&.contains?("::ffff:192.168.1.5")).should be_true
-    c.mcp_allowed_cidrs.any?(&.contains?("192.168.1.6")).should be_false
-    c.trusted_proxies.any?(&.contains?("172.18.0.2")).should be_true
-    c.trusted_proxies.any?(&.contains?("fd00::1")).should be_true
+    c.mcp_allowed_cidrs.any?(&.contains?(Config::Prefix.parse("10.1.2.3"))).should be_true
+    c.mcp_allowed_cidrs.any?(&.contains?(Config::Prefix.parse("::ffff:192.168.1.5"))).should be_true
+    c.mcp_allowed_cidrs.any?(&.contains?(Config::Prefix.parse("192.168.1.6"))).should be_false
+    c.trusted_proxies.any?(&.contains?(Config::Prefix.parse("172.18.0.2"))).should be_true
+    c.trusted_proxies.any?(&.contains?(Config::Prefix.parse("fd00::1"))).should be_true
   end
 
   it "rejects broken values" do
@@ -74,12 +74,5 @@ describe Config do
   it "reads the test variables from the environment only when compiled with -Dtest_hooks" do
     c = Config.from_env({"ZIPFELKASSE_TEST_YNAB_URL" => "http://127.0.0.1:9/v1"})
     c.ynab_base_url.should eq(Config::TEST_HOOKS ? "http://127.0.0.1:9/v1" : "")
-  end
-
-  it "masks and prints prefixes" do
-    Config::Prefix.parse("10.1.2.3/8").to_s.should eq "10.0.0.0/8"
-    Config::Prefix.parse("fd00::1/8").to_s.should eq "fd00::/8"
-    Config::Prefix.parse("::ffff:1.2.3.4").to_s.should eq "1.2.3.4/32"
-    Config::Prefix.parse("2001:db8::1").to_s.should eq "2001:db8::1/128"
   end
 end

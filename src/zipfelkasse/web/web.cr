@@ -38,13 +38,6 @@ module Zipfelkasse::Web
     id if id && id > 0
   end
 
-  def self.text_error(ctx : HTTP::Server::Context, status : Int32, message : String) : Nil
-    ctx.response.status_code = status
-    ctx.response.content_type = "text/plain; charset=utf-8"
-    ctx.response.headers["X-Content-Type-Options"] = "nosniff"
-    ctx.response.print message, '\n'
-  end
-
   # Only local paths are allowed as a return target. Rejected are control
   # characters and backslashes (browsers strip tabs/newlines or read "\" as
   # "/", so "/\t/evil" would become "//evil"), anything with a scheme or

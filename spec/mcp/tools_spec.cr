@@ -1,35 +1,11 @@
 require "../spec_helper"
 
-private SECRET    = "s3cr3t-0123456789abcdef"
-private PATH      = "/mcp/#{SECRET}"
-private ANTHROPIC = "160.79.104.10:40000" # in the default MCP_ALLOWED_CIDRS
-
 private module Fixture
   class_property! server : MCP::Server
 end
 
-private def post(body : String, headers = {} of String => String, remote : String? = ANTHROPIC, path : String = PATH) : {Int32, String}
-  request_headers = HTTP::Headers{"Content-Type" => "application/json", "Accept" => "application/json, text/event-stream"}
-  headers.each { |name, value| request_headers[name] = value }
-  request = HTTP::Request.new("POST", path, request_headers, body)
-  remote.try do |address|
-    host, _, port = address.rpartition(':')
-    request.remote_address = Socket::IPAddress.new(host, port.to_i)
-  end
-  io = IO::Memory.new
-  response = HTTP::Server::Response.new(io)
-  Fixture.server.call(HTTP::Server::Context.new(request, response))
-  response.close
-  io.rewind
-  parsed = HTTP::Client::Response.from_io(io)
-  {parsed.status_code, parsed.body}
-end
-
-# Calls a tool: its text and whether it is an error.
 private def call(name : String, arguments : String = "{}") : {String, Bool}
-  body = %({"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":#{name.to_json},"arguments":#{arguments}}})
-  result = JSON.parse(post(body, {"MCP-Protocol-Version" => "2025-06-18"})[1])["result"]
-  {result["content"][0]["text"].as_s, result["isError"].as_bool}
+  Fixture.server.run_tool(name, arguments)
 end
 
 private def data(name : String, arguments : String = "{}") : JSON::Any
@@ -54,26 +30,29 @@ describe MCP::Server do
   use_household
 
   before_each do
-    household.deps.config.mcp_secret = SECRET
-    household.deps.config.trusted_proxies = Config::Prefix.parse_list("10.0.0.1")
     household.deps.config.location = Time::Location::UTC
     Fixture.server = MCP::Server.new(household.deps)
   end
 
-  describe "access log" do
-    it "logs requests and refusals, but never the secret" do
-      ping = %({"jsonrpc":"2.0","id":1,"method":"ping"})
-      post(ping)
-      post(ping, path: "/mcp/wrong")
-      post(ping, remote: "1.2.3.4:1")
-      post(ping, {"Origin" => "https://evil.example"})
+  it "logs requests and refusals, but never the secret" do
+    secret = "s3cr3t-0123456789abcdef"
+    config = Config.new
+    config.mcp_secret = secret
+    server = TestServer.new(config, household.store)
+    anthropic = Socket::IPAddress.new("160.79.104.10", 40000)
+    headers = HTTP::Headers{"Content-Type" => "application/json", "MCP-Protocol-Version" => "2026-07-28", "Mcp-Method" => "ping"}
+    ping = %({"jsonrpc":"2.0","id":1,"method":"ping","params":{"_meta":{"#{MCP::META_PROTOCOL_VERSION}":"2026-07-28"}}})
 
-      log = SPEC_LOG.to_s
-      ["method=ping", "ip=160.79.104.10", "wrong secret", "IP not allowed", "Origin header rejected"].each do |entry|
-        log.should contain entry
-      end
-      log.should_not contain SECRET[0, 10]
+    server.request("POST", "/mcp/#{secret}", ping, headers, remote: anthropic).status_code.should eq 200
+    server.request("POST", "/mcp/wrong", ping, headers, remote: anthropic).status_code.should eq 404
+    server.request("POST", "/mcp/#{secret}", ping, headers, remote: Socket::IPAddress.new("1.2.3.4", 1)).status_code.should eq 403
+    server.request("POST", "/mcp/#{secret}", ping, headers.dup.tap(&.["Origin"] = "https://evil.example"), remote: anthropic).status_code.should eq 403
+
+    log = SPEC_LOG.to_s
+    ["method=ping", "ip=160.79.104.10", "wrong secret", "IP not allowed", "Origin header rejected"].each do |entry|
+      log.should contain entry
     end
+    log.should_not contain secret[0, 10]
   end
 
   describe "category arguments" do

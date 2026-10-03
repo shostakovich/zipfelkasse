@@ -80,7 +80,7 @@ instructions and the `schema` text state today's date in the server time zone (`
 
 The instructions also contain a data overview, read from the database per request: the number of expenses and
 reimbursements, their date range, how many expenses have no category, and all values of `activity.action`. As
-`server/discover` may be cached for up to an hour, the overview can be that old for modern clients.
+`server/discover` may be cached for up to an hour, the overview can be that old.
 
 Every amount appears twice: as locale-neutral text `"1234.56"` (dot as decimal separator, no thousands separator, no
 currency sign) and as an integer number of cents (field ending in `_cents`), e.g. `amount`/`amount_cents`,
@@ -125,19 +125,22 @@ visible once they are listed in `Store::EXPOSED_TABLES`.
 
 ## Access
 
-There are three checks, in this order:
+Only `POST` is served; any other method gets **405** before the checks below. There are three checks, in this
+order:
 
-1. The secret in the path is compared in constant time. If it is wrong, the response is **404** and reveals nothing.
+1. The secret in the path is compared in constant time. If it is wrong, the response is a plain **404** and reveals
+   nothing.
 2. The client IP must be in `MCP_ALLOWED_CIDRS`. The default is `160.79.104.0/21`, which is Anthropic. Otherwise the
    response is **403**.
 3. A non-empty `Origin` header results in **403**. Browsers should never access this endpoint, which is why the
    MCP Inspector in the browser does not work either.
 
 For the client IP: if the connection comes from an address in `TRUSTED_PROXIES`, `X-Forwarded-For` counts. It is
-read from the right, and the first address that is not itself a trusted proxy counts. If the header is missing,
-`X-Real-IP` applies. In all other cases the TCP address counts, and forwarded headers are ignored.
+read from the right, and the first address that is not itself a trusted proxy counts. Entries must be plain
+addresses (no port); anything else is refused. If the header is missing, `X-Real-IP` applies. In all other cases the
+TCP address counts, and forwarded headers are ignored.
 
-Every access is logged: IP, method, tool, status and duration. The path containing the secret is never logged.
+Every access is logged: IP, JSON-RPC method, tool, status and duration. The path containing the secret is never logged.
 
 ### Environment variables
 
@@ -230,14 +233,7 @@ Locally, your own address must be allowed, e.g. with `MCP_ALLOWED_CIDRS=127.0.0.
 ```sh
 URL=http://localhost:8080/mcp/$MCP_SECRET
 
-# Legacy client (initialize handshake)
-curl -s $URL -H 'Content-Type: application/json' -H 'Accept: application/json, text/event-stream' \
-  -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"curl","version":"1"}}}'
-curl -s $URL -H 'Content-Type: application/json' -H 'MCP-Protocol-Version: 2025-06-18' \
-  -d '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"balances","arguments":{}}}'
-
-# Modern client (2026-07-28, stateless, mandatory headers)
-META='"_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28","io.modelcontextprotocol/clientCapabilities":{}}'
+META='"_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28"}'
 curl -s $URL -H 'Content-Type: application/json' -H 'MCP-Protocol-Version: 2026-07-28' -H 'Mcp-Method: server/discover' \
   -d "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"server/discover\",\"params\":{$META}}"
 curl -s $URL -H 'Content-Type: application/json' -H 'MCP-Protocol-Version: 2026-07-28' -H 'Mcp-Method: tools/call' -H 'Mcp-Name: statistics' \
@@ -250,15 +246,13 @@ curl -s -o /dev/null -w '%{http_code}\n' $URL                                   
 
 ## Protocol
 
-The server is "dual era":
+Only protocol version 2026-07-28 is supported (stateless, as current Claude clients speak it):
 
-- **Modern (2026-07-28):** stateless. Every request carries `_meta.io.modelcontextprotocol/protocolVersion`. The
-  headers `MCP-Protocol-Version`, `Mcp-Method` and, for `tools/call`, `Mcp-Name` (also as `=?base64?…?=`) must match
-  the body, otherwise the response is 400 with `-32020`. An unknown version results in 400 with `-32022` and
-  `data.supported`, an unknown method in 404 with `-32601`. Supported are `server/discover`, `tools/list`,
-  `tools/call` and `ping`.
-- **Legacy (2025-11-25, 2025-06-18, 2025-03-26):** `initialize` negotiates the version, `notifications/initialized`
-  results in 202. After that come `tools/list`, `tools/call`, `server/discover` and `ping`. Without the version header,
-  2025-03-26 applies.
-- For both: responses are only sent as `application/json`, without SSE and without session IDs. GET and DELETE
-  result in 405, notifications in 202 without a body. Batches are rejected, and a message may be at most 1 MB.
+- Every request carries `_meta.io.modelcontextprotocol/protocolVersion` = `2026-07-28`. A missing or other version
+  results in 400 with `-32022` and `data.supported`; there is no `initialize` handshake.
+- The headers `MCP-Protocol-Version`, `Mcp-Method` and, for `tools/call`, `Mcp-Name` (also as `=?base64?…?=`) must
+  match the body, otherwise the response is 400 with `-32020`.
+- Supported are `server/discover`, `tools/list`, `tools/call` and `ping`; an unknown method results in 404 with
+  `-32601`. Notifications (no `id`) and answers of the client result in 202 without a body.
+- Responses are only sent as `application/json`, without SSE and without session IDs. Batches are rejected, and a
+  message may be at most 1 MiB (413).

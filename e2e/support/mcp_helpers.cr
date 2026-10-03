@@ -3,12 +3,10 @@ require "base64"
 
 module E2E
   # Helpers for the MCP scenarios (e2e/mcp_spec.cr): raw JSON-RPC requests,
-  # the modern protocol's headers and the unpacking of tool results.
+  # the protocol's headers and the unpacking of tool results.
   module MCPKit
-    PATH   = "/mcp/#{MCP_SECRET}"
-    MODERN = "2026-07-28"
-    LEGACY = ["2025-11-25", "2025-06-18", "2025-03-26"]
-    ALL    = [MODERN] + LEGACY
+    PATH    = "/mcp/#{MCP_SECRET}"
+    VERSION = "2026-07-28"
 
     # The instructions without the date line and the data overview.
     INSTRUCTIONS = <<-TEXT
@@ -33,17 +31,26 @@ module E2E
       %(Today is #{date} (#{weekday}), server time zone Europe/Berlin. Resolve relative periods such as "last month" from this date.)
     end
 
-    # Headers of an MCP request without identity cookie.
+    # Headers of an MCP request, without identity cookie unless *extra* sets one.
     def self.headers(extra = {} of String => String) : HTTP::Headers
       h = HTTP::Headers{"Cookie" => ""}
-      extra.each { |k, v| h.add(k, v) }
+      extra.each { |k, v| h[k] = v }
       h
     end
 
-    # POSTs a raw body to the MCP endpoint.
+    # POSTs a body to the MCP endpoint with the protocol headers that match it
+    # if it is a JSON-RPC request; *extra* adds or replaces headers.
     def self.post(user : User, body : String, extra = {} of String => String,
-                  content_type = "application/json", path = PATH) : Response
-      user.run { |b| b.post_raw(path, body, content_type, headers(extra)) }
+                  content_type = "application/json", path = PATH, protocol = true) : Response
+      h = protocol ? headers_of(body).merge(extra) : extra
+      user.run { |b| b.post_raw(path, body, content_type, headers(h)) }
+    end
+
+    def self.headers_of(body : String) : Hash(String, String)
+      message = (JSON.parse(body).as_h? rescue nil)
+      method = message.try(&.["method"]?).try(&.as_s?) || return {} of String => String
+      name = message.try(&.["params"]?).try(&.as_h?).try(&.["name"]?).try(&.as_s?)
+      protocol_headers(method, name)
     end
 
     # Any request to the MCP endpoint.
@@ -60,23 +67,21 @@ module E2E
       "{#{parts.join(",")}}"
     end
 
-    # A legacy request (no protocol headers).
-    def self.rpc(user : User, method : String, params : String? = nil, id : String? = "1", extra = {} of String => String) : Response
-      post(user, body(method, params, id), extra)
-    end
-
-    # A modern (2026-07-28) request: version in params._meta and the
-    # mandatory headers. *headers* replaces the computed ones.
-    def self.modern(user : User, method : String, params = "{}", id : String? = %("a-1"),
-                    version = MODERN, headers : Hash(String, String)? = nil) : Response
+    # A request body with the protocol version in params._meta.
+    def self.message(method : String, params = "{}", id : String? = "1", version = VERSION) : String
       p = JSON.parse(params).as_h
       p["_meta"] = JSON.parse({"io.modelcontextprotocol/protocolVersion" => version}.to_json)
-      h = headers || modern_headers(method, p["name"]?.try(&.as_s?), version)
-      post(user, body(method, p.to_json, id), h)
+      body(method, p.to_json, id)
     end
 
-    def self.modern_headers(method : String, name : String? = nil, version = MODERN) : Hash(String, String)
-      h = {"MCP-Protocol-Version" => version, "Mcp-Method" => method}
+    # A request as a client sends it. *headers* replaces the protocol headers.
+    def self.rpc(user : User, method : String, params = "{}", id : String? = "1", version = VERSION,
+                 headers : Hash(String, String)? = nil) : Response
+      post(user, message(method, params, id, version), headers || {} of String => String, protocol: headers.nil?)
+    end
+
+    def self.protocol_headers(method : String, name : String? = nil) : Hash(String, String)
+      h = {"MCP-Protocol-Version" => VERSION, "Mcp-Method" => method}
       h["Mcp-Name"] = name if name
       h
     end
@@ -129,7 +134,7 @@ module E2E
     # A tool call refused by argument decoding: the message must name the
     # offending field.
     def self.decode_fail(user : User, name : String, arguments : String, field : String) : Nil
-      msg = text(post(user, body("tools/call", %({"name":#{name.to_json},"arguments":#{arguments}}))), error: true)
+      msg = text(call(user, name, arguments), error: true)
       raise "#{name} #{arguments}: #{msg.inspect} does not mention #{field}" unless msg.includes?(field)
       raise "#{name} #{arguments}: internal error #{msg.inspect}" if msg.includes?("Internal error")
     end

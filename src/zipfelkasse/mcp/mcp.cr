@@ -1,75 +1,39 @@
 require "crypto/subtle"
 
-# The MCP server at /mcp/<MCP_SECRET>: docs/MCP.md describes access and protocol.
 module Zipfelkasse::MCP
   Log = ::Log.for(self)
 
-  MAX_BODY = Web::MAX_BODY_BYTES
-
-  # What is logged about a request.
-  class RequestInfo
-    property method = ""
-    property tool = ""
-    property version = ""
-    property tool_error = ""
-  end
-
   class Server
-    # The path contains the secret and is never logged.
-    def call(ctx : HTTP::Server::Context) : Nil
+    def register : Nil
+      post("/mcp/:secret") { |env| serve(env) }
+    end
+
+    private def serve(env : HTTP::Server::Context) : Nil
       start = Time.instant
-      req = ctx.request
-      remote = req.remote_address.to_s
-      ip = MCP.client_ip(remote, req.headers, @d.config.trusted_proxies)
-      secret = req.path.lchop("/mcp/")
-      if secret.empty? || secret.includes?('/')
-        return Web.text_error(ctx, 404, "404 page not found")
+      request = env.request
+      ip = MCP.client_ip(request.remote_address, request.headers, @d.config.trusted_proxies)
+      who = ip.try(&.to_s) || "invalid IP"
+      unless Crypto::Subtle.constant_time_compare(env.params.url["secret"], @d.config.mcp_secret)
+        Log.warn(&.emit("mcp: wrong secret", ip: who, remote: request.remote_address.to_s))
+        raise Kemal::Exceptions::RouteNotFound.new(env)
       end
-      unless Crypto::Subtle.constant_time_compare(URI.decode(secret), @d.config.mcp_secret)
-        Log.warn(&.emit("mcp: wrong secret", ip: ip.to_s, remote: remote))
-        return Web.text_error(ctx, 404, "404 page not found")
+      log = {} of Symbol => String
+      begin
+        unless ip && @d.config.mcp_allowed_cidrs.any?(&.contains?(ip))
+          Log.warn(&.emit("mcp: IP not allowed", ip: who, remote: request.remote_address.to_s,
+            x_forwarded_for: request.headers.get?("X-Forwarded-For") || [] of String, x_real_ip: request.headers["X-Real-IP"]?.to_s))
+          raise RPCError.forbidden("Access from this address is not allowed.")
+        end
+        if origin = request.headers["Origin"]?.presence
+          Log.warn(&.emit("mcp: Origin header rejected", ip: who, origin: origin))
+          raise RPCError.forbidden("Access from a browser is not allowed.")
+        end
+        handle_post(env, log)
+      rescue ex : RPCError
+        reply_error(env, ex)
       end
-      unless ip.in?(@d.config.mcp_allowed_cidrs)
-        Log.warn(&.emit("mcp: IP not allowed", ip: ip.to_s, remote: remote,
-          x_forwarded_for: req.headers.get?("X-Forwarded-For") || [] of String, x_real_ip: MCP.header(req.headers, "X-Real-IP")))
-        return write_error(ctx, 403, nil, CODE_FORBIDDEN, "Access from this address is not allowed.")
-      end
-      unless (origin = MCP.header(req.headers, "Origin")).empty?
-        Log.warn(&.emit("mcp: Origin header rejected", ip: ip.to_s, origin: origin))
-        return write_error(ctx, 403, nil, CODE_FORBIDDEN, "Access from a browser is not allowed.")
-      end
-      if req.method != "POST"
-        ctx.response.headers["Allow"] = "POST"
-        Web.text_error(ctx, 405, "Method Not Allowed")
-        return Log.info(&.emit("mcp", ip: ip.to_s, http: req.method, status: 405))
-      end
-
-      info = RequestInfo.new
-      handle_post(ctx, info)
-      attrs = {:ip => ip.to_s, :method => info.method, :status => ctx.response.status_code.to_s,
-               :duration => "#{(Time.instant - start).total_milliseconds.round.to_i}ms"}
-      attrs[:tool] = info.tool unless info.tool.empty?
-      attrs[:version] = info.version unless info.version.empty?
-      attrs[:tool_error] = info.tool_error unless info.tool_error.empty?
-      Log.info(&.emit("mcp", attrs))
-    end
-  end
-
-  # Sends everything below /mcp/ to the server, before Kemal's filters and
-  # routes: no person to pick, no CSRF check, since the server rejects any
-  # Origin itself.
-  class Mount
-    include HTTP::Handler
-
-    def initialize(@server : Server)
-    end
-
-    def call(context : HTTP::Server::Context)
-      if context.request.path.starts_with?("/mcp/")
-        @server.call(context)
-      else
-        call_next(context)
-      end
+      Log.info(&.emit("mcp", log.merge({:ip => who, :status => env.response.status_code.to_s,
+                                        :duration => "#{(Time.instant - start).total_milliseconds.round.to_i}ms"})))
     end
   end
 end

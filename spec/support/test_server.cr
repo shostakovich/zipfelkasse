@@ -27,13 +27,15 @@ class TestServer
   end
 
   def request(method : String, path : String, body : String? = nil, headers = HTTP::Headers.new,
-              cookies = {} of String => String) : HTTP::Client::Response
+              cookies = {} of String => String, remote : Socket::Address? = nil) : HTTP::Client::Response
     headers = headers.dup
     headers["Host"] ||= "example.com"
     cookies.each { |name, value| headers.add("Cookie", "#{name}=#{value}") }
     io = IO::Memory.new
     response = HTTP::Server::Response.new(io)
-    @handler.call(HTTP::Server::Context.new(HTTP::Request.new(method, path, headers, body), response))
+    request = HTTP::Request.new(method, path, headers, body)
+    request.remote_address = remote
+    @handler.call(HTTP::Server::Context.new(request, response))
     response.close
     io.rewind
     HTTP::Client::Response.from_io(io, ignore_body: method == "HEAD")
