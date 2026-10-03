@@ -55,7 +55,9 @@ module Zipfelkasse::Web
     end
 
     private def save_appearance(env : HTTP::Server::Context) : String
-      env.remember_appearance(Look.parse?(env.form("look")) || env.look, Theme.parse?(env.form("theme")) || env.theme)
+      look = Look.parse?(env.form("look")) || env.look
+      theme = Theme.parse?(env.form("theme")) || env.theme
+      @d.store.set_appearance(env.me.id, look.to_s.downcase, theme.to_s.downcase)
       redirect(env, "/einstellungen#darstellung")
     end
 

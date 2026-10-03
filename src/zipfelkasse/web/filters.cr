@@ -9,8 +9,9 @@ module Zipfelkasse::Web
     "Content-Security-Policy" => "default-src 'self'; img-src 'self' data: https://felt-css.rocu.de; style-src 'self' https://felt-css.rocu.de; frame-ancestors 'none'; base-uri 'self'; form-action 'self'",
   }
 
-  UNIDENTIFIED_PATHS = {"/healthz", "/manifest.webmanifest", "/sw.js", "/favicon.ico"}
-  PUBLIC_PATHS       = {"/wer", "/wer/neu"}
+  UNIDENTIFIED_PATHS = {"/healthz", "/sw.js", "/favicon.ico"}
+  # The manifest carries the icons of the person's look.
+  PUBLIC_PATHS = {"/wer", "/wer/neu", "/manifest.webmanifest"}
 
   # Client disconnects and timeouts surface as IO errors in whatever handler
   # reads or writes; they are no server errors.

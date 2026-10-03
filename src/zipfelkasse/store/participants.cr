@@ -1,7 +1,9 @@
 module Zipfelkasse
   class Store
-    # People are never deleted, only archived.
-    record Participant, id : Int64, name : String, created_at : Time, archived_at : Time? do
+    # People are never deleted, only archived. look and theme are their choice
+    # of appearance for the web app.
+    record Participant, id : Int64, name : String, created_at : Time, archived_at : Time?,
+      look : String = "clean", theme : String = "auto" do
       include DB::Serializable
       include Archivable
 
@@ -11,7 +13,7 @@ module Zipfelkasse
       @archived_at : Time?
     end
 
-    PARTICIPANT_COLS = "id, name, created_at, archived_at"
+    PARTICIPANT_COLS = "id, name, created_at, archived_at, look, theme"
 
     def list_participants(include_archived = false) : Array(Participant)
       where = include_archived ? "" : " WHERE archived_at IS NULL"
@@ -49,6 +51,11 @@ module Zipfelkasse
     def rename_participant(actor_id : Int64?, id : Int64, name : String) : Nil
       name = Store.clean_name(name, "die Person")
       rename_row(actor_id, "participants", "Person", id, name, "„#{name}“ gibt es schon.")
+    end
+
+    # A personal preference, not a change to the group: no activity entry.
+    def set_appearance(id : Int64, look : String, theme : String) : Nil
+      @db.exec("UPDATE participants SET look = ?, theme = ? WHERE id = ?", look, theme, id)
     end
 
     # A person with an open balance would disappear from the forms while money

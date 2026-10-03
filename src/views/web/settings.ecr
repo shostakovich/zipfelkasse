@@ -18,12 +18,12 @@
   <section class="card" id="darstellung">
     <div class="card-header">
       <h2 class="card-title h5 mb-0">Darstellung</h2>
-      <p class="card-text small text-body-secondary fw-normal mt-1 mb-0">Gilt nur für dieses Gerät.</p>
+      <p class="card-text small text-body-secondary fw-normal mt-1 mb-0">Gilt nur für dich, auf allen Geräten.</p>
     </div>
     <div class="card-body">
       <form class="d-flex flex-wrap align-items-center gap-3" method="post" action="/einstellungen/darstellung" data-autosubmit>
         <div class="btn-group" role="group" aria-label="Stil">
-          <%- { {Look::Felt, "Filz"}, {Look::Clean, "Clean"} }.each do |value, label| %>
+          <%- { {Look::Clean, "Clean"}, {Look::Felt, "Filz"} }.each do |value, label| %>
           <input type="radio" class="btn-check" name="look" id="look-<%= value.to_s.downcase %>" value="<%= value.to_s.downcase %>" autocomplete="off"<% if look == value %> checked<% end %>>
           <label class="btn btn-outline-primary" for="look-<%= value.to_s.downcase %>"><%= label %></label>
           <%- end %>

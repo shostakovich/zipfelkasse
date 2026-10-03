@@ -910,7 +910,7 @@ describe "MCP tools" do
     rows.call("/* a; b */ SELECT ';' AS x;;")["rows"].should eq MK.json(%([[";"]]))
     rows.call(%(SELECT 'it''s; fine' AS "a;b", [c;d] FROM (SELECT 1 AS [c;d])))["rows"].should eq MK.json(%([["it's; fine",1]]))
     rows.call("SELECT 1, 1, 'a' AS x, 'b' AS x").should eq MK.json(%({"columns":["1","1:1","x","x:1"],"row_count":1,"rows":[[1,1,"a","b"]],"truncated":false}))
-    rows.call("SELECT * FROM participants WHERE 0").should eq MK.json(%({"columns":["id","name","created_at","archived_at"],"row_count":0,"rows":[],"truncated":false}))
+    rows.call("SELECT * FROM participants WHERE 0").should eq MK.json(%({"columns":["id","name","created_at","archived_at","look","theme"],"row_count":0,"rows":[],"truncated":false}))
     # Value types: integers, reals, text (also JSON text), NULL and blobs.
     d = rows.call("SELECT 42 AS i, 2.5 AS r, 0.1 + 0.2 AS s, 1e30 AS big, 'a<&>b' AS t, NULL AS n, x'00ff' AS b, json_object('a', 1) AS j, 9007199254740993 AS l")
     d["columns"].should eq MK.json(%(["i","r","s","big","t","n","b","j","l"]))

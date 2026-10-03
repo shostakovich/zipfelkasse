@@ -27,6 +27,15 @@ describe "Store participants" do
     expect_invalid("„ANNA“ gibt es schon.") { store.rename_participant(nil, ben, "ANNA") }
   end
 
+  it "keeps each person's appearance, clean and following the system until chosen" do
+    anna = store.create_participant(nil, "Anna")
+    ben = store.create_participant(nil, "Ben")
+
+    store.set_appearance(anna, "felt", "dark")
+    store.get_participant(anna).try { |p| {p.look, p.theme} }.should eq({"felt", "dark"})
+    store.get_participant(ben).try { |p| {p.look, p.theme} }.should eq({"clean", "auto"})
+  end
+
   it "lists archived participants only on request and restores them" do
     store.create_participant(nil, "Anna")
     ben = store.create_participant(nil, "Ben")

@@ -3,7 +3,7 @@ Conventions: amounts are INTEGER in euro cents (divide by 100.0 for euros). Cale
 Data values (names, titles, categories, notes) are stored as entered, often in German.
 
 Tables:
-- participants: people in the group. archived_at set = archived (no longer active, their entries remain).
+- participants: people in the group. archived_at set = archived (no longer active, their entries remain). look, theme: their appearance in the web app.
 - categories: categories (name, position = display order, archived_at).
 - expenses: expenses AND reimbursements.
   * deleted_at set = deleted (soft delete) → ALWAYS filter with "deleted_at IS NULL".
