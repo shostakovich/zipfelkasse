@@ -1224,7 +1224,7 @@ describe "MCP on the seed household" do
     ["SELECT * FROM ynab_config", "SELECT * FROM YNAB_CONFIG", "SELECT * FROM main.ynab_config", %(SELECT * FROM "ynab_config")].each do |q|
       MK.fail(user, "sql_query", {query: q}.to_json).should start_with("SQL error: no such table:")
     end
-    MK.ok(user, "sql_query", %({"query":"SELECT group_concat(name) FROM pragma_table_list"}))["rows"][0][0].as_s.should_not contain("ynab")
+    MK.ok(user, "sql_query", %({"query":"SELECT group_concat(name) FROM (SELECT name FROM pragma_table_list ORDER BY name)"}))["rows"][0][0].as_s.should_not contain("ynab")
     MK.ok(user, "sql_query", %({"query":"SELECT group_concat(sql) FROM sqlite_schema"}))["rows"][0][0].as_s.downcase.should_not contain("ynab")
     MK.ok(user, "sql_query", %({"query":"SELECT key FROM settings ORDER BY key"}))["rows"].as_a.map(&.[0].as_s).should eq sql.call("SELECT key FROM settings WHERE key NOT LIKE 'ynab%' ORDER BY key").map(&.[0].as(String))
     text = MK.text(MK.call(user, "schema"))
