@@ -39,7 +39,7 @@ module Zipfelkasse::Domain
   # (1234, "USD") → "12,34 USD", EUR or "" → "12,34 €".
   def format_money(minor : Int64, currency : String) : String
     return format_cents(minor) if eur?(currency)
-    currency = GoCompat.to_upper(GoCompat.trim_space(currency))
+    currency = currency.strip.upcase
     format_fixed(minor, currency_decimals(currency), true) + " " + currency
   end
 
@@ -55,7 +55,7 @@ module Zipfelkasse::Domain
 
   # Parses a percentage such as "33,33" or "50 %" as basis points.
   def parse_basis_points(s : String) : Int64
-    s = GoCompat.trim_space(GoCompat.trim_space(s).rchop("%"))
+    s = s.strip.rchop("%").strip
     begin
       parse_fixed(s, 2)
     rescue ValidationError
@@ -67,13 +67,13 @@ module Zipfelkasse::Domain
   # in the smallest unit. Both comma and dot are accepted as decimal
   # separator; thousands separators are recognized.
   def parse_minor(s : String, decimals : Int32) : Int64
-    s = GoCompat.trim_space(GoCompat.trim_space(s).rchop("€"))
+    s = s.strip.rchop("€").strip
     raise ValidationError.new("Bitte einen Betrag eingeben.") if s.empty?
     parse_fixed(s, decimals)
   end
 
   private def parse_fixed(s : String, decimals : Int32) : Int64
-    s = s.delete(' ').delete('\u{A0}') # not U+202F
+    s = s.gsub(' ', "").gsub('\u{A0}', "") # not U+202F; keeps invalid bytes
     raise ValidationError.new("Bitte einen Betrag eingeben.") if s.empty?
     number = split_number(s, decimals < 3)
     raise ValidationError.new("Ungültiger Betrag „#{s}“.") unless number
@@ -88,7 +88,7 @@ module Zipfelkasse::Domain
       raise ValidationError.new("Höchstens #{decimals} Nachkommastellen erlaubt.")
     end
     raise ValidationError.new("Der Betrag ist zu groß.") if int_part.size > 15
-    v = GoCompat.parse_int(int_part + frac + "0" * (decimals - frac.size))
+    v = (int_part + frac + "0" * (decimals - frac.size)).to_i64?
     raise ValidationError.new("Ungültiger Betrag „#{s}“.") unless v
     neg ? -v : v
   end
@@ -155,13 +155,13 @@ module Zipfelkasse::Domain
   # leading zero ("0.856" = 0,856); otherwise decimals must be given with a
   # comma or with more/fewer than three digits. Rates ≤ 0 are invalid.
   def parse_rate(s : String) : Float64
-    s = GoCompat.trim_space(s).delete(' ').delete('\u{A0}')
+    s = s.strip.gsub(' ', "").gsub('\u{A0}', "")
     bad = ValidationError.new("Ungültiger Wechselkurs „#{s}“ – bitte eine Zahl größer als 0 angeben (Einheiten der Währung pro 1 €).")
     number = split_number(s, true)
     raise bad unless number
     neg, int_part, frac = number
     raise bad if neg || int_part.size > 12 || frac.size > 12
-    v = GoCompat.parse_float(int_part + "." + frac + "0")
+    v = (int_part + "." + frac + "0").to_f?
     raise bad unless v && v > 0 && !v.infinite?
     v
   end
@@ -189,7 +189,7 @@ module Zipfelkasse::Domain
   # superfluous zeros: 1.0876 → "1,0876". Rates <= 0 (and NaN) yield "".
   def format_rate(rate : Float64) : String
     return "" unless rate > 0
-    GoCompat.format_float(rate).sub('.', ',')
+    plain_decimal(rate).sub('.', ',')
   end
 
   # Formats v with the given number of decimals and sep as decimal separator;
@@ -219,13 +219,13 @@ module Zipfelkasse::Domain
   # Reports whether currency means euros, i.e. no foreign currency: "" or
   # "EUR" (case and surrounding spaces ignored).
   def eur?(currency : String) : Bool
-    GoCompat.to_upper(GoCompat.trim_space(currency)).in?("", "EUR")
+    currency.strip.upcase.in?("", "EUR")
   end
 
   # Returns the number of decimal places of a currency (ISO 4217). Unknown
   # currencies have 2.
   def currency_decimals(currency : String) : Int32
-    case GoCompat.to_upper(currency)
+    case currency.upcase
     when "JPY", "KRW", "ISK", "HUF", "CLP", "VND", "XAF", "XOF", "PYG", "UGX", "IDR"
       0
     when "KWD", "BHD", "OMR", "JOD", "TND", "LYD", "IQD"

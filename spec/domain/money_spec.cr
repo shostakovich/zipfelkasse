@@ -5,14 +5,14 @@ private alias D = Zipfelkasse::Domain
 describe Zipfelkasse::Domain do
   it "formats cents (TestFormatCents)" do
     {
-      0_i64         => "0,00 €",
-      1_i64         => "0,01 €",
-      99_i64        => "0,99 €",
-      1234_i64      => "12,34 €",
-      100000_i64    => "1.000,00 €",
+              0_i64 => "0,00 €",
+              1_i64 => "0,01 €",
+             99_i64 => "0,99 €",
+           1234_i64 => "12,34 €",
+         100000_i64 => "1.000,00 €",
       123456789_i64 => "1.234.567,89 €",
-      -1234_i64     => "-12,34 €",
-      -5_i64        => "-0,05 €",
+          -1234_i64 => "-12,34 €",
+             -5_i64 => "-0,05 €",
     }.each { |cents, want| D.format_cents(cents).should eq want }
   end
 
@@ -158,30 +158,31 @@ describe Zipfelkasse::Domain do
 
     it "parses amounts and reports errors like Go" do
       {
-        ""                    => "Bitte einen Betrag eingeben.",
-        " € "                 => "Bitte einen Betrag eingeben.",
-        "1 2,3x"              => "Ungültiger Betrag „12,3x“.",
-        "1,234"               => "Höchstens 2 Nachkommastellen erlaubt.",
-        "1" * 16              => "Der Betrag ist zu groß.",
-        "1\u{a0}000"          => 100000_i64,
-        "1\u{202f}000"        => "Ungültiger Betrag „1\u{202f}000“.", # only space and NBSP are removed
-        "€12"                 => "Ungültiger Betrag „€12“.",
-        "12 €€"               => "Ungültiger Betrag „12€“.",
-        "-0"                  => 0_i64,
-        "+-1"                 => "Ungültiger Betrag „+-1“.",
-        "--1"                 => "Ungültiger Betrag „--1“.",
-        "1.2.3,4"             => "Ungültiger Betrag „1.2.3,4“.",
-        "1,234,567.8"         => 123456780_i64,
-        ".5"                  => 50_i64,
-        "0,"                  => "Ungültiger Betrag „0,“.",
-        "000.123"             => "Höchstens 2 Nachkommastellen erlaubt.",
-        "1.0000"              => 100_i64,
-        "12.3456"             => "Höchstens 2 Nachkommastellen erlaubt.",
-        "1..2"                => "Ungültiger Betrag „1..2“.",
-        "\u{85}1,5\u{85}"     => 150_i64,
-        "1.234.5"             => "Ungültiger Betrag „1.234.5“.",
-        "+"                   => "Ungültiger Betrag „+“.",
-        "\u{661}\u{662}"      => "Ungültiger Betrag „\u{661}\u{662}“.",
+        ""                => "Bitte einen Betrag eingeben.",
+        " € "             => "Bitte einen Betrag eingeben.",
+        "1 2,3x"          => "Ungültiger Betrag „12,3x“.",
+        "1,234"           => "Höchstens 2 Nachkommastellen erlaubt.",
+        "1" * 16          => "Der Betrag ist zu groß.",
+        "1\u{a0}000"      => 100000_i64,
+        "1\u{202f}000"    => "Ungültiger Betrag „1\u{202f}000“.", # only space and NBSP are removed
+        "€12"             => "Ungültiger Betrag „€12“.",
+        "12 €€"           => "Ungültiger Betrag „12€“.",
+        "-0"              => 0_i64,
+        "+-1"             => "Ungültiger Betrag „+-1“.",
+        "--1"             => "Ungültiger Betrag „--1“.",
+        "1.2.3,4"         => "Ungültiger Betrag „1.2.3,4“.",
+        "1,234,567.8"     => 123456780_i64,
+        ".5"              => 50_i64,
+        "0,"              => "Ungültiger Betrag „0,“.",
+        "000.123"         => "Höchstens 2 Nachkommastellen erlaubt.",
+        "1.0000"          => 100_i64,
+        "12.3456"         => "Höchstens 2 Nachkommastellen erlaubt.",
+        "1..2"            => "Ungültiger Betrag „1..2“.",
+        "\u{85}1,5\u{85}" => 150_i64,
+        "1.234.5"         => "Ungültiger Betrag „1.234.5“.",
+        "+"               => "Ungültiger Betrag „+“.",
+        "1\xff"           => "Ungültiger Betrag „1\xff“.",
+        "\u{661}\u{662}"  => "Ungültiger Betrag „\u{661}\u{662}“.",
       }.each do |input, want|
         if want.is_a?(String)
           validation_error { D.parse_cents(input) }.should eq want

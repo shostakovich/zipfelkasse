@@ -139,9 +139,9 @@ describe Zipfelkasse::Domain do
     m = amounts(D.split_converted(D::SPLIT_EQUAL, 1000, 1100, "USD", ps, 1))
     {m[1], m[2], m[3]}.should eq({333, 334, 333})
     {
-      parts({1, 600}, {2, 300})                       => "Die Beträge müssen zusammen 10,00 USD ergeben (aktuell 9,00 USD).",
-      parts({1, 909})                                 => "Die Beträge müssen zusammen 10,00 USD ergeben (aktuell 9,09 USD).",
-      parts({1, -1}, {2, 1001})                       => "negativ",
+      parts({1, 600}, {2, 300})                                   => "Die Beträge müssen zusammen 10,00 USD ergeben (aktuell 9,00 USD).",
+      parts({1, 909})                                             => "Die Beträge müssen zusammen 10,00 USD ergeben (aktuell 9,09 USD).",
+      parts({1, -1}, {2, 1001})                                   => "negativ",
       parts({1, 1_i64 << 62}, {2, 1_i64 << 62}, {3, 1_i64 << 62}) => "zu groß",
     }.each do |ps, message|
       validation_error { D.split_converted(D::SPLIT_AMOUNT, 909, 1000, "USD", ps, 0) }.should contain message
@@ -164,7 +164,7 @@ describe Zipfelkasse::Domain do
     {"5" => 5, " 5 " => 5, "+5" => 5, "-3" => -3, "\u{85}5" => 5}.each do |v, want|
       D.parse_weight(D::SPLIT_SHARES, "EUR", v).should eq want
     end
-    {"1.5", "", "x"}.each do |v|
+    {"1.5", "", "x", "\xff"}.each do |v|
       validation_error { D.parse_weight(D::SPLIT_SHARES, "EUR", v) }.should eq "Anteile müssen ganze Zahlen sein („#{v}“)."
     end
     D.parse_weight(D::SPLIT_AMOUNT, "JPY", "1.500").should eq 1500

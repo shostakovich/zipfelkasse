@@ -1,8 +1,9 @@
 require "../spec_helper"
 
 # Expected values were produced by Go 1.26.5 (the toolchain of go.mod).
-# Additionally, `space?`, `print?`, `lower`, `upper` and `equal_fold` were
-# compared with Go for every code point (see the PR notes / docs).
+# Additionally, `print?`, `lower`, `upper` and `equal_fold` were compared
+# with Go for every code point once during the port (Crystal 1.21 knows
+# Unicode 17, Go 1.26 Unicode 15; re-check when either is upgraded).
 private alias G = Zipfelkasse::GoCompat
 
 describe Zipfelkasse::GoCompat do
@@ -72,30 +73,30 @@ describe Zipfelkasse::GoCompat do
   describe ".equal_fold" do
     it "uses Unicode simple case folding like strings.EqualFold" do
       {
-        {"Go", "GO"}                 => true,
-        {"ß", "ss"}                  => false,
-        {"ß", "ẞ"}                   => true,
-        {"K", "k"}                   => true,
-        {"\u{212a}", "k"}            => true,
-        {"\u{212a}", "K"}            => true,
-        {"ǅ", "ǆ"}                   => true,
-        {"ǅ", "Ǆ"}                   => true,
-        {"İ", "i"}                   => false,
-        {"ı", "I"}                   => false,
-        {"σ", "ς"}                   => true,
-        {"Σ", "ς"}                   => true,
-        {"ᾈ", "ᾀ"}                   => true,
-        {"\xff", "\xfe"}             => true,
-        {"a", "ab"}                  => false,
-        {"", ""}                     => true,
-        {"Sonstiges", "SONSTIGES"}   => true,
-        {"µ", "μ"}                   => true,
-        {"µ", "Μ"}                   => true,
-        {"ſ", "S"}                   => true,
-        {"Å", "å"}                   => true,
-        {"\u{212b}", "å"}            => true,
-        {"\u{10d50}", "\u{10d70}"}   => false, # Unicode 16, unknown to Go
-        {"straße", "STRASSE"}        => false,
+        {"Go", "GO"}                     => true,
+        {"ß", "ss"}                      => false,
+        {"ß", "ẞ"}                       => true,
+        {"K", "k"}                       => true,
+        {"\u{212a}", "k"}                => true,
+        {"\u{212a}", "K"}                => true,
+        {"ǅ", "ǆ"}                       => true,
+        {"ǅ", "Ǆ"}                       => true,
+        {"İ", "i"}                       => false,
+        {"ı", "I"}                       => false,
+        {"σ", "ς"}                       => true,
+        {"Σ", "ς"}                       => true,
+        {"ᾈ", "ᾀ"}                       => true,
+        {"\xff", "\xfe"}                 => true,
+        {"a", "ab"}                      => false,
+        {"", ""}                         => true,
+        {"Sonstiges", "SONSTIGES"}       => true,
+        {"µ", "μ"}                       => true,
+        {"µ", "Μ"}                       => true,
+        {"ſ", "S"}                       => true,
+        {"Å", "å"}                       => true,
+        {"\u{212b}", "å"}                => true,
+        {"\u{10d50}", "\u{10d70}"}       => false, # Unicode 16, unknown to Go
+        {"straße", "STRASSE"}            => false,
         {"Lebensmittel", "lebensmittel"} => true,
       }.each do |(a, b), want|
         G.equal_fold(a, b).should eq want

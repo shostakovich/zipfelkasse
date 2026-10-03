@@ -44,7 +44,7 @@ module Zipfelkasse
       when "healthcheck"
         healthcheck(ENV["ZIPFELKASSE_ADDR"]? || "")
       else
-        STDERR.print "unknown command #{GoCompat.quote(cmd)}\nusage: zipfelkasse [serve|healthcheck]\n"
+        STDERR.print "unknown command #{cmd.inspect}\nusage: zipfelkasse [serve|healthcheck]\n"
         return 2
       end
       0
@@ -156,7 +156,7 @@ module Zipfelkasse
     def self.health_url(addr : String) : String
       addr = ":8080" if addr.empty?
       host, sep, port = addr.rpartition(':')
-      raise Exception.new("ZIPFELKASSE_ADDR #{GoCompat.quote(addr)}: address #{addr}: missing port in address") if sep.empty?
+      raise Exception.new("ZIPFELKASSE_ADDR #{addr.inspect}: address #{addr}: missing port in address") if sep.empty?
       host = host.lchop('[').rchop(']')
       host = "127.0.0.1" if host.empty? || host == "0.0.0.0" || host == "::"
       host = "[#{host}]" if host.includes?(':')

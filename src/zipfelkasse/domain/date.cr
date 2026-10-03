@@ -32,7 +32,7 @@ module Zipfelkasse::Domain
   # time.Parse with these layouts (4-digit years, 2-digit fields except in the
   # last layout, valid days). Years outside MIN_YEAR–MAX_YEAR are rejected.
   def parse_date(s : String) : Time
-    s = GoCompat.trim_space(s)
+    s = s.strip
     raise ValidationError.new("Bitte ein Datum angeben.") if s.empty?
     year, month, day = date_fields(s) || raise ValidationError.new("Ungültiges Datum „#{s}“.")
     unless MIN_YEAR <= year <= MAX_YEAR
@@ -44,6 +44,7 @@ module Zipfelkasse::Domain
   # Year, month and day of s in the layout "2006-01-02" or "2.1.2006"
   # ("02.01.2006" is a special case of it), if it is a valid date.
   private def date_fields(s : String) : {Int32, Int32, Int32}?
+    return unless s.ascii_only? # also keeps invalid UTF-8 away from the regex engine
     ymd = if m = s.match(/\A([0-9]{4})-([0-9]{2})-([0-9]{2})\z/)
             {m[1], m[2], m[3]}
           elsif m = s.match(/\A([0-9]{1,2})\.([0-9]{1,2})\.([0-9]{4})\z/)

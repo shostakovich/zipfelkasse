@@ -8,7 +8,7 @@ module Zipfelkasse
     # it: Unicode lower-casing (including umlauts), ß becomes "ss". Umlauts
     # stay umlauts: "bäcker" finds "BÄCKER", not "baecker".
     def self.fold(s : String) : String
-      GoCompat.to_lower(s).gsub("ß", "ss")
+      s.downcase.gsub("ß", "ss")
     end
 
     # Registers zipfelkasse_fold on a raw SQLite handle: text and blobs are

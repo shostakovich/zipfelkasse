@@ -196,7 +196,7 @@ module Zipfelkasse::Web
   # An ID from a form or query value (Go's formID): invalid or <= 0 gives 0.
   # Like strconv.ParseInt it accepts a leading sign and leading zeros.
   def self.form_id(v : String, trim = true) : Int64
-    v = GoCompat.trim_space(v) if trim
+    v = v.strip if trim
     return 0_i64 unless v.matches?(/\A[+-]?\d+\z/)
     id = v.to_i64? || 0_i64
     id > 0 ? id : 0_i64

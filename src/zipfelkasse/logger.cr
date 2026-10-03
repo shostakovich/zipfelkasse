@@ -55,12 +55,12 @@ module Zipfelkasse
     def self.value(io : IO, v) : Nil
       text = case v
              when Exception    then v.message || v.class.name
-             when Time::Span   then GoCompat.format_duration(v)
+             when Time::Span   then "#{v.total_milliseconds.round.to_i}ms"
              when Array, Tuple then "[#{v.join(' ')}]"
              else                   v.to_s
              end
       if needs_quoting?(text)
-        io << GoCompat.quote(text)
+        text.inspect(io)
       else
         io << text
       end

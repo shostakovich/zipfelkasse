@@ -68,7 +68,7 @@ module Zipfelkasse::GoCompat
   # `strconv.ParseInt(s, 10, 64)`: optional sign and ASCII digits only (no
   # spaces, no underscores); nil on syntax errors and overflow.
   def parse_int(s : String) : Int64?
-    s.to_i64?(whitespace: false) if s.matches?(/\A[+-]?[0-9]+\z/)
+    s.to_i64?(whitespace: false) if s.ascii_only? && s.matches?(/\A[+-]?[0-9]+\z/)
   end
 
   # Sign, significant digits (without leading/trailing zeros, "" for 0) and

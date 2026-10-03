@@ -176,7 +176,7 @@ module Zipfelkasse
     # Timestamp from the database; nil when NULL, empty or unreadable.
     def self.parse_time(s : String?) : Time?
       return nil if s.nil? || s.empty?
-      GoCompat.parse_rfc3339(s)
+      Time.parse_rfc3339(s) rescue nil
     end
 
     # Whether an error is a UNIQUE or PRIMARY KEY violation.
@@ -205,7 +205,7 @@ module Zipfelkasse
     # A person's or category's name as stored: surrounding spaces removed,
     # inner runs of whitespace collapsed to one.
     def self.normalize_name(name : String) : String
-      GoCompat.fields(name).join(" ")
+      name.split.join(" ")
     end
 
     # Validates and normalizes names of people/categories.

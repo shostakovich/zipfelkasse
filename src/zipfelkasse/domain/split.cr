@@ -52,7 +52,7 @@ module Zipfelkasse::Domain
   def parse_weight(mode : SplitMode, currency : String, v : String) : Int64
     case mode
     when SPLIT_SHARES
-      GoCompat.parse_int(GoCompat.trim_space(v)) ||
+      v.strip.to_i64? ||
         raise ValidationError.new("Anteile müssen ganze Zahlen sein („#{v}“).")
     when SPLIT_PERCENT
       parse_basis_points(v)
@@ -160,32 +160,27 @@ module Zipfelkasse::Domain
   # with 128-bit products, so that total · weight cannot overflow. The JS
   # preview (static/expense-form.js) computes the same way.
   def allocate(total : Int64, weights : Array(Int64), rotation : Int64) : Array(Int64)
+    # Go computes in uint64 (wrapping); weights are >= 0 by contract.
     sum = weights.reduce(0_u64) { |acc, w| acc &+ w.to_u64! }
-    return Array.new(weights.size, 0_i64) if sum == 0
     result = Array.new(weights.size, 0_i64)
+    return result if sum == 0
     rems = Array.new(weights.size, 0_u64)
-    allocated = 0_i64
     weights.each_with_index do |w, i|
       product = total.to_u64!.to_u128 * w.to_u64!
       result[i] = (product // sum).to_u64.to_i64!
       rems[i] = (product % sum).to_u64
-      allocated &+= result[i]
     end
+    allocated = result.reduce(0_i64) { |acc, c| acc &+ c }
     # Largest remainder first; ties stay in index order and are then rotated
-    # by rotation.
-    order = (0...weights.size).to_a.sort_by! { |i| {UInt64::MAX - rems[i], i} }
-    order = order.chunk_while { |a, b| rems[a] == rems[b] }.flat_map do |tied|
-      n = tied.size.to_i64
-      tied.rotate((rotation.remainder(n) + n).remainder(n))
-    end
+    # by rotation (left, so that the entry at rotation mod count comes first).
+    order = (0...weights.size).to_a
+      .sort_by! { |i| {UInt64::MAX - rems[i], i} }
+      .chunk_while { |a, b| rems[a] == rems[b] }
+      .flat_map { |tied| tied.rotate((rotation.remainder(tied.size) + tied.size).remainder(tied.size)) }
+      .to_a
     # The remainder is smaller than the number of entries with a remainder:
     # at most one cent each.
-    k = 0
-    while allocated < total
-      result[order[k]] += 1
-      allocated += 1
-      k += 1
-    end
+    (total - allocated).times { |k| result[order[k]] += 1 }
     result
   end
 end

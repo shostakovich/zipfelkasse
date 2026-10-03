@@ -82,7 +82,7 @@ describe Zipfelkasse::GoCompat do
     it "rejects what strconv.ParseFloat rejects (including overflow)" do
       ["+NaN", "-nan", "infin", "infinityx", "Infx", "nanx", "_1", "1__0", "1_", "1_.5", "0x1", "0xp1",
        "0b101", "0o17", " 1", "1 ", "\t1", "1\n", "", "+", "-", ".", "e5", "1e", "1e+", "1e5.5", "1.2.3",
-       "1,5", "--1", "+-1", "１", "1e400", "-1e400", "1.7976931348623159e308", "0x1p2000", "0x"].each do |s|
+       "1,5", "--1", "+-1", "１", "1e400", "-1e400", "1.7976931348623159e308", "0x1p2000", "0x", "1\xff"].each do |s|
         G.parse_float(s).should be_nil
       end
     end
@@ -94,7 +94,7 @@ describe Zipfelkasse::GoCompat do
       G.parse_int("-3").should eq -3
       G.parse_int("007").should eq 7
       G.parse_int("-9223372036854775808").should eq Int64::MIN
-      ["", " 1", "1 ", "1_000", "0x10", "9223372036854775808", "+", "1.0", "١"].each do |s|
+      ["", " 1", "1 ", "1_000", "0x10", "9223372036854775808", "+", "1.0", "١", "1\xff"].each do |s|
         G.parse_int(s).should be_nil
       end
     end
