@@ -106,7 +106,9 @@ module Zipfelkasse
             committed = true
             result
           ensure
-            conn.exec("ROLLBACK") rescue nil unless committed
+            unless committed
+              conn.exec("ROLLBACK") rescue nil
+            end
           end
         end
       end

@@ -83,8 +83,10 @@ module Zipfelkasse::MCP
       j.raw(f > 0 ? "9.0e+999" : "-9.0e+999")
     elsif f == f.trunc && f.abs < 1e21
       j.raw(f.to_i128.to_s)
+    elsif f.nan?
+      j.number(f) # raises
     else
-      j.number(f) # raises for NaN
+      j.raw(f.to_s.sub(".0e", "e"))
     end
   end
 
@@ -465,8 +467,8 @@ module Zipfelkasse::MCP
           "category" => {"type" => "string", "description" => "Only count expenses of this category (name, case-insensitive). " + CATEGORY_HINT},
           "text"     => text_prop,
           "compare"  => {"type" => "string", "enum" => [COMPARE_PREVIOUS_YEAR],
-                         "description" => "previous_year: compare each row with the same group one year earlier (month 2026-03 with 2025-03, category in from…to with from…to minus one year). " \
-                                          "For category, title and person, from is required."},
+                        "description" => "previous_year: compare each row with the same group one year earlier (month 2026-03 with 2025-03, category in from…to with from…to minus one year). " \
+                                         "For category, title and person, from is required."},
           "limit" => Server.limit_prop("Maximum number of rows, default #{Store::SQL_MAX_ROWS}. total always covers all rows."),
         }, ["group_by"])) { |raw| statistics(raw) }
 
@@ -853,7 +855,7 @@ module Zipfelkasse::MCP
     # that only exist in prev are appended with 0 – for time-keyed groupings
     # (window given) only if their period lies within window.
     def self.compare_previous(items : Array(StatOut), prev : Array(Store::StatRow), group_by : String,
-                                        window : Proc(String, Bool)?) : Array(StatOut)
+                              window : Proc(String, Bool)?) : Array(StatOut)
       key = ->(o : StatOut) { {o.category, Store.fold(o.title), o.person, o.year, o.month, o.week} }
       prev_by = {} of {String, String, String, String, String, String} => StatOut
       prev.each do |r|

@@ -3,6 +3,31 @@ require "./expense_helper"
 private alias Domain = Zipfelkasse::Domain
 private alias Store = Zipfelkasse::Store
 
+private def break_form(name : String, v : URI::Params, g : ExpenseGroup) : Nil
+  case name
+  when "no title"      then v["titel"] = " "
+  when "broken amount" then v["betrag"] = "12,3,4"
+  when "amount 0"      then v["betrag"] = "0"
+  when "missing date"  then v["datum"] = ""
+  when "nobody"        then v.delete_all("teil")
+  when "wrong percent"
+    v["aufteilung"] = "percent"
+    v["wert_#{g.anna}"] = "50"
+    v["wert_#{g.ben}"] = "20"
+    v["wert_#{g.cleo}"] = "20"
+  when "wrong amounts"
+    v["aufteilung"] = "amount"
+    v["wert_#{g.anna}"] = "10"
+  when "shares not an integer"
+    v["aufteilung"] = "shares"
+    v["wert_#{g.ben}"] = "1,5"
+  when "reimbursement to two" then v["rueckzahlung"] = "1"
+  when "broken currency"
+    v["waehrung"] = ""
+    v["waehrung_andere"] = "EURO"
+  end
+end
+
 describe "expense pages" do
   it "renders the empty home page" do
     with_expense_group do |g|
@@ -64,37 +89,23 @@ describe "expense pages" do
 
   describe "validation" do
     {
-      "no title"             => {->(v : URI::Params, g : ExpenseGroup) { v["titel"] = " " }, "Bitte einen Titel angeben."},
-      "broken amount"        => {->(v : URI::Params, g : ExpenseGroup) { v["betrag"] = "12,3,4" }, "Ungültiger Betrag"},
-      "amount 0"             => {->(v : URI::Params, g : ExpenseGroup) { v["betrag"] = "0" }, "größer als 0"},
-      "missing date"         => {->(v : URI::Params, g : ExpenseGroup) { v["datum"] = "" }, "Bitte ein Datum angeben."},
-      "nobody"               => {->(v : URI::Params, g : ExpenseGroup) { v.delete_all("teil"); nil }, "mindestens eine Person"},
-      "wrong percent"        => {->(v : URI::Params, g : ExpenseGroup) {
-        v["aufteilung"] = "percent"
-        v["wert_#{g.anna}"] = "50"
-        v["wert_#{g.ben}"] = "20"
-        v["wert_#{g.cleo}"] = "20"
-      }, "100 %"},
-      "wrong amounts" => {->(v : URI::Params, g : ExpenseGroup) {
-        v["aufteilung"] = "amount"
-        v["wert_#{g.anna}"] = "10"
-      }, "zusammen 30,00 € ergeben"},
-      "shares not an integer" => {->(v : URI::Params, g : ExpenseGroup) {
-        v["aufteilung"] = "shares"
-        v["wert_#{g.ben}"] = "1,5"
-      }, "Ben: Anteile müssen ganze Zahlen sein"},
-      "reimbursement to two" => {->(v : URI::Params, g : ExpenseGroup) { v["rueckzahlung"] = "1" }, "genau eine Person"},
-      "broken currency"      => {->(v : URI::Params, g : ExpenseGroup) {
-        v["waehrung"] = ""
-        v["waehrung_andere"] = "EURO"
-      }, "Ungültige Währung"},
-    }.each do |name, (change, want)|
+      "no title"              => "Bitte einen Titel angeben.",
+      "broken amount"         => "Ungültiger Betrag",
+      "amount 0"              => "größer als 0",
+      "missing date"          => "Bitte ein Datum angeben.",
+      "nobody"                => "mindestens eine Person",
+      "wrong percent"         => "100 %",
+      "wrong amounts"         => "zusammen 30,00 € ergeben",
+      "shares not an integer" => "Ben: Anteile müssen ganze Zahlen sein",
+      "reimbursement to two"  => "genau eine Person",
+      "broken currency"       => "Ungültige Währung",
+    }.each do |name, want|
       it "rejects #{name} and keeps the inputs" do
         with_expense_group do |g|
           v = g.form
           v["titel"] = "Mein Titel"
           v["notiz"] = "Bitte behalten"
-          change.call(v, g)
+          break_form(name, v, g)
           status, _, body = g.post("/ausgaben/neu", v)
           status.should eq 422
           error_of(body).should contain want

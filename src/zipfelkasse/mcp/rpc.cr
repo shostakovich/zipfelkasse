@@ -100,10 +100,10 @@ module Zipfelkasse::MCP
     when .begin_object?
       each_field(pull, {"jsonrpc", "id", "method", "params", "result", "error"}) do |field|
         case field
-        when "jsonrpc"         then m.jsonrpc = read_string(pull, errors, "message.jsonrpc")
-        when "method"          then m.method = read_string(pull, errors, "message.method")
-        when "id"              then m.id = pull.read_raw
-        when "params"          then m.params = pull.read_raw
+        when "jsonrpc" then m.jsonrpc = read_string(pull, errors, "message.jsonrpc")
+        when "method"  then m.method = read_string(pull, errors, "message.method")
+        when "id"      then m.id = pull.read_raw
+        when "params"  then m.params = pull.read_raw
         when "result", "error"
           pull.skip
           m.answer = true
@@ -315,7 +315,7 @@ module Zipfelkasse::MCP
     end
 
     private def write_error(ctx : HTTP::Server::Context, status : Int32, id : String?, code : Int32, message : String,
-                              data : JSON::Any? = nil) : Nil
+                            data : JSON::Any? = nil) : Nil
       respond(ctx, status, id) do |j|
         j.field "error" do
           j.object do

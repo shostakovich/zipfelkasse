@@ -96,15 +96,15 @@ module Zipfelkasse::MCP
         "split equally among all active people. An entry with the same date, payer, amount and title is refused unless allow_duplicate is set. " \
         "Settlement payments between people are not expenses: use create_reimbursement for them.",
         Server.object_schema({
-          "title"        => {"type" => "string", "description" => %(What was bought, e.g. "Rewe" or "Pizza" (usually German, like the existing titles).)},
-          "amount"       => amount_prop,
-          "currency"     => currency_prop,
-          "fx_rate"      => rate_prop,
-          "date"         => Server.date_prop("Date of the expense. Default today."),
-          "paid_by"      => {"type" => "string", "description" => "Name of the person who paid."},
-          "category"     => {"type" => "string", "description" => "Category name (case-insensitive). Empty = no category."},
-          "split"        => {"type" => "string", "enum" => Domain::SPLIT_MODES.map(&.value),
-                             "description" => "equal (default): evenly among participants. shares, percent, amount: by the values in weights."},
+          "title"    => {"type" => "string", "description" => %(What was bought, e.g. "Rewe" or "Pizza" (usually German, like the existing titles).)},
+          "amount"   => amount_prop,
+          "currency" => currency_prop,
+          "fx_rate"  => rate_prop,
+          "date"     => Server.date_prop("Date of the expense. Default today."),
+          "paid_by"  => {"type" => "string", "description" => "Name of the person who paid."},
+          "category" => {"type" => "string", "description" => "Category name (case-insensitive). Empty = no category."},
+          "split"    => {"type" => "string", "enum" => Domain::SPLIT_MODES.map(&.value),
+                      "description" => "equal (default): evenly among participants. shares, percent, amount: by the values in weights."},
           "participants" => {"type" => "array", "items" => {"type" => "string"},
                              "description" => "Only for split=equal: names of the people the expense is for. Default: all active people."},
           "weights" => {"type" => "object", "additionalProperties" => {"type" => ["string", "number"]},
@@ -131,7 +131,7 @@ module Zipfelkasse::MCP
 
     private def create_expense(raw : String?) : String
       a = Args.new(raw, MONEY_ARGS.merge({"title" => :string, "date" => :string, "paid_by" => :string, "category" => :string,
-        "split" => :string, "participants" => :strings, "weights" => :weights, "notes" => :string, "allow_duplicate" => :bool}))
+                                          "split" => :string, "participants" => :strings, "weights" => :weights, "notes" => :string, "allow_duplicate" => :bool}))
       title = a.str("title").strip
       mode = Domain::SplitMode.new(MCP.trim_or(a.str("split"), Domain::SPLIT_EQUAL.value))
       raise MCP.invalid("Parameter title is missing.") if title.empty?

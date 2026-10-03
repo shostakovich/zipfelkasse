@@ -1,5 +1,6 @@
 require "../spec_helper"
 require "file_utils"
+require "../web/web_helper"
 
 module MCPSpec
   SECRET    = "s3cr3t-0123456789abcdef"
