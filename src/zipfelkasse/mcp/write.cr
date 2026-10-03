@@ -245,7 +245,7 @@ module Zipfelkasse::MCP
       r = begin
         fx.rate(cur, date)
       rescue ex
-        @log.info("mcp: rate not available", currency: cur, date: MCP.ymd(date), err: ex)
+        Log.info(exception: ex, &.emit("mcp: rate not available", currency: cur, date: MCP.ymd(date)))
         raise no_rate
       end
       raise no_rate unless r.rate > 0
@@ -274,7 +274,7 @@ module Zipfelkasse::MCP
         # The app's own rules (e.g. sum of the split) answer in German.
         raise MCP.invalid("The app refused the entry (message in German): #{ex.message}")
       end
-      @log.info("mcp: entry created", id: id, reimbursement: input.reimbursement?)
+      Log.info(&.emit("mcp: entry created", id: id, reimbursement: input.reimbursement?))
       e = @d.store.get_expense(id)
       names = ps.to_h { |p| {p.id, p.name} }
       JSON.build do |j|

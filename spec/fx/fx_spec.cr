@@ -20,8 +20,7 @@ end
 
 # Today is Friday, 2026-10-02, 12:00 (the day's rates are not yet published).
 private def new_service(store : Zipfelkasse::Store, fake : FXSpec::FakeECB) : FX::Service
-  d = Zipfelkasse::Web::Deps.new(fx_config(fake), store, Zipfelkasse::Web::Renderer.new(store),
-    Zipfelkasse::Logger.new(IO::Memory.new))
+  d = Zipfelkasse::Web::Deps.new(fx_config(fake), store, Zipfelkasse::Web::Renderer.new(store))
   service = FX::Service.new(d)
   service.clock = -> { at("2026-10-02 12:00") }
   service

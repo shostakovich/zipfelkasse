@@ -53,7 +53,7 @@ module Zipfelkasse::FX
       rescue ex : FetchError
         return r.json_error(502, ex.message || "")
       rescue ex
-        @d.log.error("rate", currency: cur, err: ex)
+        Log.error(exception: ex, &.emit("rate", currency: cur))
         return r.json_error(500, "Der Kurs konnte nicht ermittelt werden.")
       end
       r.json(200) do |j|

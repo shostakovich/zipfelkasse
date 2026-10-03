@@ -380,7 +380,7 @@ module Zipfelkasse::Web
       rate = begin
         fx.rate(cur, date)
       rescue ex
-        @d.log.info("rate not available", currency: cur, date: Store.format_date(date), err: ex)
+        Log.info(exception: ex, &.emit("rate not available", currency: cur, date: Store.format_date(date)))
         raise unavailable
       end
       raise unavailable unless rate.rate > 0

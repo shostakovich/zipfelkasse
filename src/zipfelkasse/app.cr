@@ -10,9 +10,9 @@ module Zipfelkasse
     # Background jobs: each runs in its own fiber until the stopper fires.
     getter jobs = [] of Proc(Stopper, Nil)
 
-    def initialize(config : Config, store : Store, log : Logger)
+    def initialize(config : Config, store : Store)
       Web.location = config.location
-      @d = Web::Deps.new(config, store, Web::Renderer.new(store), log)
+      @d = Web::Deps.new(config, store, Web::Renderer.new(store))
       Web.reset_kemal
       mcp = Web::MCPMount.new
       Web::Handlers.new(@d).register
@@ -62,17 +62,17 @@ module Zipfelkasse
 
     def self.serve : Nil
       config = Config.from_env
-      log = Logger.new(STDERR, location: config.location)
+      Zipfelkasse.setup_logging
       store = Store.open(config.db_path)
       store.clock = -> { config.now }
       begin
-        app = App.new(config, store, log)
+        app = App.new(config, store)
         server = HTTP::Server.new(app.handlers)
         listen(server, config.addr)
 
         stopper = Stopper.new
         jobs = WaitGroup.new
-        (app.jobs + [->(s : Stopper) { backup_loop(s, store, config, log) }]).each do |job|
+        (app.jobs + [->(s : Stopper) { backup_loop(s, store, config) }]).each do |job|
           jobs.spawn { job.call(stopper) }
         end
 
@@ -85,13 +85,13 @@ module Zipfelkasse
         rescue ex
           served.send(ex)
         end
-        log.info("Zipfelkasse running", addr: config.addr, db: config.db_path, tz: config.location_name)
+        Log.info(&.emit("Zipfelkasse running", addr: config.addr, db: config.db_path, tz: config.location_name))
 
         select
         when err = served.receive
           raise err if err
         when shutdown.receive?
-          log.info("shutting down")
+          Log.info { "shutting down" }
           server.close
         end
         stopper.stop
@@ -131,15 +131,15 @@ module Zipfelkasse
       raise Exception.new("cannot listen on #{addr}: #{ex.message}")
     end
 
-    def self.backup_loop(stopper : Stopper, store : Store, config : Config, log : Logger) : Nil
+    def self.backup_loop(stopper : Stopper, store : Store, config : Config) : Nil
       loop do
         now = Time.local(config.location)
         return unless stopper.wait(next_backup(now) - now)
         begin
           path = store.backup(config.backup_dir, BACKUP_KEEP)
-          log.info("backup written", path: path)
+          Log.info(&.emit("backup written", path: path))
         rescue ex
-          log.error("backup failed", err: ex)
+          Log.error(exception: ex) { "backup failed" }
         end
       end
     end

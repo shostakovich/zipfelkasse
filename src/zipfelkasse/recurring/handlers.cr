@@ -97,10 +97,10 @@ module Zipfelkasse::Recurring
     private def materialize_logged(id : Int64) : Int32
       materialize_rule(id, today)
     rescue ex : Error
-      log.error("recurring expenses", err: ex)
+      Log.error(exception: ex) { "recurring expenses" }
       ex.created
     rescue ex
-      log.error("recurring expenses", err: ex)
+      Log.error(exception: ex) { "recurring expenses" }
       0
     end
 

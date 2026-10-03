@@ -341,7 +341,7 @@ module Zipfelkasse::YNAB
     private def unmark_pending(cfg : Store::YNABConfig, ws : Array(Want)) : Nil
       mark_pending(cfg, ws, "")
     rescue ex
-      @d.log.warn("ynab: undo pending mark", person: cfg.participant_id, err: ex)
+      Log.warn(exception: ex, &.emit("ynab: undo pending mark", person: cfg.participant_id))
     end
 
     private def apply_created(cfg : Store::YNABConfig, ws : Array(Want), got : Array(APITxn), res : SyncResult) : Nil

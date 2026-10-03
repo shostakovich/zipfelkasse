@@ -27,7 +27,7 @@ module MCPSpec
   class Env
     getter store : Zipfelkasse::Store
     @server : Zipfelkasse::MCP::Server
-    getter log_io = IO::Memory.new
+    getter log_io = SPEC_LOG
     getter ids = {} of String => Int64
     getter cats = {} of String => Int64
     getter deps : Zipfelkasse::Web::Deps
@@ -39,8 +39,7 @@ module MCPSpec
       @store = Zipfelkasse::Store.open(File.join(@dir, "zipfelkasse.db"))
       config = Zipfelkasse::Config.from_env({"MCP_SECRET" => SECRET, "TRUSTED_PROXIES" => "10.0.0.1"})
       config.location = location
-      log = Zipfelkasse::Logger.new(@log_io, location: location)
-      @deps = Zipfelkasse::Web::Deps.new(config, @store, Zipfelkasse::Web::Renderer.new(@store), log)
+      @deps = Zipfelkasse::Web::Deps.new(config, @store, Zipfelkasse::Web::Renderer.new(@store))
       @server = Zipfelkasse::MCP::Server.new(@deps)
       %w(Anna Ben Cleo).each { |n| @ids[n] = @store.create_participant(0_i64, n) }
       @store.list_categories(include_archived: true).each { |c| @cats[c.name] = c.id }

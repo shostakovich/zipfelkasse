@@ -2,7 +2,7 @@
 require "json"
 require "./domain/*"
 require "./config/*"
-require "./logger"
+require "./logfmt"
 require "./stopper"
 require "./store/store"
 require "./store/*"

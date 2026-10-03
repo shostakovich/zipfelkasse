@@ -5,12 +5,12 @@ require "../store/expense_fixture"
 class TestServer
   getter app : Zipfelkasse::App
   getter store : Zipfelkasse::Store
-  getter log_io = IO::Memory.new
+  getter log_io = SPEC_LOG
   @handler : HTTP::Handler
 
   def initialize(config = Zipfelkasse::Config.new, @store = Zipfelkasse::Store.open(":memory:"))
     config.location = Time::Location::UTC
-    @app = Zipfelkasse::App.new(config, @store, Zipfelkasse::Logger.new(@log_io))
+    @app = Zipfelkasse::App.new(config, @store)
     @handler = HTTP::Server.build_middleware(@app.handlers)
   end
 

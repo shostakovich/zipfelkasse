@@ -12,6 +12,8 @@ require "wait_group"
 #   the daily file for today/yesterday, the 90-day file for recent dates,
 #   otherwise the complete history once (eurofxref-hist.zip).
 module Zipfelkasse::FX
+  Log = ::Log.for(self)
+
   # How far an ECB rate may lie before the requested date (weekends, holidays).
   LOOKBACK_DAYS = 10
 
@@ -164,7 +166,7 @@ module Zipfelkasse::FX
     private def refresh_logged(stopper : Stopper) : Time?
       refresh
     rescue ex
-      @d.log.error("refresh ECB rates", err: ex) unless stopper.stopped?
+      Log.error(exception: ex) { "refresh ECB rates" } unless stopper.stopped?
       nil
     end
 

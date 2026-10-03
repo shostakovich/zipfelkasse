@@ -13,6 +13,8 @@ require "crypto/subtle"
 # (2025-11-25, 2025-06-18, 2025-03-26) are served on the same endpoint.
 # There are no sessions and no SSE streams.
 module Zipfelkasse::MCP
+  Log = ::Log.for(self)
+
   MAX_BODY = 1 << 20
 
   # An unread rest of a body of this size or more closes the connection after
@@ -39,32 +41,32 @@ module Zipfelkasse::MCP
         return text_error(ctx, 404, "404 page not found")
       end
       unless Crypto::Subtle.constant_time_compare(URI.decode(secret), @d.config.mcp_secret)
-        @log.warn("mcp: wrong secret", ip: ip, remote: remote)
+        Log.warn(&.emit("mcp: wrong secret", ip: ip.to_s, remote: remote))
         return text_error(ctx, 404, "404 page not found")
       end
       unless ip.in?(@d.config.mcp_allowed_cidrs)
-        @log.warn("mcp: IP not allowed", ip: ip, remote: remote,
-          x_forwarded_for: req.headers.get?("X-Forwarded-For") || [] of String, x_real_ip: MCP.header(req.headers, "X-Real-IP"))
+        Log.warn(&.emit("mcp: IP not allowed", ip: ip.to_s, remote: remote,
+          x_forwarded_for: req.headers.get?("X-Forwarded-For") || [] of String, x_real_ip: MCP.header(req.headers, "X-Real-IP")))
         return write_error(ctx, 403, nil, CODE_FORBIDDEN, "Access from this address is not allowed.")
       end
       unless (origin = MCP.header(req.headers, "Origin")).empty?
-        @log.warn("mcp: Origin header rejected", ip: ip, origin: origin)
+        Log.warn(&.emit("mcp: Origin header rejected", ip: ip.to_s, origin: origin))
         return write_error(ctx, 403, nil, CODE_FORBIDDEN, "Access from a browser is not allowed.")
       end
       if req.method != "POST"
         ctx.response.headers["Allow"] = "POST"
         text_error(ctx, 405, "Method Not Allowed")
-        return @log.info("mcp", ip: ip, http: req.method, status: 405)
+        return Log.info(&.emit("mcp", ip: ip.to_s, http: req.method, status: 405))
       end
 
       info = RequestInfo.new
       handle_post(ctx, info)
-      attrs = {"ip" => ip.to_s, "method" => info.method, "status" => ctx.response.status_code.to_s,
-               "duration" => "#{(Time.instant - start).total_milliseconds.round.to_i}ms"}
-      attrs["tool"] = info.tool unless info.tool.empty?
-      attrs["version"] = info.version unless info.version.empty?
-      attrs["tool_error"] = info.tool_error unless info.tool_error.empty?
-      @log.log(Logger::Level::Info, "mcp", attrs)
+      attrs = {:ip => ip.to_s, :method => info.method, :status => ctx.response.status_code.to_s,
+               :duration => "#{(Time.instant - start).total_milliseconds.round.to_i}ms"}
+      attrs[:tool] = info.tool unless info.tool.empty?
+      attrs[:version] = info.version unless info.version.empty?
+      attrs[:tool_error] = info.tool_error unless info.tool_error.empty?
+      Log.info(&.emit("mcp", attrs))
     ensure
       # A client still writing would get a reset instead of the response.
       ctx.request.body.try { |body| discard(body, 4 * MAX_BODY) }
@@ -108,13 +110,13 @@ module Zipfelkasse
     # Mounts /mcp/<secret>; without MCP_SECRET, MCP stays disabled.
     def self.wire_mcp(app : App, d : Web::Deps, mcp : Web::MCPMount) : Nil
       if d.config.mcp_secret.empty?
-        d.log.info("MCP disabled (MCP_SECRET is empty)")
+        Log.info { "MCP disabled (MCP_SECRET is empty)" }
         return
       end
       server = MCP::Server.new(d)
       mcp.endpoint = ->server.call(HTTP::Server::Context)
-      d.log.info("MCP enabled", path: "/mcp/***", allowed: d.config.mcp_allowed_cidrs.map(&.to_s),
-        proxies: d.config.trusted_proxies.map(&.to_s))
+      Log.info(&.emit("MCP enabled", path: "/mcp/***", allowed: d.config.mcp_allowed_cidrs.map(&.to_s),
+        proxies: d.config.trusted_proxies.map(&.to_s)))
     end
   end
 end

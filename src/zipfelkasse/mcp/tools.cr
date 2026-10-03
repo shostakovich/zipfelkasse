@@ -305,10 +305,8 @@ module Zipfelkasse::MCP
     @tools = {} of String => Tool
     @order = [] of String # tools/list order
     @sql_sem = Channel(Nil).new(2)
-    @log : Logger
 
     def initialize(@d : Web::Deps)
-      @log = @d.log
       register_read_tools
       register_write_tools
     end
@@ -334,7 +332,7 @@ module Zipfelkasse::MCP
       begin
         text + "\n" + MCP.overview_text(@d.store.mcp_overview)
       rescue ex
-        @log.error("mcp: data overview", err: ex)
+        Log.error(exception: ex) { "mcp: data overview" }
         text
       end
     end

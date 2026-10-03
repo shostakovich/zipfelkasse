@@ -2,6 +2,8 @@
 # which is the template and the first instance; its date is the anchor from
 # which all occurrences are computed (Domain.next_date).
 module Zipfelkasse::Recurring
+  Log = ::Log.for(self)
+
   # Occurrences created per rule and run (e.g. for a very old start date);
   # the hourly runs catch up on the rest.
   MAX_INSTANCES_PER_RUN = 400
@@ -27,10 +29,6 @@ module Zipfelkasse::Recurring
 
     def today : Time
       @d.today
-    end
-
-    private def log : Logger
-      @d.log
     end
 
     # Creates all instances due up to and including today (at most
@@ -87,8 +85,7 @@ module Zipfelkasse::Recurring
         i = 0
         while d <= today
           if i == MAX_INSTANCES_PER_RUN
-            log.info("recurring expenses: per-run limit reached, the rest follows in the next run",
-              rule: r.id, next_date: Store.format_date(d), limit: MAX_INSTANCES_PER_RUN)
+            Log.info(&.emit("recurring expenses: per-run limit reached, the rest follows in the next run", rule: r.id, next_date: Store.format_date(d), limit: MAX_INSTANCES_PER_RUN))
             break
           end
           n += 1 if create_occurrence(r, d, existing.includes?(d))
@@ -99,7 +96,7 @@ module Zipfelkasse::Recurring
         end
       rescue Store::RecurringChanged
         # Paused, deleted or resumed meanwhile (r is a snapshot): that change wins.
-        log.info("recurring expenses: rule changed meanwhile, stopping its catch-up", rule: r.id)
+        Log.info(&.emit("recurring expenses: rule changed meanwhile, stopping its catch-up", rule: r.id))
       rescue ex
         return {n, ex}
       end
@@ -109,8 +106,7 @@ module Zipfelkasse::Recurring
     # exists: an equal expense was entered by hand or by a deleted rule.
     private def create_occurrence(r : Store::Recurring, d : Time, exists : Bool) : Bool
       if exists
-        log.info("recurring expense: an equal expense already exists, skipping the occurrence",
-          rule: r.id, date: Store.format_date(d))
+        Log.info(&.emit("recurring expense: an equal expense already exists, skipping the occurrence", rule: r.id, date: Store.format_date(d)))
         return false
       end
       @d.store.create_expense(0_i64, instance(r, d))
@@ -135,8 +131,7 @@ module Zipfelkasse::Recurring
       rate = begin
         fx.rate(cur, date)
       rescue ex : Domain::ValidationError
-        log.warn("recurring expense: no rate for the date, using the template's rate",
-          rule: r.id, currency: cur, date: Store.format_date(date), err: ex)
+        Log.warn(exception: ex, &.emit("recurring expense: no rate for the date, using the template's rate", rule: r.id, currency: cur, date: Store.format_date(date)))
         return input
       rescue ex
         raise Exception.new("rate for #{cur} on #{Store.format_date(date)} not available, retrying in the next run: #{ex.message}", cause: ex)
@@ -158,9 +153,9 @@ module Zipfelkasse::Recurring
       loop do
         begin
           n = materialize(today, stopper)
-          log.info("recurring expenses created", count: n) if n > 0
+          Log.info(&.emit("recurring expenses created", count: n)) if n > 0
         rescue ex
-          log.error("recurring expenses", err: ex) unless stopper.stopped?
+          Log.error(exception: ex) { "recurring expenses" } unless stopper.stopped?
         end
         # A run that overran a tick starts the next one right away; further
         # missed ticks are dropped.

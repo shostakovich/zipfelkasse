@@ -176,12 +176,12 @@ module Zipfelkasse::FX
         result, error = begin
           {download(file), nil}
         rescue ex
-          @d.log.warn("loading ECB rates failed", file: file, err: ex)
+          Log.warn(exception: ex, &.emit("loading ECB rates failed", file: file))
           {nil, FetchError.new(file, ex.message || ex.class.name)}
         end
         if result
-          @d.log.info("ECB rates loaded", file: file, rates: result.count,
-            from: Store.format_date(result.from), to: Store.format_date(result.to))
+          Log.info(&.emit("ECB rates loaded", file: file, rates: result.count,
+            from: Store.format_date(result.from), to: Store.format_date(result.to)))
         end
         @mutex.synchronize { load.finish(result, error, @clock.call) }
       end
