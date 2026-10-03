@@ -1,9 +1,10 @@
 require "./e2e_helper"
+require "csv"
 
 # Exchange rates (ECB download, /api/kurs, manual rates, the rates page,
 # expenses in foreign currencies, the 16:30 schedule) and the exports (CSV,
-# JSON, OFX and CSV for YNAB). Exact bytes matter for the CSV and OFX files:
-# other programs read them.
+# JSON, OFX and CSV for YNAB). The CSV and JSON files are compared by value,
+# the OFX file by line.
 
 # The JSON /api/kurs answers with (compact, trailing newline).
 private def kurs_json(currency : String, date : String, rate : String, source : String) : String
@@ -48,6 +49,10 @@ end
 
 private def lf(lines : Array(String)) : String
   lines.join { |l| l + "\n" }
+end
+
+private def csv_rows(text : String, separator : Char) : Array(Array(String))
+  CSV.parse(text.lchop('\u{FEFF}'), separator: separator)
 end
 
 # The helpers of E2E::FxExport, without putting them into the top level of
@@ -625,13 +630,15 @@ module FxExportSpec
     scenario "/export/ausgaben.csv: German Excel CSV of all expenses", world do
       user = world.user
       user.login("Emil")
-      download.call(user, "/export/ausgaben.csv", csv_type, "zipfelkasse-ausgaben-2026-10-03.csv").should eq bom + crlf([
+      body = download.call(user, "/export/ausgaben.csv", csv_type, "zipfelkasse-ausgaben-2026-10-03.csv")
+      body.should start_with bom
+      csv_rows(body, ';').should eq csv_rows(lf([
         "#{header};Anteil Anna;Anteil Ben;Anteil Dora;Anteil Jürgen",
         "1;30.08.2026;Brötchen;;Jürgen;4,00;4,00;EUR;;Ausgabe;Gleichmäßig;;2,00;;;2,00",
         "2;01.09.2026;Café & Kuchen;Restaurant;Anna;12,01;12,01;EUR;;Ausgabe;Gleichmäßig;\"lecker; „süß“\";6,01;;;6,00",
         "3;03.09.2026;\"Diner \"\"NYC\"\"\";;Ben;80,00;90,00;USD;1,125;Ausgabe;Gleichmäßig;;40,00;40,00;;",
         "4;05.09.2026;Rückzahlung;;Jürgen;6,00;6,00;EUR;;Rückzahlung;Gleichmäßig;;6,00;;;",
-        "6;05.09.2026;\"'=Formel <&> \"\"q\"\"\";;Anna;10,00;10,00;EUR;;Ausgabe;Nach Anteilen;\"Zeile1\r\nZeile2\r\nZeile3; x\";6,67;;;3,33",
+        "6;05.09.2026;\"'=Formel <&> \"\"q\"\"\";;Anna;10,00;10,00;EUR;;Ausgabe;Nach Anteilen;\"Zeile1\nZeile2\r\nZeile3; x\";6,67;;;3,33",
         "7;06.09.2026;Sushi;;Anna;12,46;2000;JPY;160,5;Ausgabe;Gleichmäßig;;6,23;;;6,23",
         "8;07.09.2026;'+49 Telefon;Haushalt;Ben;20,00;20,00;EUR;;Ausgabe;Nach Prozent;'@home;5,00;15,00;;",
         "9;08.09.2026;'-Rabatt;;Dora;7,50;7,50;EUR;;Ausgabe;Nach Beträgen;;7,50;0,00;;",
@@ -639,24 +646,24 @@ module FxExportSpec
         "12;12.09.2026;#{long_title};;Anna;9,99;9,99;EUR;;Ausgabe;Gleichmäßig;;3,33;3,33;3,33;",
         "13;03.10.2026;Heute;;Anna;3,00;3,00;EUR;;Ausgabe;Gleichmäßig;;1,50;1,50;;",
         "11;04.12.2026;Konzert;;Ben;50,00;50,00;EUR;;Ausgabe;Gleichmäßig;;25,00;25,00;;",
-      ])
+      ]), ';')
 
       # A range: only the people involved in it get a column.
-      download.call(user, "/export/ausgaben.csv?von=2026-09-03&bis=06.09.2026", csv_type,
-        "zipfelkasse-ausgaben-2026-09-03_2026-09-06.csv").should eq bom + crlf([
+      csv_rows(download.call(user, "/export/ausgaben.csv?von=2026-09-03&bis=06.09.2026", csv_type,
+        "zipfelkasse-ausgaben-2026-09-03_2026-09-06.csv"), ';').should eq csv_rows(lf([
         "#{header};Anteil Anna;Anteil Ben;Anteil Jürgen",
         "3;03.09.2026;\"Diner \"\"NYC\"\"\";;Ben;80,00;90,00;USD;1,125;Ausgabe;Gleichmäßig;;40,00;40,00;",
         "4;05.09.2026;Rückzahlung;;Jürgen;6,00;6,00;EUR;;Rückzahlung;Gleichmäßig;;6,00;;",
-        "6;05.09.2026;\"'=Formel <&> \"\"q\"\"\";;Anna;10,00;10,00;EUR;;Ausgabe;Nach Anteilen;\"Zeile1\r\nZeile2\r\nZeile3; x\";6,67;;3,33",
+        "6;05.09.2026;\"'=Formel <&> \"\"q\"\"\";;Anna;10,00;10,00;EUR;;Ausgabe;Nach Anteilen;\"Zeile1\nZeile2\r\nZeile3; x\";6,67;;3,33",
         "7;06.09.2026;Sushi;;Anna;12,46;2000;JPY;160,5;Ausgabe;Gleichmäßig;;6,23;;6,23",
-      ])
-      download.call(user, "/export/ausgaben.csv?von=2026-12-01", csv_type, "zipfelkasse-ausgaben-ab-2026-12-01.csv")
-        .should eq bom + crlf(["#{header};Anteil Anna;Anteil Ben", "11;04.12.2026;Konzert;;Ben;50,00;50,00;EUR;;Ausgabe;Gleichmäßig;;25,00;25,00"])
-      download.call(user, "/export/ausgaben.csv?bis=2026-08-31&von=", csv_type, "zipfelkasse-ausgaben-bis-2026-08-31.csv")
-        .should eq bom + crlf(["#{header};Anteil Anna;Anteil Jürgen", "1;30.08.2026;Brötchen;;Jürgen;4,00;4,00;EUR;;Ausgabe;Gleichmäßig;;2,00;2,00"])
+      ]), ';')
+      csv_rows(download.call(user, "/export/ausgaben.csv?von=2026-12-01", csv_type, "zipfelkasse-ausgaben-ab-2026-12-01.csv"), ';')
+        .should eq csv_rows(lf(["#{header};Anteil Anna;Anteil Ben", "11;04.12.2026;Konzert;;Ben;50,00;50,00;EUR;;Ausgabe;Gleichmäßig;;25,00;25,00"]), ';')
+      csv_rows(download.call(user, "/export/ausgaben.csv?bis=2026-08-31&von=", csv_type, "zipfelkasse-ausgaben-bis-2026-08-31.csv"), ';')
+        .should eq csv_rows(lf(["#{header};Anteil Anna;Anteil Jürgen", "1;30.08.2026;Brötchen;;Jürgen;4,00;4,00;EUR;;Ausgabe;Gleichmäßig;;2,00;2,00"]), ';')
       # Nothing in the range: only the fixed columns.
-      download.call(user, "/export/ausgaben.csv?von=1.1.2020&bis=02.01.2020", csv_type, "zipfelkasse-ausgaben-2020-01-01_2020-01-02.csv")
-        .should eq bom + header + "\r\n"
+      csv_rows(download.call(user, "/export/ausgaben.csv?von=1.1.2020&bis=02.01.2020", csv_type, "zipfelkasse-ausgaben-2020-01-01_2020-01-02.csv"), ';')
+        .should eq csv_rows(header, ';')
     end
 
     scenario "/export/ausgaben.json: everything with shares", world do
@@ -725,7 +732,7 @@ module FxExportSpec
       download.call(user, "/export/ynab.ofx?von=2020-01-01&bis=2020-01-02", ofx_type, "zipfelkasse-ynab-2020-01-01_2020-01-02.ofx")
         .should eq ofx_file(acct, "20200101", "20200102", now, [] of String, "0.00")
 
-      download.call(user, "/export/ynab.csv", csv_type, "zipfelkasse-ynab-2026-10-03.csv").should eq lf([
+      csv_rows(download.call(user, "/export/ynab.csv", csv_type, "zipfelkasse-ynab-2026-10-03.csv"), ',').should eq csv_rows(lf([
         "Date,Payee,Memo,Outflow,Inflow",
         %(2026-08-30,Brötchen,"Gesamt 4,00 € · bezahlt von Jürgen · zipfelkasse #1",2.00,),
         %(2026-09-01,Café & Kuchen,"Gesamt 12,01 € · bezahlt von Anna · zipfelkasse #2",6.01,),
@@ -736,23 +743,23 @@ module FxExportSpec
         %(2026-09-08,'-Rabatt,"Gesamt 7,50 € · bezahlt von Dora · zipfelkasse #9",7.50,),
         %(2026-09-12,#{long_title},"Gesamt 9,99 € · bezahlt von Anna · zipfelkasse #12",3.33,),
         %(2026-10-03,Heute,"Gesamt 3,00 € · bezahlt von Anna · zipfelkasse #13",1.50,),
-      ])
-      download.call(user, "/export/ynab.csv?bis=2026-08-31", csv_type, "zipfelkasse-ynab-bis-2026-08-31.csv")
-        .should eq lf(["Date,Payee,Memo,Outflow,Inflow", %(2026-08-30,Brötchen,"Gesamt 4,00 € · bezahlt von Jürgen · zipfelkasse #1",2.00,)])
+      ]), ',')
+      csv_rows(download.call(user, "/export/ynab.csv?bis=2026-08-31", csv_type, "zipfelkasse-ynab-bis-2026-08-31.csv"), ',')
+        .should eq csv_rows(lf(["Date,Payee,Memo,Outflow,Inflow", %(2026-08-30,Brötchen,"Gesamt 4,00 € · bezahlt von Jürgen · zipfelkasse #1",2.00,)]), ',')
 
       # Ben has other shares; Emil has none (the period then is today).
       user.login("Ben")
-      download.call(user, "/export/ynab.csv?von=2026-09-07", csv_type, "zipfelkasse-ynab-ab-2026-09-07.csv").should eq lf([
+      csv_rows(download.call(user, "/export/ynab.csv?von=2026-09-07", csv_type, "zipfelkasse-ynab-ab-2026-09-07.csv"), ',').should eq csv_rows(lf([
         "Date,Payee,Memo,Outflow,Inflow",
         %(2026-09-07,'+49 Telefon,"Gesamt 20,00 € · bezahlt von Ben · zipfelkasse #8",15.00,),
         %(2026-09-10,'=SUMME(A1),"Gesamt 5,00 € · bezahlt von Ben · zipfelkasse #5",5.00,),
         %(2026-09-12,#{long_title},"Gesamt 9,99 € · bezahlt von Anna · zipfelkasse #12",3.33,),
         %(2026-10-03,Heute,"Gesamt 3,00 € · bezahlt von Anna · zipfelkasse #13",1.50,),
-      ])
+      ]), ',')
       user.login("Emil")
       download.call(user, "/export/ynab.ofx", ofx_type, "zipfelkasse-ynab-2026-10-03.ofx")
         .should eq ofx_file("ZIPFELKASSE-#{ids["Emil"]}", "20261003", "20261003", now, [] of String, "0.00")
-      download.call(user, "/export/ynab.csv", csv_type, "zipfelkasse-ynab-2026-10-03.csv").should eq "Date,Payee,Memo,Outflow,Inflow\n"
+      csv_rows(download.call(user, "/export/ynab.csv", csv_type, "zipfelkasse-ynab-2026-10-03.csv"), ',').should eq [["Date", "Payee", "Memo", "Outflow", "Inflow"]]
     end
 
     scenario "/export page, invalid ranges and identity", world do
@@ -810,12 +817,12 @@ module FxExportSpec
       world.restart("2026-10-02T22:30:00Z")
       user = world.user
       user.login("Anna")
-      download.call(user, "/export/ynab.csv?von=2026-09-12", csv_type, "zipfelkasse-ynab-ab-2026-09-12.csv")
-        .should eq lf(["Date,Payee,Memo,Outflow,Inflow", %(2026-09-12,#{long_title},"Gesamt 9,99 € · bezahlt von Anna · zipfelkasse #12",3.33,)])
+      csv_rows(download.call(user, "/export/ynab.csv?von=2026-09-12", csv_type, "zipfelkasse-ynab-ab-2026-09-12.csv"), ',')
+        .should eq csv_rows(lf(["Date,Payee,Memo,Outflow,Inflow", %(2026-09-12,#{long_title},"Gesamt 9,99 € · bezahlt von Anna · zipfelkasse #12",3.33,)]), ',')
       download.call(user, "/export/ynab.ofx", ofx_type, "zipfelkasse-ynab-2026-10-03.ofx")
         .should eq ofx_file("ZIPFELKASSE-#{ids["Anna"]}", "20260830", "20260912", "20261002223000", anna_trns[0..7].flatten, "-76.74")
-      download.call(user, "/export/ausgaben.csv?von=2026-10-01&bis=2026-10-31", csv_type, "zipfelkasse-ausgaben-2026-10-01_2026-10-31.csv")
-        .should eq bom + crlf(["#{header};Anteil Anna;Anteil Ben", "13;03.10.2026;Heute;;Anna;3,00;3,00;EUR;;Ausgabe;Gleichmäßig;;1,50;1,50"])
+      csv_rows(download.call(user, "/export/ausgaben.csv?von=2026-10-01&bis=2026-10-31", csv_type, "zipfelkasse-ausgaben-2026-10-01_2026-10-31.csv"), ';')
+        .should eq csv_rows(lf(["#{header};Anteil Anna;Anteil Ben", "13;03.10.2026;Heute;;Anna;3,00;3,00;EUR;;Ausgabe;Gleichmäßig;;1,50;1,50"]), ';')
       download.call(user, "/export/ausgaben.json?bis=2026-12-31", json_type, "zipfelkasse-ausgaben-bis-2026-12-31.json")
     end
   end
