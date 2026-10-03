@@ -200,6 +200,8 @@ module Zipfelkasse::Web
     Domain.parse_weight(mode, cur, v)
   end
 
+  # Broken percent escapes and ";" separators make the expense form a bad
+  # request (400), although the parser silently accepts them.
   def self.form_encoding_ok?(s : String) : Bool
     return false if s.includes?(';')
     b = s.to_slice
@@ -312,8 +314,6 @@ module Zipfelkasse::Web
       r.redirect("/")
     end
 
-    # Broken percent escapes or ";" separators in the query or the form body.
-    # The parser would accept them, the expense form rejects them.
     private def form_encoding_ok?(r : Request) : Bool
       return false unless Web.form_encoding_ok?(r.request.query || "")
       type = (r.request.headers["Content-Type"]? || "").partition(';')[0].strip.downcase

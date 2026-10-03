@@ -474,7 +474,7 @@ describe "YNAB sync" do
 
   it "computes the fingerprint and today" do
     p = YNAB::Posting.new(7_i64, date("2026-09-01"), 500_i64, "Kino", "memo", 0_i64)
-    # computed by the Go app
+    # fixed value: stored fingerprints must never change
     YNAB::Want.new(p, "c-food").fingerprint.should eq "d4a1ad6e19cee680676eefc66df39514"
     berlin = Time::Location.load("Europe/Berlin")
     YNAB.today(Time.utc(2026, 10, 2, 23, 30, 0), berlin).should eq date("2026-10-02")
