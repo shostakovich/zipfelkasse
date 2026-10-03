@@ -109,7 +109,7 @@ module Zipfelkasse::Web
         SplitRow.new(p.id, p.name, p.archived?, reimbursement ? p.id == to : !p.archived?)
       end
       new(date: Store.format_date(today), paid_by: paid_by, reimbursement: reimbursement, rows: rows,
-        title: reimbursement ? "Rückzahlung" : "",
+        title: reimbursement ? Domain::REIMBURSEMENT_TITLE : "",
         amount: reimbursement && cents && cents > 0 ? Domain.format_cents_input(cents) : "")
     end
 
@@ -282,7 +282,7 @@ module Zipfelkasse::Web
       rescue Store::NotFound
         raise HTTPError.new(env, 404, "Ausgabe nicht gefunden.")
       end
-      kind = input.reimbursement? ? "Rückzahlung" : "Ausgabe"
+      kind = input.reimbursement? ? Domain::REIMBURSEMENT_TITLE : "Ausgabe"
       redirect(env, "/", "#{kind} „#{Store.normalize_name(input.title)}“ #{existing ? "gespeichert" : "angelegt"}.")
     end
 

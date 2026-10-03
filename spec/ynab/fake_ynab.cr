@@ -36,6 +36,8 @@ module YNABSpec
     getter txns = {} of String => Txn # by ID, deleted ones included
     # The next POST is executed, but its response gets lost (500).
     property? lost_post = false
+    # The transaction list of an account comes without its data envelope.
+    property? bare_list = false
     # While set, every request except the plan list (token check) waits
     # until it is closed.
     property hold : Channel(Nil)? = nil
@@ -234,6 +236,7 @@ module YNABSpec
     end
 
     private def list(acc, req, res)
+      return res.print("{}") if bare_list?
       since = req.query_params["since_date"]? || ""
       out = @txns.values.select { |t| !t.deleted && t.account_id == acc && t.date >= since }
       data(res, 200, {transactions: out, server_knowledge: 5})

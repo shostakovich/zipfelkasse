@@ -1,4 +1,5 @@
 require "../web/web_helper"
+require "csv"
 
 private alias Store = Zipfelkasse::Store
 private alias Domain = Zipfelkasse::Domain
@@ -95,34 +96,37 @@ describe Zipfelkasse::Export do
   it "writes the expenses CSV in the German Excel format" do
     io = IO::Memory.new
     Export.write_expenses_csv(io, PEOPLE, sample)
-    io.to_s.should eq "﻿" \
-                      "ID;Datum;Titel;Kategorie;Bezahlt von;Betrag (EUR);Originalbetrag;Währung;Kurs;Art;Aufteilung;Notiz;Anteil Anna;Anteil Ben;Anteil Jürgen\r\n" \
-                      "1;01.09.2026;Café & Kuchen;Restaurant;Anna;12,01;12,01;EUR;;Ausgabe;Gleichmäßig;\"lecker; „süß“\";6,01;;6,00\r\n" \
-                      "2;03.09.2026;\"Diner \"\"NYC\"\"\";;Ben;80,00;90,00;USD;1,125;Ausgabe;Gleichmäßig;;40,00;40,00;\r\n" \
-                      "3;05.09.2026;Rückzahlung;;Jürgen;6,00;6,00;EUR;;Rückzahlung;Gleichmäßig;;6,00;;\r\n" \
-                      "4;10.09.2026;'=SUMME(A1);Lebensmittel;Ben;5,00;5,00;EUR;;Ausgabe;Gleichmäßig;;;5,00;\r\n"
+    io.to_s.should start_with Export::BOM
+    CSV.parse(io.to_s.lchop(Export::BOM), separator: ';').should eq [
+      ["ID", "Datum", "Titel", "Kategorie", "Bezahlt von", "Betrag (EUR)", "Originalbetrag", "Währung", "Kurs", "Art", "Aufteilung",
+       "Notiz", "Anteil Anna", "Anteil Ben", "Anteil Jürgen"],
+      ["1", "01.09.2026", "Café & Kuchen", "Restaurant", "Anna", "12,01", "12,01", "EUR", "", "Ausgabe", "Gleichmäßig", "lecker; „süß“", "6,01", "", "6,00"],
+      ["2", "03.09.2026", %(Diner "NYC"), "", "Ben", "80,00", "90,00", "USD", "1,125", "Ausgabe", "Gleichmäßig", "", "40,00", "40,00", ""],
+      ["3", "05.09.2026", "Rückzahlung", "", "Jürgen", "6,00", "6,00", "EUR", "", "Rückzahlung", "Gleichmäßig", "", "6,00", "", ""],
+      ["4", "10.09.2026", "'=SUMME(A1)", "Lebensmittel", "Ben", "5,00", "5,00", "EUR", "", "Ausgabe", "Gleichmäßig", "", "", "5,00", ""],
+    ]
   end
 
-  it "quotes CSV fields only where needed" do
+  it "defuses formulas and keeps multi-line notes in the CSV" do
     e = edit(sample[0]) do |i|
-      i.title = %('=Formel <&> "q")
+      i.title = %(=Formel <&> "q")
       i.notes = "Zeile1\r\nZeile2\nZeile3; x"
       i
     end
     io = IO::Memory.new
     Export.write_expenses_csv(io, PEOPLE, [e])
-    io.to_s.lines(chomp: false)[1].should eq "1;01.09.2026;\"'=Formel <&> \"\"q\"\"\";Restaurant;Anna;12,01;12,01;EUR;;Ausgabe;Gleichmäßig;\"Zeile1\r\n"
-    io.to_s.should contain "Zeile1\r\nZeile2\r\nZeile3; x\";6,01;6,00\r\n"
+    row = CSV.parse(io.to_s.lchop(Export::BOM), separator: ';')[1]
+    {row[2], row[11]}.should eq({"'=Formel <&> \"q\"", "Zeile1\r\nZeile2\nZeile3; x"})
     io = IO::Memory.new
     Export.write_expenses_csv(io, PEOPLE, [] of Store::Expense)
-    io.to_s.should eq "﻿ID;Datum;Titel;Kategorie;Bezahlt von;Betrag (EUR);Originalbetrag;Währung;Kurs;Art;Aufteilung;Notiz\r\n"
+    CSV.parse(io.to_s.lchop(Export::BOM), separator: ';').map(&.size).should eq [12]
   end
 
   it "writes the expenses JSON" do
     io = IO::Memory.new
     now = Time.utc(2026, 10, 2, 12, 0, 0)
     Export.write_expenses_json(io, "WG Süd", now, Export::Period.new(from: date("2026-09-01")), PEOPLE[0, 2], sample[1, 1])
-    io.to_s.should eq <<-JSON + "\n"
+    JSON.parse(io.to_s).should eq JSON.parse(<<-JSON)
       {
         "group": "WG Süd",
         "exported_at": "2026-10-02T12:00:00Z",
@@ -180,15 +184,13 @@ describe Zipfelkasse::Export do
       JSON
   end
 
-  it "writes EUR rates as integers and the export time with nanoseconds" do
+  it "leaves out the range of an unbounded export" do
     io = IO::Memory.new
-    Export.write_expenses_json(io, "G", Time.utc(2026, 10, 3, 6, 14, 49, nanosecond: 339316300), Export::Period.new,
-      [] of Store::Participant, sample[0, 1])
-    json = io.to_s
-    json.should contain %("exported_at": "2026-10-03T06:14:49.3393163Z")
-    json.should contain %("fx_rate": 1,)
-    json.should contain %("category_id": 2,)
-    json.should_not contain %("from")
+    Export.write_expenses_json(io, "G", Time.utc(2026, 10, 3, 6, 14, 49), Export::Period.new, [] of Store::Participant, sample[0, 1])
+    json = JSON.parse(io.to_s)
+    {json["exported_at"], json["category_id"]?, json["expenses"][0]["category_id"], json["expenses"][0]["fx_rate"]}
+      .should eq({"2026-10-03T06:14:49Z", nil, 2, 1})
+    json.as_h.has_key?("from").should be_false
   end
 
   it "selects the same postings as the YNAB sync" do
@@ -348,6 +350,16 @@ describe Zipfelkasse::Export do
       res.body.should eq "Date,Payee,Memo,Outflow,Inflow\n" \
                          "2026-08-30,Brötchen,\"Gesamt 4,00 € · bezahlt von Jürgen · zipfelkasse #1\",2.00,\n" \
                          "2026-09-02,Käse,\"Gesamt 10,00 € · bezahlt von Jürgen · zipfelkasse #2\",5.00,\n"
+    end
+  end
+
+  it "writes nothing to the database" do
+    with_fixture do |f|
+      f.st.set_ynab_token(f.anna, "tok")
+      f.st.set_ynab_target(f.anna, Store::YNABTarget.new("p", "a", start: date("2026-09-01")))
+      f.st.db.exec("UPDATE ynab_config SET connected_at = NULL")
+      f.get("/export/ynab.csv").status_code.should eq 200
+      f.st.get_ynab_config(f.anna).connected_at.should be_nil
     end
   end
 

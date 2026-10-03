@@ -68,15 +68,14 @@ private class Env
     svc.load_status(anna)
   end
 
-  def sync(full : Bool) : {YNAB::SyncResult, Exception?}
-    res, _, err = svc.sync_one(st.get_ynab_config(anna), full)
-    {res, err}
+  def sync(full : Bool) : YNAB::Outcome
+    svc.sync_person(anna, full)
   end
 
   def must_sync(full : Bool) : YNAB::SyncResult
-    res, err = sync(full)
-    raise err if err
-    res
+    outcome = sync(full)
+    raise outcome.error.not_nil! if outcome.error
+    outcome.result
   end
 
   def expect_requests(*want : String) : Nil
@@ -168,9 +167,9 @@ describe "YNAB sync" do
          YNABSpec::ACCOUNT, "cleared", true})
       r = e.sync_rows[id]
       r.txn_id.should eq tx.id
-      r.synced_hash.should_not be_empty
+      r.synced_hash.should_not be_nil
       r.synced_at.should_not be_nil
-      r.last_error.should be_empty
+      r.last_error.should be_nil
 
       # Idempotent: nothing changed, no request.
       e.must_sync(true).should eq YNAB::SyncResult.new
@@ -193,7 +192,7 @@ describe "YNAB sync" do
       e.expect_requests
 
       st = e.status
-      {st.last_sync, st.error, st.summary}.should eq({e.now, "", "0 neu · 0 geändert · 0 gelöscht"})
+      {st.last_sync, st.error, st.summary}.should eq({e.now, nil, "0 neu · 0 geändert · 0 gelöscht"})
     end
   end
 
@@ -294,19 +293,16 @@ describe "YNAB sync" do
       e.connect("2026-09-01")
       id = e.create(e.input("Kino", 2400, "2026-09-20", e.anna, e.anna, e.ben))
       e.fake.fail(429)
-      _, err = e.sync(false)
-      YNAB.status_of(err).should eq 429
+      e.sync(false).failure.should eq YNAB::Failure::RateLimited
       e.expect_requests(POST)
       st = e.status
       st.retry_at.should eq e.now + 5.minutes
       st.backoff.should eq 5.minutes
-      st.error.should contain("Anfragelimit")
+      st.error.to_s.should contain("Anfragelimit")
       r = e.sync_rows[id]
-      r.synced_hash.should_not eq YNAB::PENDING_HASH
-      r.txn_id.should be_empty
+      {r.pending?, r.txn_id}.should eq({false, nil})
       # No requests during the pause.
-      _, err = e.sync(false)
-      err.should be_a(YNAB::BackoffError)
+      e.sync(false).skipped.should eq YNAB::Skip::BackedOff
       e.expect_requests
       # A second 429 doubles the pause.
       e.now += 6.minutes
@@ -317,7 +313,7 @@ describe "YNAB sync" do
       e.fake.take_requests
       e.must_sync(false).created.should eq 1
       st = e.status
-      {st.error, st.backoff, st.retry_at}.should eq({"", Time::Span.zero, nil})
+      {st.error, st.backoff, st.retry_at}.should eq({nil, Time::Span.zero, nil})
       # sync_all schedules the next run after the pause ends.
       e.fake.fail(429)
       e.st.update_expense(e.anna, id, e.input("Kino 2", 2400, "2026-09-20", e.anna, e.anna, e.ben))
@@ -332,14 +328,12 @@ describe "YNAB sync" do
       e.connect("2026-09-01")
       e.st.set_ynab_token(e.anna, "falsch")
       e.create(e.input("Kino", 2400, "2026-09-20", e.anna, e.anna, e.ben))
-      _, err = e.sync(false)
-      YNAB.status_of(err).should eq 401
+      e.sync(false).failure.should eq YNAB::Failure::Unauthorized
       st = e.status
       st.token_invalid?.should be_true
-      st.error.should contain("Token")
+      st.error.to_s.should contain("Token")
       e.fake.take_requests
-      _, err = e.sync(true)
-      err.should be_a(YNAB::TokenInvalidError)
+      e.sync(true).skipped.should eq YNAB::Skip::TokenInvalid
       e.expect_requests
 
       # The page shows the notice; a new token via the form resets it.
@@ -354,9 +348,8 @@ describe "YNAB sync" do
       e.connect("2026-09-01")
       id = e.create(e.input("Kino", 2400, "2026-09-20", e.anna, e.anna, e.ben))
       e.fake.lost_post = true
-      _, err = e.sync(false)
-      YNAB.uncertain?(err.not_nil!).should be_true
-      e.sync_rows[id].synced_hash.should eq YNAB::PENDING_HASH
+      e.sync(false).failure.should eq YNAB::Failure::Unclear
+      e.sync_rows[id].pending?.should be_true
       e.now += 6.minutes
       e.fake.take_requests
       e.must_sync(false)
@@ -365,8 +358,7 @@ describe "YNAB sync" do
       live = e.fake.live
       live.size.should eq 1
       r = e.sync_rows[id]
-      r.txn_id.should eq live[0].id
-      r.synced_hash.should_not eq YNAB::PENDING_HASH
+      {r.txn_id, r.pending?}.should eq({live[0].id, false})
     end
   end
 
@@ -398,9 +390,9 @@ describe "YNAB sync" do
       {res.created, res.failed}.should eq({1, 1})
       e.expect_requests(POST, POST, POST) # batch call rejected, then one by one
       rows = e.sync_rows
-      rows[good].txn_id.should_not be_empty
-      rows[bad].txn_id.should be_empty
-      rows[bad].last_error.should contain("payee rejected")
+      rows[good].txn_id.should_not be_nil
+      rows[bad].txn_id.should be_nil
+      rows[bad].last_error.to_s.should contain("payee rejected")
       # Failed and unchanged: retried only in the full sync.
       e.must_sync(false)
       e.expect_requests
@@ -416,10 +408,9 @@ describe "YNAB sync" do
       e.connect("2026-09-01")
       e.create(e.input("Kino", 2400, "2026-09-20", e.anna, e.anna, e.ben))
       e.fake.fail(503) # the detail contains the token
-      _, err = e.sync(false)
-      err.should_not be_nil
-      e.status.error.should_not contain(YNABSpec::TOKEN)
-      e.status.error.should contain("•••")
+      e.sync(false).error.should_not be_nil
+      e.status.error.to_s.should_not contain(YNABSpec::TOKEN)
+      e.status.error.to_s.should contain("•••")
     end
   end
 
@@ -484,8 +475,8 @@ describe "YNAB sync" do
       ensure
         hold.close
       end
-      {e.status.error, e.status.retry_at}.should eq({"", nil})
-      e.sync_rows.values.map(&.synced_hash).should eq [YNAB::PENDING_HASH] # the POST may have arrived
+      {e.status.error, e.status.retry_at}.should eq({nil, nil})
+      e.sync_rows.values.map(&.pending?).should eq [true] # the POST may have arrived
     end
   end
 
@@ -509,6 +500,7 @@ describe "YNAB sync" do
     p = YNAB::Posting.new(7_i64, date("2026-09-01"), 500_i64, "Kino", "memo", 0_i64)
     # fixed value: stored fingerprints must never change
     YNAB::Want.new(p, "c-food").fingerprint.should eq "d4a1ad6e19cee680676eefc66df39514"
+    p.milliunits.should eq -5000
     berlin = Time::Location.load("Europe/Berlin")
     YNAB.today(Time.utc(2026, 10, 2, 23, 30, 0), berlin).should eq date("2026-10-02")
     YNAB.today(Time.utc(2026, 10, 2, 12, 0, 0), berlin).should eq date("2026-10-02")
@@ -573,7 +565,7 @@ describe "YNAB settings page" do
 
       e.post("/einstellungen/ynab/trennen").status_code.should eq 303
       cfg = e.st.get_ynab_config(e.anna)
-      cfg.token.should be_empty
+      cfg.token.should be_nil
       cfg.ready?.should be_false
       e.svc.sync_all(true).should eq YNAB::FULL_INTERVAL
     end
@@ -586,7 +578,7 @@ describe "YNAB settings page" do
       e.must_sync(false)
       e.sync_rows.size.should eq 1
       e.st.set_ynab_target(e.anna, e.target("acc-giro", "2026-09-01"))
-      e.sync_rows.each_value { |r| r.txn_id.should be_empty }
+      e.sync_rows.each_value { |r| r.txn_id.should be_nil }
       e.fake.take_requests
       e.must_sync(false).created.should eq 1
       e.expect_requests("GET /v1/plans/plan-1/accounts/acc-giro/transactions", POST)
@@ -657,8 +649,7 @@ describe "YNAB settings page" do
         clock += 1.hour
         id = e.create(e.input("Nachgetragen", 2000, "2026-09-05", e.ben, e.anna, e.ben))
         e.fake.lost_post = true
-        _, err = e.sync(false)
-        YNAB.uncertain?(err.not_nil!).should be_true
+        e.sync(false).failure.should eq YNAB::Failure::Unclear
         e.now += 6.minutes
         e.fake.take_requests
         if deleted
@@ -676,6 +667,50 @@ describe "YNAB settings page" do
           e.sync_rows[id].txn_id.should eq live[0].id
         end
       end
+    end
+  end
+
+  it "finds a transaction of unclear outcome after its date moved behind the start date" do
+    with_env do |e|
+      clock = Time.utc(2026, 9, 20, 10, 0, 0)
+      e.st.clock = -> { clock }
+      e.connect("2026-09-10")
+      clock += 1.hour
+      id = e.create(e.input("Nachgetragen", 2000, "2026-09-05", e.ben, e.anna, e.ben))
+      e.fake.lost_post = true
+      e.sync(false).failure.should eq YNAB::Failure::Unclear
+      e.fake.live.map(&.date).should eq ["2026-09-05"]
+
+      e.st.update_expense(e.ben, id, e.input("Nachgetragen", 2000, "2026-09-20", e.ben, e.anna, e.ben))
+      e.now += 6.minutes
+      e.fake.take_requests
+      e.must_sync(false)
+      e.expect_requests(LIST_A, PATCH)
+      live = e.fake.live
+      live.map(&.date).should eq ["2026-09-20"]
+      e.sync_rows[id].txn_id.should eq live[0].id
+    end
+  end
+
+  it "treats an answer without data as an unclear outcome, never as an empty list" do
+    with_env do |e|
+      e.connect("2026-09-01")
+      id = e.create(e.input("Kino", 2400, "2026-09-20", e.anna, e.anna, e.ben))
+      e.fake.lost_post = true
+      e.sync(false).failure.should eq YNAB::Failure::Unclear
+      e.fake.bare_list = true
+      e.now += 6.minutes
+      e.fake.take_requests
+      e.sync(false).failure.should eq YNAB::Failure::Unclear
+      e.expect_requests(LIST_A)
+      e.fake.live.size.should eq 1
+      e.sync_rows[id].pending?.should be_true
+
+      e.fake.bare_list = false
+      e.now += 6.minutes
+      e.must_sync(false)
+      e.expect_requests(LIST_A, PATCH)
+      e.fake.live.size.should eq 1
     end
   end
 
@@ -709,8 +744,8 @@ describe "YNAB settings page" do
       e.fake.fail(400, 400) # batch PATCH and single attempt rejected
       e.must_sync(false).failed.should eq 1
       r = e.sync_rows[id]
-      r.txn_id.should_not be_empty
-      r.last_error.should_not be_empty
+      r.txn_id.should_not be_nil
+      r.last_error.should_not be_nil
       e.fake.take_requests
       e.st.delete_expense(e.anna, id)
       e.must_sync(false).deleted.should eq 1
@@ -729,7 +764,7 @@ describe "YNAB settings page" do
       res.status_code.should eq 303
       flash_of(res).should contain("neu wählen")
       cfg = e.st.get_ynab_config(e.anna)
-      {cfg.token, cfg.plan_id, cfg.account_id, cfg.ready?}.should eq({YNABSpec::OTHER_TOKEN, "", "", false})
+      {cfg.token, cfg.plan_id, cfg.account_id, cfg.ready?}.should eq({YNABSpec::OTHER_TOKEN, nil, nil, false})
     end
   end
 
@@ -742,9 +777,8 @@ describe "YNAB settings page" do
       before = e.sync_rows
       e.st.set_ynab_token(e.anna, YNABSpec::OTHER_TOKEN)
       check = -> do
-        _, err = e.sync(false)
-        YNAB.status_of(err).should eq 404
-        e.status.error.should contain("Plan oder Konto")
+        e.sync(false).failure.should eq YNAB::Failure::NotFound
+        e.status.error.to_s.should contain("Plan oder Konto")
         rows = e.sync_rows
         rows[a].txn_id.should eq before[a].txn_id
         rows[b].txn_id.should eq before[b].txn_id
@@ -773,8 +807,8 @@ describe "YNAB settings page" do
       e.must_sync(false).failed.should eq 1
       e.expect_requests(del)
       r = e.sync_rows[id]
-      r.txn_id.should_not be_empty
-      r.last_error.should_not be_empty
+      r.txn_id.should_not be_nil
+      r.last_error.should_not be_nil
       # The next change does not repeat it.
       e.create(e.input("Pizza", 3000, "2026-09-21", e.anna, e.anna, e.ben))
       res = e.must_sync(false)
@@ -836,7 +870,7 @@ describe "YNAB settings page" do
       e.svc.plans(YNABSpec::TOKEN, true) # the handler uses the cache
       res = e.post_during_sync("/einstellungen/ynab/konto", {"ziel" => "plan-1|acc-giro", "start" => "2026-09-01"})
       res.status_code.should eq 303
-      e.sync_rows[id].txn_id.should be_empty
+      e.sync_rows[id].txn_id.should be_nil
       e.must_sync(false)
       tx = e.fake.live.find(&.id.==(e.sync_rows[id].txn_id))
       tx.try(&.account_id).should eq "acc-giro"
@@ -851,7 +885,7 @@ describe "YNAB settings page" do
       e.post_during_sync("/einstellungen/ynab/token", {"token" => YNABSpec::TOKEN}).status_code.should eq 303
       st = e.status
       st.token_invalid?.should be_false
-      st.error.should be_empty
+      st.error.should be_nil
       e.must_sync(false).created.should eq 1
     end
   end

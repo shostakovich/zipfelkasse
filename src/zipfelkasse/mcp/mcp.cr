@@ -73,10 +73,3 @@ module Zipfelkasse::MCP
     end
   end
 end
-
-# Until the tool arguments in mcp/tools.cr are nilable.
-module Zipfelkasse::Web
-  def self.nil_if_zero(id : Int64) : Int64?
-    id unless id == 0
-  end
-end

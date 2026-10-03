@@ -1,0 +1,36 @@
+Database of Zipfelkasse (SQLite). A single group.
+Conventions: amounts are INTEGER in euro cents (divide by 100.0 for euros). Calendar dates are TEXT 'YYYY-MM-DD', timestamps TEXT RFC 3339 in UTC. Booleans are 0/1.
+Data values (names, titles, categories, notes) are stored as entered, often in German.
+
+Tables:
+- participants: people in the group. archived_at set = archived (no longer active, their entries remain).
+- categories: categories (name, position = display order, archived_at).
+- expenses: expenses AND reimbursements.
+  * deleted_at set = deleted (soft delete) → ALWAYS filter with "deleted_at IS NULL".
+  * amount_cents: amount in euro cents (converted for foreign currency). paid_by: who paid (participants.id). category_id NULL = no category.
+  * is_reimbursement = 1: reimbursement – paid_by paid money to the person in the single expense_shares row. It is not an expense
+    (expense analyses use "is_reimbursement = 0"), but it counts for balances.
+  * split_mode: equal (evenly), shares (by shares), percent (by percentage), amount (fixed amounts).
+  * Foreign currency: original_currency ('EUR' if none), original_amount_minor (amount in the smallest unit of that currency),
+    fx_rate (units of foreign currency per 1 EUR, ECB format), fx_source ('ezb' = ECB reference rate, 'manuell' = entered manually, or '' for EUR). amount_cents is already converted.
+  * recurring_id: created automatically from a recurring rule. created_at/updated_at: timestamps.
+- expense_shares: split of each expense across people. amount_cents = this person's share in cents (sum per expense = expenses.amount_cents).
+  weight depends on split_mode: equal 1, shares the share count, percent basis points (sum 10000), amount the amount in the smallest unit of original_currency (sum = original_amount_minor; cents for EUR).
+- recurring: rules for recurring expenses (template_json = template as JSON, frequency weekly|monthly|yearly, start_date, next_date, active).
+- activity: change log (at, actor_id NULL = system, action expense_created|expense_updated|expense_deleted, expense_id, details_json).
+- fx_rates: exchange rates per currency, source ('ezb' or 'manuell') and date (foreign currency per 1 EUR).
+  A day can have both an ECB and a manual rate; the most recent manual rate on or before a date takes precedence over the ECB rate.
+- settings: settings (key/value, e.g. group_name).
+YNAB tables (credentials) are not visible via MCP.
+
+Balance of a person = sum of amount_cents of the expenses they paid − sum of their shares in expense_shares
+(only deleted_at IS NULL, reimbursements included). Positive = is owed money.
+
+Example – Anna's share per category in 2026:
+SELECT coalesce(c.name, 'No category') AS category, sum(x.amount_cents) / 100.0 AS euros
+FROM expenses e
+JOIN expense_shares x ON x.expense_id = e.id
+JOIN participants p ON p.id = x.participant_id AND p.name = 'Anna'
+LEFT JOIN categories c ON c.id = e.category_id
+WHERE e.deleted_at IS NULL AND e.is_reimbursement = 0 AND e.date BETWEEN '2026-01-01' AND '2026-12-31'
+GROUP BY 1 ORDER BY 2 DESC;

@@ -109,7 +109,7 @@ describe "MCP transport" do
       required.call(name).should eq req
     end
     enum_of = ->(name : String, prop : String) { tool.call(name)["inputSchema"]["properties"][prop]["enum"].as_a.map(&.as_s) }
-    enum_of.call("balance_history", "interval").should eq %w(month week year)
+    enum_of.call("balance_history", "interval").should eq %w(year month week)
     enum_of.call("search_expenses", "reimbursements").should eq %w(exclude include only)
     enum_of.call("search_expenses", "sort").should eq %w(date_desc date_asc amount_desc amount_asc)
     enum_of.call("search_expenses", "detail").should eq %w(compact full)
@@ -130,7 +130,7 @@ describe "MCP transport" do
       "statistics"           => %(Expense totals grouped by category, title (merchant), year, month (YYYY-MM), ISO week (YYYY-Www), person or category_month, optionally for a period. Without share_of: total amounts of the expenses. With share_of: only that person's share of each expense, i.e. what they consumed themselves (e.g. "How much did I spend on restaurants in 2026?"). With group_by=person, amount is each person's share (consumption) and paid is what they paid up front. year, month and week list periods without expenses with 0. compare=previous_year adds the amount of the same group one year earlier and the change. Reimbursements and deleted expenses never count.),
       "activity"             => "Who created, changed or deleted which expense when, and other changes (settings, people, categories, rates, recurring expenses), newest first. Entries of expense_updated list the changed fields with old and new value (field names and values as shown in the app, in German).",
       "schema"               => "Explains the database tables and columns in words (amounts in cents, deleted expenses, reimbursements, shares, foreign currency), lists people and categories and returns the CREATE statements. Call before sql_query.",
-      "sql_query"            => "Runs exactly one read-only SQL query (SQLite dialect, only SELECT or WITH … SELECT) on a read-only copy of the data. Call schema first. Important: amounts are cents (divide by 100.0 for euros), exclude deleted expenses with deleted_at IS NULL, reimbursements (is_reimbursement = 1) are not expenses, a person's share is expense_shares.amount_cents. At most 500 rows, aborted after 5 seconds, texts longer than 2000 characters are truncated. For standard questions, balances, search_expenses and statistics are simpler.",
+      "sql_query"            => "Runs exactly one read-only SQL query (SQLite dialect, only SELECT or WITH … SELECT) on a read-only copy of the data. Call schema first. Important: amounts are cents (divide by 100.0 for euros), exclude deleted expenses with deleted_at IS NULL, reimbursements (is_reimbursement = 1) are not expenses, a person's share is expense_shares.amount_cents. At most 500 rows, aborted after 2 seconds, texts longer than 2000 characters are truncated. For standard questions, balances, search_expenses and statistics are simpler.",
       "create_expense"       => "Creates an expense, as if the payer had entered it in the app. Ask the user before calling it if anything is unclear (amount, payer, who takes part); then tell them what was created. Without participants and weights, the amount is split equally among all active people. An entry with the same date, payer, amount and title is refused unless allow_duplicate is set. Settlement payments between people are not expenses: use create_reimbursement for them.",
       "create_reimbursement" => "Records a settlement payment: from paid amount to to (e.g. a bank transfer to settle up). It changes the balances, but is not an expense. An entry with the same date, payer, amount and recipient is refused unless allow_duplicate is set.",
     }.each { |name, desc| tool.call(name)["description"].should eq desc }
@@ -537,7 +537,7 @@ describe "MCP tools" do
     {
       %({"amount":"10","paid_by":"Anna"})                                        => "Parameter title is missing.",
       %({"title":"  ","amount":"10","paid_by":"Anna"})                           => "Parameter title is missing.",
-      %({#{x},"split":"random"})                                                 => "split must be one of equal, shares, percent, amount.",
+      %({#{x},"split":"random"})                                                 => "Invalid arguments: split must be one of equal, shares, percent, amount.",
       %({#{x},"date":"morgen"})                                                  => %(Invalid date for date: "morgen" (expected YYYY-MM-DD).),
       %({#{x},"date":"2026-02-30"})                                              => %(Invalid date for date: "2026-02-30" (expected YYYY-MM-DD).),
       %({#{x},"date":"1999-12-31"})                                              => %(Invalid date for date: "1999-12-31" (expected YYYY-MM-DD).),
@@ -590,9 +590,12 @@ describe "MCP tools" do
       %({#{x},"split":"percent","weights":{"Anna":60,"Ben":"30"}}) => "The app refused the entry (message in German): Die Prozente müssen zusammen 100 % ergeben (aktuell 90,00 %).",
       %({#{x},"split":"amount","weights":{"Anna":"5","Ben":"4"}})  => "The app refused the entry (message in German): Die Beträge müssen zusammen 10,00 € ergeben (aktuell 9,00 €).",
       %({#{x},"split":"shares","weights":{"Anna":0,"Ben":"0"}})    => "The app refused the entry (message in German): Die Summe der Anteile muss größer als 0 sein.",
+      %({"title":"#{"t" * 201}","amount":"1","paid_by":"Anna"})    => "title must be at most 200 characters.",
+      %({#{x},"notes":"#{"n" * 2001}"})                            => "notes must be at most 2000 characters.",
       # The order of the checks.
-      %({"amount":"x","paid_by":"Zoe","split":"x","date":"x"})                                 => "Parameter title is missing.",
-      %({"title":"X","amount":"x","paid_by":"Zoe","split":"x","date":"x"})                     => "split must be one of equal, shares, percent, amount.",
+      %({"amount":"x","paid_by":"Zoe","date":"x"})                                             => "Parameter title is missing.",
+      %({"amount":"x","paid_by":"Zoe","split":"x","date":"x"})                                 => "Invalid arguments: split must be one of equal, shares, percent, amount.",
+      %({"title":"X","amount":"x","paid_by":"Zoe","split":"x","date":"x"})                     => "Invalid arguments: split must be one of equal, shares, percent, amount.",
       %({"title":"X","amount":"x","paid_by":"Zoe","date":"x"})                                 => %(Invalid date for date: "x" (expected YYYY-MM-DD).),
       %({"title":"X","amount":"x","paid_by":"Zoe","category":"Yacht"})                         => %(Invalid amount "x" for EUR: use digits with a dot as decimal separator and no thousands separator, e.g. 1234.50),
       %({"title":"X","amount":"1","paid_by":"Zoe","category":"Yacht"})                         => %(Unknown person "Zoe" in paid_by. #{active_people}),
@@ -613,20 +616,21 @@ describe "MCP tools" do
   scenario "create_reimbursement: every refusal", world do
     user = world.user
     {
-      %({"to":"Anna","amount":"5"})                                  => "Parameter from is missing.",
-      %({"from":"Ben","amount":"5"})                                 => "Parameter to is missing.",
-      %({"from":"Ben","to":"Anna"})                                  => "Parameter amount is missing.",
-      %({"from":"Zoe","to":"Anna","amount":"5"})                     => %(Unknown person "Zoe" in from. #{active_people}),
-      %({"from":"Ben","to":"Zoe","amount":"5"})                      => %(Unknown person "Zoe" in to. #{active_people}),
-      %({"from":"emil","to":"Anna","amount":"5"})                    => "Emil is archived and cannot take part in new entries.",
-      %({"from":"Ben","to":"EMIL","amount":"5"})                     => "Emil is archived and cannot take part in new entries.",
-      %({"from":"ben","to":" Ben ","amount":"5"})                    => "from and to must be different people.",
-      %({"from":"Ben","to":"Anna","amount":"0"})                     => "amount must be greater than 0.",
-      %({"from":"Ben","to":"Anna","amount":"5,50"})                  => %(Invalid amount "5,50" for EUR: use digits with a dot as decimal separator and no thousands separator, e.g. 1234.50),
-      %({"from":"Ben","to":"Anna","amount":"5","date":"31.02.2026"}) => %(Invalid date for date: "31.02.2026" (expected YYYY-MM-DD).),
-      %({"from":"Ben","to":"Anna","amount":"5","currency":"XAF"})    => "There is no exchange rate for XAF on 2026-10-03. Ask the user for the rate and pass it as fx_rate.",
-      %({"from":"Ben","to":"Anna","amount":"5","fx_rate":2})         => "fx_rate is only for foreign currencies.",
-      %({"from":"Ben","to":"Anna","amount":"5","currency":"Dollar"}) => %(currency must be a three-letter ISO code such as USD, not "Dollar".),
+      %({"to":"Anna","amount":"5"})                                      => "Parameter from is missing.",
+      %({"from":"Ben","amount":"5"})                                     => "Parameter to is missing.",
+      %({"from":"Ben","to":"Anna"})                                      => "Parameter amount is missing.",
+      %({"from":"Zoe","to":"Anna","amount":"5"})                         => %(Unknown person "Zoe" in from. #{active_people}),
+      %({"from":"Ben","to":"Zoe","amount":"5"})                          => %(Unknown person "Zoe" in to. #{active_people}),
+      %({"from":"emil","to":"Anna","amount":"5"})                        => "Emil is archived and cannot take part in new entries.",
+      %({"from":"Ben","to":"EMIL","amount":"5"})                         => "Emil is archived and cannot take part in new entries.",
+      %({"from":"ben","to":" Ben ","amount":"5"})                        => "from and to must be different people.",
+      %({"from":"Ben","to":"Anna","amount":"0"})                         => "amount must be greater than 0.",
+      %({"from":"Ben","to":"Anna","amount":"5,50"})                      => %(Invalid amount "5,50" for EUR: use digits with a dot as decimal separator and no thousands separator, e.g. 1234.50),
+      %({"from":"Ben","to":"Anna","amount":"5","date":"31.02.2026"})     => %(Invalid date for date: "31.02.2026" (expected YYYY-MM-DD).),
+      %({"from":"Ben","to":"Anna","amount":"5","currency":"XAF"})        => "There is no exchange rate for XAF on 2026-10-03. Ask the user for the rate and pass it as fx_rate.",
+      %({"from":"Ben","to":"Anna","amount":"5","fx_rate":2})             => "fx_rate is only for foreign currencies.",
+      %({"from":"Ben","to":"Anna","amount":"5","currency":"Dollar"})     => %(currency must be a three-letter ISO code such as USD, not "Dollar".),
+      %({"from":"Ben","to":"Anna","amount":"5","notes":"#{"n" * 2001}"}) => "notes must be at most 2000 characters.",
       # Date and amount are checked before the people.
       %({"from":"Zoe","to":"Zoe","amount":"x"}) => %(Invalid amount "x" for EUR: use digits with a dot as decimal separator and no thousands separator, e.g. 1234.50),
     }.each do |args, message|
@@ -690,7 +694,7 @@ describe "MCP tools" do
 
     rows = ->(key : String, list : Array({String, Array(Int32)}), names : Array(String)) do
       MK.json(list.map { |period, cents|
-        {key => period, "balances" => names.zip(cents).map { |n, c| {"person" => n, "balance" => eur(c), "balance_cents" => c, "status" => ""} }}
+        {key => period, "balances" => names.zip(cents).map { |n, c| {"person" => n, "balance" => eur(c), "balance_cents" => c} }}
       }.to_json)
     end
     abcd = %w(Anna Ben Cleo Dora)
@@ -721,8 +725,7 @@ describe "MCP tools" do
     MK.ok(user, "balance_history", %({"interval":"year","person":"Emil","from":"2026-01-01"}))["rows"].should eq rows.call("year", [{"2026", [0]}], ["Emil"])
 
     {
-      %({"interval":"day"})                      => "interval must be one of month, week, year.",
-      %({"interval":"Month"})                    => "interval must be one of month, week, year.",
+      %({"interval":"day"})                      => "Invalid arguments: interval must be one of year, month, week.",
       %({"person":"Zoe"})                        => %(Unknown person "Zoe". #{all_people}),
       %({"interval":"week","from":"2000-01-01"}) => "That is 1397 periods, at most 500 are possible. Please narrow down from/to or choose a longer interval.",
       %({"from":"1900-01-01"})                   => %(Invalid date for from: "1900-01-01" (expected YYYY-MM-DD).),
@@ -794,9 +797,9 @@ describe "MCP tools" do
       %({"paid_by":" zoe "})                     => %(Unknown person "zoe". #{all_people}),
       %({"involved":"An"})                       => %(Unknown person "An". #{all_people}),
       %({"category":"Yacht"})                    => unknown_category,
-      %({"reimbursements":"maybe"})              => %(reimbursements must be "exclude", "include" or "only".),
-      %({"sort":"random"})                       => "sort must be one of date_desc, date_asc, amount_desc, amount_asc.",
-      %({"detail":"verbose"})                    => %(detail must be "compact" or "full".),
+      %({"reimbursements":"maybe"})              => "Invalid arguments: reimbursements must be one of exclude, include, only.",
+      %({"sort":"random"})                       => "Invalid arguments: sort must be one of date_desc, date_asc, amount_desc, amount_asc.",
+      %({"detail":"verbose"})                    => "Invalid arguments: detail must be one of compact, full.",
       %({"min_amount":-1})                       => "min_amount must be an amount in euros of at least 0.",
       %({"max_amount":-0.5})                     => "max_amount must be an amount in euros of at least 0.",
       %({"min_amount":2e12})                     => "min_amount must be an amount in euros of at least 0.",
@@ -805,9 +808,10 @@ describe "MCP tools" do
       %({"min_amount":20,"max_amount":10})       => "min_amount (20.00) is greater than max_amount (10.00).",
       %({"min_amount":10.01,"max_amount":10})    => "min_amount (10.01) is greater than max_amount (10.00).",
       # Checked in this order.
-      %({"from":"x","person":"Zoe","sort":"x"}) => %(Invalid date for from: "x" (expected YYYY-MM-DD).),
+      %({"from":"x","person":"Zoe"})            => %(Invalid date for from: "x" (expected YYYY-MM-DD).),
+      %({"from":"x","person":"Zoe","sort":"x"}) => "Invalid arguments: sort must be one of date_desc, date_asc, amount_desc, amount_asc.",
       %({"person":"Zoe","category":"Yacht"})    => unknown_category,
-      %({"person":"Zoe","sort":"x","limit":0})  => %(Unknown person "Zoe". #{all_people}),
+      %({"person":"Zoe","limit":0})             => %(Unknown person "Zoe". #{all_people}),
     }.each { |args, message| MK.fail(user, "search_expenses", args).should eq message }
     MK.decode_fail(user, "search_expenses", %({"von":"2026-01-01"}), "von")
     MK.decode_fail(user, "search_expenses", %({"limit":"5"}), "limit")
@@ -852,10 +856,9 @@ describe "MCP tools" do
     d["rows"].should eq MK.json(%([{"week":"2026-W37","count":0,"amount":"0.00","amount_cents":0,"previous":"25.00","previous_cents":2500,"change":"-25.00","change_cents":-2500,"change_percent":-100},{"week":"2026-W38","count":2,"amount":"70.00","amount_cents":7000,"previous":"0.00","previous_cents":0,"change":"70.00","change_cents":7000}]))
 
     {
-      %({})                                                                  => "group_by must be one of category, title, year, month, week, person, category_month.",
-      %({"group_by":"day"})                                                  => "group_by must be one of category, title, year, month, week, person, category_month.",
-      %({"group_by":"Month"})                                                => "group_by must be one of category, title, year, month, week, person, category_month.",
-      %({"group_by":"month","compare":"last_year"})                          => %(compare must be "previous_year".),
+      %({})                                                                  => "Invalid arguments: group_by must be one of category, title, year, month, week, person, category_month.",
+      %({"group_by":"day"})                                                  => "Invalid arguments: group_by must be one of category, title, year, month, week, person, category_month.",
+      %({"group_by":"month","compare":"last_year"})                          => "Invalid arguments: compare must be one of previous_year.",
       %({"group_by":"title","compare":"previous_year"})                      => "compare=previous_year with group_by=title needs from (and optionally to): the period to compare.",
       %({"group_by":"category","compare":"previous_year","to":"2026-09-30"}) => "compare=previous_year with group_by=category needs from (and optionally to): the period to compare.",
       %({"group_by":"person","compare":"previous_year","from":"2026-12-01"}) => "from (2026-12-01) is in the future; compare=previous_year needs a period up to today or an explicit to.",
@@ -878,8 +881,10 @@ describe "MCP tools" do
     created = [{"Anna", "Rewe", 3000}, {"Ben", "Pizza & Wein", 4000}, {"Cleo", "Kino <3D>", 2500}, {"Dora", "Hotel", 8880},
                {"Anna", "Sushi", 1250}, {"Ben", "Rückzahlung", 1500}, {"Ben", "Taxi", 890}]
     entries = settings.map_with_index { |t, i| {"id" => i + 1, "at" => at, "actor" => "Anna", "action" => "settings_updated", "text" => t} }
+    # All of them were created through MCP.
     entries += created.map_with_index do |(actor, title, cents), i|
-      {"id" => i + 8, "at" => at, "actor" => actor, "action" => "expense_created", "expense_id" => i + 1, "title" => title, "amount" => eur(cents), "amount_cents" => cents}
+      {"id" => i + 8, "at" => at, "actor" => actor, "action" => "expense_created", "expense_id" => i + 1, "title" => title, "amount" => eur(cents),
+       "amount_cents" => cents, "text" => "Über MCP angelegt"}
     end
     entries.reverse!
     none = [] of Hash(String, Int32 | String)
@@ -900,13 +905,14 @@ describe "MCP tools" do
     MK.ok(user, "activity", %({"from":"2026-10-04"})).should eq page.call(none, false, nil)
     MK.ok(user, "activity", %({"to":"02.10.2026"})).should eq page.call(none, false, nil)
     MK.ok(user, "activity", %({"from":"03.10.2026","to":"2026-10-03","limit":500}))["shown"].should eq 14
-    MK.ok(user, "activity", %({"limit":0}))["shown"].should eq 14
 
     {
       %({"expense_id":-1})                       => "expense_id and before_id must be positive.",
       %({"before_id":-5})                        => "expense_id and before_id must be positive.",
       %({"limit":501})                           => "limit must be between 1 and 500.",
       %({"limit":-1})                            => "limit must be between 1 and 500.",
+      %({"limit":0})                             => "limit must be between 1 and 500.",
+      %({"expense_id":0})                        => "expense_id and before_id must be positive.",
       %({"person":"Zoe"})                        => %(Unknown person "Zoe". #{all_people}),
       %({"from":"gestern"})                      => %(Invalid date for from: "gestern" (expected YYYY-MM-DD).),
       %({"from":"2026-10-03","to":"2026-10-02"}) => %("to" (2026-10-02) is before "from" (2026-10-03).),
@@ -941,7 +947,7 @@ describe "MCP tools" do
     rows.call("SELECT 1 AS one; -- done")["rows"].should eq MK.json("[[1]]")
     rows.call("/* a; b */ SELECT ';' AS x;;")["rows"].should eq MK.json(%([[";"]]))
     rows.call(%(SELECT 'it''s; fine' AS "a;b", [c;d] FROM (SELECT 1 AS [c;d])))["rows"].should eq MK.json(%([["it's; fine",1]]))
-    rows.call("SELECT 1, 1, 'a' AS x, 'b' AS x").should eq MK.json(%({"columns":["1","1","x","x"],"row_count":1,"rows":[[1,1,"a","b"]],"truncated":false}))
+    rows.call("SELECT 1, 1, 'a' AS x, 'b' AS x").should eq MK.json(%({"columns":["1","1:1","x","x:1"],"row_count":1,"rows":[[1,1,"a","b"]],"truncated":false}))
     rows.call("SELECT * FROM participants WHERE 0").should eq MK.json(%({"columns":["id","name","created_at","archived_at"],"row_count":0,"rows":[],"truncated":false}))
     # Value types: integers, reals, text (also JSON text), NULL and blobs.
     d = rows.call("SELECT 42 AS i, 2.5 AS r, 0.1 + 0.2 AS s, 1e30 AS big, 'a<&>b' AS t, NULL AS n, x'00ff' AS b, json_object('a', 1) AS j, 9007199254740993 AS l")
@@ -979,9 +985,9 @@ describe "MCP tools" do
     refused.call("").should eq "Parameter query is missing."
     refused.call(" \n\t").should eq "Parameter query is missing."
     MK.fail(user, "sql_query", "{}").should eq "Parameter query is missing."
-    # Writes disguised as WITH return no columns.
-    refused.call("WITH d AS (SELECT 1) DELETE FROM expenses").should eq "The query returns no columns. Only SELECT or WITH … SELECT is allowed."
-    refused.call("WITH d AS (SELECT 1) INSERT INTO settings SELECT 'a', 'b' FROM d").should eq "The query returns no columns. Only SELECT or WITH … SELECT is allowed."
+    # Writes disguised as WITH do not parse as a subquery.
+    refused.call("WITH d AS (SELECT 1) DELETE FROM expenses").should eq %(SQL error: near "DELETE": syntax error (1))
+    refused.call("WITH d AS (SELECT 1) INSERT INTO settings SELECT 'a', 'b' FROM d").should eq %(SQL error: near "INSERT": syntax error (1))
     # SQLite's own errors (the exact text belongs to SQLite).
     {
       "SELECT * FROM doesnotexist"        => "no such table: doesnotexist",
@@ -1010,13 +1016,13 @@ describe "MCP tools" do
     MK.decode_fail(user, "sql_query", %({"query":"SELECT 1","limit":5}), "limit")
     MK.decode_fail(user, "sql_query", %({"query":["SELECT 1"]}), "query")
 
-    # A slow query is aborted after 5 seconds.
+    # A slow query is aborted after 2 seconds.
     t = Time.instant
     r = user.tool("sql_query", {"query" => JSON::Any.new("WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 2000000000) SELECT count(*) FROM n")})
     took = Time.instant - t
-    MK.text(r, error: true).should eq "The query was aborted after 5 s. Please narrow it down (WHERE, LIMIT) or simplify it."
-    took.should be >= 4.5.seconds
-    took.should be < 12.seconds
+    MK.text(r, error: true).should eq "The query was aborted after 2 s. Please narrow it down (WHERE, LIMIT) or simplify it."
+    took.should be >= 1.5.seconds
+    took.should be < 8.seconds
     # The server is still fine afterwards.
     rows.call("SELECT 1 AS ok")["rows"].should eq MK.json("[[1]]")
   end

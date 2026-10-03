@@ -1,4 +1,3 @@
-require "digest/sha256"
 require "wait_group"
 
 # Syncs each person's own share of every expense into a YNAB clearing
@@ -16,7 +15,6 @@ module Zipfelkasse::YNAB
   FULL_INTERVAL       = 1.hour
   CACHE_TTL           = 10.minutes # plans/accounts/categories for the settings page
 
-  # The sync worker plus the settings pages.
   class Service
     getter d : Web::Deps
     property base_url : String
@@ -26,14 +24,11 @@ module Zipfelkasse::YNAB
     property debounce : Time::Span
     property start_delay : Time::Span
 
-    # Trigger → run (buffer 1, never blocking).
     @wake = Channel(Nil).new(1)
     # At most one sync at a time (worker or button); changes of token or
     # target wait for it (see change_connection).
     @sync_mutex = Mutex.new
-    @connections = Connections.new
-    # Background syncs via "Jetzt synchronisieren"; run stops them on
-    # shutdown and waits for them.
+    @http = OutboundHTTP.new(HTTP_TIMEOUT, MAX_BODY)
     @bg_busy = Set(Int64).new
     @bg_wait = WaitGroup.new
     @plans_cache = {} of String => {Time, Array(APIPlan)}
@@ -49,7 +44,7 @@ module Zipfelkasse::YNAB
     end
 
     def client(token : String) : Client
-      Client.new(@base_url, token, @connections)
+      Client.new(@base_url, token, @http)
     end
 
     def location : Time::Location
@@ -66,12 +61,10 @@ module Zipfelkasse::YNAB
       end
     end
 
-    # Processes triggers (batched after a short delay), runs a full sync
-    # every hour and retries after rate limits or outages until stopped.
     def run(stopper : Stopper) : Nil
       spawn do
         stopper.done.receive?
-        @connections.stop
+        @http.stop
       end
       deadline = Time.instant + @start_delay
       last_full = nil.as(Time::Instant?)
@@ -95,66 +88,6 @@ module Zipfelkasse::YNAB
       stop
     end
 
-    # Syncs all configured people and returns the delay until the next
-    # necessary run. The mutex is taken per person, so a change of the
-    # settings waits for one person's run at most.
-    def sync_all(full : Bool) : Time::Span
-      next_run = FULL_INTERVAL
-      cfgs = begin
-        @d.store.list_ynab_configs
-      rescue ex
-        Log.error(exception: ex) { "ynab: read configs" }
-        return RETRY_DELAY
-      end
-      cfgs.each do |c|
-        return next_run if @connections.stopped?
-        next unless c.ready?
-        cfg, res, st, err = sync_person(c.participant_id, full)
-        next if err.is_a?(NotReadyError) # changed in the meantime
-        log_sync("", cfg, res, err) if err || res.changes > 0
-        next_run = Math.min(next_run, @debounce) if res.again?
-        if retry_at = st.retry_at
-          wait = retry_at - @now.call
-          next_run = Math.min(next_run, wait + 1.second) if wait.positive?
-        end
-      end
-      next_run
-    end
-
-    # Never logs the token. A pause after a rate limit and an invalid token
-    # are not logged: the settings page shows them, and they recur on every
-    # run.
-    def log_sync(how : String, cfg : Store::YNABConfig, res : SyncResult, err : Exception?) : Nil
-      case err
-      when nil
-        Log.info(&.emit("ynab: synced" + how, person: cfg.participant_id, result: res.log_value))
-      when BackoffError, TokenInvalidError
-      else
-        Log.warn(&.emit("ynab: sync" + how + " failed", person: cfg.participant_id,
-          err: YNAB.redact(err.message || err.class.name, cfg.token)))
-      end
-    end
-
-    # Syncs one person under the mutex with the connection as it is now. A
-    # sync uses the connection read at its start throughout, so token or
-    # target must not change while it runs (see change_connection).
-    def sync_person(participant_id : Int64, full : Bool) : {Store::YNABConfig, SyncResult, Status, Exception?}
-      @sync_mutex.synchronize do
-        cfg = begin
-          @d.store.get_ynab_config(participant_id)
-        rescue Store::NotFound
-          nil
-        rescue ex
-          return {YNAB.empty_config(participant_id), SyncResult.new, Status.new, ex}
-        end
-        unless cfg && cfg.ready?
-          return {cfg || YNAB.empty_config(participant_id), SyncResult.new, Status.new, NotReadyError.new}
-        end
-        res, st, err = sync_one(cfg, full)
-        {cfg, res, st, err}
-      end
-    end
-
     # Runs a change of token or target under the sync mutex so that it never
     # interleaves with a sync: otherwise the sync would write transaction IDs
     # of the old account into the state for the new one, or overwrite the
@@ -163,24 +96,18 @@ module Zipfelkasse::YNAB
       @sync_mutex.synchronize { yield }
     end
 
-    # Fully syncs a person right away in its own fiber so that the request
-    # does not wait for YNAB. Nothing happens if one is already running for
-    # the person or run has ended; the result ends up in the status.
     def sync_in_background(participant_id : Int64) : Nil
-      return if @connections.stopped? || @bg_busy.includes?(participant_id)
+      return if @http.stopped? || @bg_busy.includes?(participant_id)
       @bg_busy << participant_id
       @bg_wait.spawn do
-        cfg, res, _, err = sync_person(participant_id, true)
-        log_sync(" (now)", cfg, res, err)
+        sync_person(participant_id, true, manual: true)
       ensure
         @bg_busy.delete(participant_id)
       end
     end
 
-    # Aborts running requests, refuses new ones and waits for the background
-    # syncs.
     def stop : Nil
-      @connections.stop
+      @http.stop
       @bg_wait.wait
     end
 
@@ -189,16 +116,15 @@ module Zipfelkasse::YNAB
     end
 
     def plans(token : String, refresh : Bool) : Array(APIPlan)
-      cached(@plans_cache, "plans:" + YNAB.fingerprint(token), refresh) { client(token).plans }
+      cached(@plans_cache, "plans:" + token, refresh) { client(token).plans }
     end
 
     def categories(token : String, plan_id : String, refresh : Bool) : Array(APICategoryGroup)
-      cached(@categories_cache, "categories:#{YNAB.fingerprint(token)}:#{plan_id}", refresh) do
+      cached(@categories_cache, "categories:#{token}:#{plan_id}", refresh) do
         client(token).categories(plan_id)
       end
     end
 
-    # Errors are not cached.
     private def cached(cache : Hash(String, {Time, T}), key : String, refresh : Bool, & : -> T) : T forall T
       if !refresh && (e = cache[key]?) && @now.call - e[0] < CACHE_TTL
         return e[1]
@@ -209,17 +135,11 @@ module Zipfelkasse::YNAB
     end
   end
 
-  def self.fingerprint(token : String) : String
-    Digest::SHA256.digest(token)[0, 8].hexstring
-  end
-
   protected def self.empty_config(participant_id : Int64) : Store::YNABConfig
-    Store::YNABConfig.new(participant_id, "", "", "", nil, false, nil, nil)
+    Store::YNABConfig.new(participant_id, nil, nil, nil, nil, false, nil, nil)
   end
 
-  # Removes the token from error texts before they are stored, logged or
-  # shown.
-  def self.redact(msg : String, token : String) : String
-    token.empty? ? msg : msg.gsub(token, "•••")
+  def self.redact(msg : String, token : String?) : String
+    token ? msg.gsub(token, "•••") : msg
   end
 end

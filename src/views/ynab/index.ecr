@@ -152,12 +152,12 @@
       <%- if data.ready %>
       <p>Synchronisierte Buchungen: <strong><%= data.synced %></strong></p>
       <%- if last_sync = data.status.last_sync %>
-      <p>Letzter Abgleich: <%= date_time(last_sync) %><% unless data.status.summary.empty? %> <span class="muted">(<%= data.status.summary %>)</span><% end %></p>
+      <p>Letzter Abgleich: <%= date_time(last_sync) %><% if summary = data.status.summary %> <span class="muted">(<%= summary %>)</span><% end %></p>
       <%- else %>
       <p class="muted">Noch nicht synchronisiert.</p>
       <%- end %>
-      <%- unless data.status.error.empty? %>
-      <p class="alert alert-destructive" role="alert"><%= data.status.error %></p>
+      <%- if error = data.status.error %>
+      <p class="alert alert-destructive" role="alert"><%= error %></p>
       <%- end %>
       <%- if retry_at = data.retry_at %>
       <p class="muted">Nächster Versuch ab <%= date_time(retry_at) %>.</p>

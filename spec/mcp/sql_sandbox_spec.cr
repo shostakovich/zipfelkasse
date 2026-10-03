@@ -81,7 +81,7 @@ describe Zipfelkasse::MCP::SQLSandbox do
         SQL
       res.columns.should eq(%w(title amount_cents fx_rate empty b))
       res.rows.should eq([["Kino", 2000_i64, 1.0, nil, "[BLOB, 2 Bytes]"], ["Rewe", 3000_i64, 1.0, nil, "[BLOB, 2 Bytes]"]])
-      res.truncated?.should be_false
+      res.truncated.should be_false
 
       # Empty result, WITH, row limit, order.
       res = sandbox(f).query("SELECT * FROM participants WHERE name = 'Nobody'")
@@ -89,14 +89,14 @@ describe Zipfelkasse::MCP::SQLSandbox do
       res.columns.size.should eq(4)
       res = sandbox(f).query("WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n LIMIT 1000) SELECT i FROM n ORDER BY i DESC")
       res.rows.size.should eq(MCP::SQLSandbox::MAX_ROWS)
-      res.truncated?.should be_true
+      res.truncated.should be_true
       res.rows[0][0].should eq(1000_i64)
       res.rows[MCP::SQLSandbox::MAX_ROWS - 1][0].should eq(1000_i64 - MCP::SQLSandbox::MAX_ROWS + 1)
 
       # Long texts are truncated.
       res = sandbox(f).query("SELECT length(x), x FROM (SELECT printf('%.5000c', 'a') AS x)")
       res.rows[0][0].should eq(5000_i64)
-      res.rows[0][1].as(String).size.should eq(MCP::SQLSandbox::MAX_CELL_RUNES)
+      res.rows[0][1].as(String).size.should eq(MCP::SQLSandbox::MAX_CELL_CHARS)
 
       # SQL errors are ValidationErrors with the SQLite message.
       store_validation_error { sandbox(f).query("SELECT x FROM doesnotexist") }
@@ -104,13 +104,13 @@ describe Zipfelkasse::MCP::SQLSandbox do
     end
   end
 
-  it "keeps SQLite's number formats apart" do
+  it "keeps SQLite's number formats and numbers duplicate columns" do
     with_file_fixture do |f|
       res = sandbox(f).query("SELECT 1.0, 0.1 + 0.2, 1e30, -5, 9e999, -9e999, '<&>', json_object('a', 1)")
       res.rows.should eq([[1.0, 0.30000000000000004, 1e30, -5_i64, Float64::INFINITY, -Float64::INFINITY,
                            "<&>", %({"a":1})]])
       res = sandbox(f).query("SELECT 1, 1, 'a' AS x, 'b' AS x")
-      res.columns.should eq(%w(1 1 x x))
+      res.columns.should eq(%w(1 1:1 x x:1))
     end
   end
 
@@ -181,9 +181,9 @@ describe Zipfelkasse::MCP::SQLSandbox do
         expect_raises(SQLite3::Exception) { conn.exec("ATTACH DATABASE '#{path}' AS real") }
         conn.exec("DELETE FROM expenses")
 
-        # Embedded in run_wrapped, only SELECTs are syntactically possible.
+        # Embedded as a subquery, only SELECTs are syntactically possible.
         ["DELETE FROM expenses", "PRAGMA query_only = OFF", "SELECT 1) SELECT 1; ATTACH 'x' AS y; SELECT (1"].each do |body|
-          expect_raises(Exception) { MCP::SQLSandbox.run_wrapped(conn, body) }
+          expect_raises(Exception) { MCP::SQLSandbox.select_rows(conn, body) }
         end
       end
 

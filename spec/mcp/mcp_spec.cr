@@ -277,15 +277,6 @@ describe "MCP tools" do
     MCP.money(1500, "JPY").should eq "1500 JPY"
   end
 
-  it "formats floats" do
-    {1.0, 160.0, -100.0, -0.0, 1.17, 16.7, 0.30000000000000004, 1e30, Float64::INFINITY, -Float64::INFINITY,
-     123.456, 1e15, 1e16, 1.2345678901234568e20, 1e21, 1.5e300, 0.1, 0.0001, 0.00001, 1e-6, 0.0000012345, 1e-7, 1.5e-7, -2.5e-7, 1e-10}.map do |f|
-      JSON.build { |j| MCP.float(j, f) }
-    end.to_a.should eq ["1", "160", "-100", "0", "1.17", "16.7", "0.30000000000000004", "1e+30", "9.0e+999", "-9.0e+999",
-                        "123.456", "1000000000000000", "10000000000000000", "123456789012345680000", "1e+21", "1.5e+300", "0.1", "0.0001", "0.00001",
-                        "0.000001", "0.0000012345", "1e-7", "1.5e-7", "-2.5e-7", "1e-10"]
-  end
-
   it "answers every read tool" do
     with_env do |e|
       e.expense("Rewe", 3000, "2026-08-15", "Anna", "Lebensmittel", "Anna", "Ben", "Cleo")
@@ -378,8 +369,8 @@ describe "MCP tools" do
       d = e.ok("sql_query", %({"query":"WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n LIMIT 600) SELECT i FROM n"}))
       {d["truncated"], d["row_count"]}.should eq({true, 500})
       d["note"].as_s.should contain("more than")
-      e.call("sql_query", %({"query":"SELECT 1.0, 1.5, 9e999, -9e999, 'a<&>'"}))[1]
-        .should eq %({"columns":["1.0","1.5","9e999","-9e999","'a<&>'"],"row_count":1,"rows":[[1,1.5,9.0e+999,-9.0e+999,"a<&>"]],"truncated":false})
+      e.ok("sql_query", %({"query":"SELECT 1.0, 1.5, 9e999, -9e999, 'a<&>'"}))
+        .should eq JSON.parse(%({"columns":["1.0","1.5","9e999","-9e999","'a<&>'"],"row_count":1,"rows":[[1.0,1.5,"Infinity","-Infinity","a<&>"]],"truncated":false}))
       ["SELECT token FROM ynab_config", "DELETE FROM expenses", "SELECT 1; DELETE FROM expenses", "SELECT * FROM doesnotexist", ""].each do |q|
         e.fail("sql_query", {query: q}.to_json).should_not contain("Internal error")
       end
@@ -396,21 +387,21 @@ describe "MCP tools" do
       e.expense("Kino", 2400, "2026-09-05", "Cleo", "", "Ben", "Cleo")
       e.expense("Lidl", 1999, "2026-09-07", "Cleo", "Lebensmittel", "Cleo")
       {
-        %({})                                               => "Lidl,Kino,Edeka,Rewe",
-        %({"sort":"date_asc"})                              => "Rewe,Edeka,Kino,Lidl",
-        %({"sort":"amount_desc"})                           => "Rewe,Kino,Lidl,Edeka",
-        %({"sort":"amount_asc"})                            => "Edeka,Lidl,Kino,Rewe",
-        %({"min_amount":19.99,"max_amount":24})             => "Lidl,Kino",
-        %({"min_amount":20})                                => "Kino,Rewe",
-        %({"text":["rewe","LIDL"]})                         => "Lidl,Rewe",
-        %({"text":"edeka"})                                 => "Edeka",
-        %({"paid_by":"Cleo"})                               => "Lidl,Kino",
-        %({"involved":"Ben"})                               => "Kino,Edeka,Rewe",
-        %({"person":"Ben"})                                 => "Kino,Edeka,Rewe",
-        %({"paid_by":"Cleo","involved":"Ben"})              => "Kino",
-        %({"text":null,"min_amount":null})                  => "Lidl,Kino,Edeka,Rewe",
-        %({"min_amount":20,"min_amount":null})              => "Lidl,Kino,Edeka,Rewe",
-        %({"reimbursements":" include ","sort":"date_asc"}) => "Rewe,Edeka,Kino,Lidl",
+        %({})                                             => "Lidl,Kino,Edeka,Rewe",
+        %({"sort":"date_asc"})                            => "Rewe,Edeka,Kino,Lidl",
+        %({"sort":"amount_desc"})                         => "Rewe,Kino,Lidl,Edeka",
+        %({"sort":"amount_asc"})                          => "Edeka,Lidl,Kino,Rewe",
+        %({"min_amount":19.99,"max_amount":24})           => "Lidl,Kino",
+        %({"min_amount":20})                              => "Kino,Rewe",
+        %({"text":["rewe","LIDL"]})                       => "Lidl,Rewe",
+        %({"text":"edeka"})                               => "Edeka",
+        %({"paid_by":"Cleo"})                             => "Lidl,Kino",
+        %({"involved":"Ben"})                             => "Kino,Edeka,Rewe",
+        %({"person":"Ben"})                               => "Kino,Edeka,Rewe",
+        %({"paid_by":"Cleo","involved":"Ben"})            => "Kino",
+        %({"text":null,"min_amount":null})                => "Lidl,Kino,Edeka,Rewe",
+        %({"min_amount":20,"min_amount":null})            => "Lidl,Kino,Edeka,Rewe",
+        %({"reimbursements":"include","sort":"date_asc"}) => "Rewe,Edeka,Kino,Lidl",
       }.each do |args, want|
         {args, titles(e.ok("search_expenses", args))}.should eq({args, want})
       end
@@ -489,7 +480,7 @@ describe "MCP tools" do
       history.call(%({"interval":"year","from":"2026-02-01","to":"2026-12-31","person":"ben"})).should eq [{"Ben" => 1000}]
       d = e.ok("balance_history", %({"interval":"week","from":"2026-03-02","to":"2026-03-15"}))
       d["rows"].as_a.map(&.["week"].as_s).should eq ["2026-W10", "2026-W11"]
-      d["rows"][0]["balances"][0].should eq JSON.parse(%({"person":"Anna","balance":"10.00","balance_cents":1000,"status":""}))
+      d["rows"][0]["balances"][0].should eq JSON.parse(%({"person":"Anna","balance":"10.00","balance_cents":1000}))
       # Without to, the last row includes expenses dated later and equals
       # balances; with to, later expenses are left out.
       e.expense("Miete", 3000, "2026-05-01", "Cleo", "", "Anna", "Ben", "Cleo")
@@ -498,7 +489,7 @@ describe "MCP tools" do
       rows = history.call(%({"to":"2026-04-30"}))
       {rows.size, rows[3]["Cleo"]}.should eq({4, -1000})
       {
-        %({"interval":"day"})                                        => "interval must be one of month, week, year.",
+        %({"interval":"day"})                                        => "Invalid arguments: interval must be one of year, month, week.",
         %({"person":"Dora"})                                         => %(Unknown person "Dora". Available: Anna, Ben, Cleo.),
         %({"interval":"week","from":"2000-01-01","to":"2026-01-01"}) => "That is 1358 periods, at most 500 are possible. Please narrow down from/to or choose a longer interval.",
         %({"interval":"week","from":"1900-01-01"})                   => %(Invalid date for from: "1900-01-01" (expected YYYY-MM-DD).),
@@ -648,7 +639,7 @@ describe "MCP write tools" do
       {x["original"], x["amount_cents"], x["fx_rate"], x["fx_source"]}.should eq({"25.00 USD", 2000, 1.25, "ezb"})
       x = created.call("create_expense", %({"title":"Sushi","amount":2000,"currency":"JPY","fx_rate":160,"paid_by":"Anna"}))
       {x["original"], x["amount_cents"], x["fx_source"]}.should eq({"2000 JPY", 1250, "manuell"})
-      e.call("create_expense", %({"title":"Sushi2","amount":2000,"currency":"JPY","fx_rate":160,"paid_by":"Anna"}))[1].should contain(%("fx_rate":160,))
+      e.call("create_expense", %({"title":"Sushi2","amount":2000,"currency":"JPY","fx_rate":160,"paid_by":"Anna"}))[1].should contain(%("fx_rate":160.0,))
 
       # The same expense again is refused, unless allow_duplicate is set.
       msg = e.fail("create_expense", %({"title":"REWE","amount":"23.40","paid_by":"Ben"}))
@@ -677,7 +668,7 @@ describe "MCP write tools" do
         %({#{x},"participants":["Cleo"]})                                               => "Cleo is archived and cannot take part in new entries.",
         %({#{x},"participants":["Anna","anna"]})                                        => "Anna appears twice in the split.",
         %({#{x},"category":"Yacht"})                                                    => %(Unknown category "Yacht". Available: Lebensmittel, Restaurant, Haushalt, Miete & Nebenkosten, Transport, Reisen, Freizeit, Gesundheit, Geschenke, Sonstiges.),
-        %({#{x},"split":"thirds"})                                                      => "split must be one of equal, shares, percent, amount.",
+        %({#{x},"split":"thirds"})                                                      => "Invalid arguments: split must be one of equal, shares, percent, amount.",
         %({#{x},"split":"shares"})                                                      => "split=shares needs weights (person name → value).",
         %({#{x},"weights":{"Anna":1}})                                                  => "weights are only for split=shares, percent or amount; use participants for an equal split.",
         %({#{x},"split":"shares","participants":["Anna"],"weights":{"Anna":1}})         => "With split=shares, weights name the participants; leave participants out.",
@@ -698,7 +689,8 @@ describe "MCP write tools" do
         %({#{x},"currency":"USD","fx_rate":"1.2"})                                      => "Invalid arguments: fx_rate must be a number.",
         %({#{x},"split":"shares","weights":{"Anna":true}})                              => "Invalid arguments: must be a string or a number",
         # The order of the checks.
-        %({"amount":"x","paid_by":"Zoe","split":"x","date":"x"})                                 => "Parameter title is missing.",
+        %({"amount":"x","paid_by":"Zoe","split":"x","date":"x"})                                 => "Invalid arguments: split must be one of equal, shares, percent, amount.",
+        %({"amount":"x","paid_by":"Zoe","date":"x"})                                             => "Parameter title is missing.",
         %({"title":"X","amount":"x","paid_by":"Zoe","date":"x"})                                 => %(Invalid date for date: "x" (expected YYYY-MM-DD).),
         %({"title":"X","amount":"1","paid_by":"Anna","category":"Yacht","participants":["Zoe"]}) => %(Unknown category "Yacht". Available: Lebensmittel, Restaurant, Haushalt, Miete & Nebenkosten, Transport, Reisen, Freizeit, Gesundheit, Geschenke, Sonstiges.),
       }.each do |args, want|

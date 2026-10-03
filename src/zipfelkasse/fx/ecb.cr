@@ -170,7 +170,7 @@ module Zipfelkasse::FX
     end
 
     private def start_fetch(file : String) : Load
-      raise FetchError.new(file, "shutting down") if @stopped
+      raise FetchError.new(file, "shutting down") if @http.stopped?
       load = @loads[file] = Load.new
       @bg.spawn do
         result, error = begin
@@ -189,27 +189,9 @@ module Zipfelkasse::FX
     end
 
     private def download(file : String) : LoadResult
-      uri = URI.parse(@base_url + file)
-      # Crystal's HTTP::Client ignores HTTPS_PROXY and does not follow redirects.
-      client = HTTP::Client.new(uri)
-      client.connect_timeout = 60.seconds
-      client.read_timeout = 60.seconds
-      client.write_timeout = 60.seconds
-      body = begin
-        @mutex.synchronize do
-          raise "shutting down" if @stopped
-          @clients << client
-        end
-        client.get(uri.request_target, headers: HTTP::Headers{"User-Agent" => USER_AGENT}) do |res|
-          raise "HTTP status #{res.status_code}" unless res.status_code == 200
-          buf = IO::Memory.new
-          IO.copy(res.body_io, buf, MAX_BODY_SIZE)
-          buf.to_slice
-        end
-      ensure
-        @mutex.synchronize { @clients.delete(client) }
-        client.close
-      end
+      res = @http.request("GET", @base_url + file, HTTP::Headers{"User-Agent" => USER_AGENT})
+      raise "HTTP status #{res.status}" unless res.status == 200
+      body = res.body
       rates = file.ends_with?(".zip") ? FX.parse_hist_zip(body) : FX.parse_xml(String.new(body))
       raise "file contains no rates" if rates.empty?
       @d.store.save_ecb_rates(rates)

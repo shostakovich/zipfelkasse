@@ -1,16 +1,17 @@
 require "set"
 
 module Zipfelkasse::YNAB
-  # A person's share of an expense as an outflow in the clearing account
-  # "Geteilt". The sync writes the same transactions to YNAB that the export
-  # delivers as OFX/CSV.
   record Posting,
     expense_id : Int64,
     date : Time,
     amount_cents : Int64, # positive = outflow
     payee : String,
     memo : String,
-    category_id : Int64? # app category
+    category_id : Int64? do # app category
+    def milliunits : Int64
+      -amount_cents * 10
+    end
+  end
 
   # Nil for deleted expenses, reimbursements (those go through the bank as
   # transfers in YNAB) and expenses without an own share.
@@ -41,22 +42,16 @@ module Zipfelkasse::YNAB
     def initialize(@today, @start = nil, @connected_at = nil, @in_ynab = Set(Int64).new)
     end
 
-    # A missing connected_at (connections from before it existed) becomes now.
-    def self.for_config(store : Store, cfg : Store::YNABConfig, today : Time) : Selection
+    def self.for_config(store : Store, cfg : Store::YNABConfig, connected_at : Time?, today : Time) : Selection
       start = cfg.start_date
-      return new(today) if start.nil? || cfg.account_id.empty?
-      connected = cfg.connected_at || store.ensure_ynab_connected_at(cfg.participant_id)
-      in_ynab = Set(Int64).new
-      store.list_ynab_sync(cfg.participant_id).each do |r|
-        in_ynab << r.expense_id if !r.txn_id.empty? || r.synced_hash == PENDING_HASH
-      end
-      new(today, start, connected, in_ynab)
+      return new(today) if start.nil? || cfg.account_id.nil?
+      in_ynab = store.list_ynab_sync(cfg.participant_id).select(&.in_ynab?).to_set(&.expense_id)
+      new(today, start, connected_at, in_ynab)
     end
 
-    # Without a connection: all past expenses.
     def self.for_participant(store : Store, participant_id : Int64, today : Time) : Selection
       cfg = store.get_ynab_config?(participant_id) || return new(today)
-      for_config(store, cfg, today)
+      for_config(store, cfg, cfg.connected_at, today)
     end
 
     def includes?(e : Store::Expense, p : Posting) : Bool
@@ -68,7 +63,6 @@ module Zipfelkasse::YNAB
       in_ynab.includes?(e.id)
     end
 
-    # Sorted by date, then expense ID.
     def postings(es : Array(Store::Expense), participant_id : Int64) : Array(Posting)
       es.compact_map { |e| YNAB.posting_for(e, participant_id).try { |p| p if includes?(e, p) } }
         .sort_by! { |p| {p.date, p.expense_id} }
@@ -99,7 +93,6 @@ module Zipfelkasse::YNAB
     MARKER_RE.match(memo).try(&.[1].to_i64?)
   end
 
-  # Counts characters (code points), with "…" at the end.
   def self.truncate(s : String, n : Int32) : String
     return s if s.size <= n
     return s[0, Math.max(n, 0)] if n <= 1

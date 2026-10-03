@@ -1,6 +1,8 @@
 require "json"
 
 module Zipfelkasse::Domain
+  REIMBURSEMENT_TITLE = "Rückzahlung"
+
   enum SplitMode
     Equal   # the weight is ignored and stored as 1
     Shares  # weight = integer shares (>= 0)

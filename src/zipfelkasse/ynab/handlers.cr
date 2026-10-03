@@ -93,29 +93,29 @@ module Zipfelkasse::YNAB
     private def show(env : HTTP::Server::Context, status : Int32, error : String?, refresh : Bool) : String
       me = env.me
       config = @d.store.get_ynab_config?(me.id) || YNAB.empty_config(me.id)
-      token_set = !config.token.empty?
+      token = config.token
       state = @service.load_status(me.id)
-      token_invalid = token_set && state.token_invalid?
+      token_invalid = !token.nil? && state.token_invalid?
       plans = [] of PlanOption
       groups = [] of GroupOption
       currency = api_error = nil
-      if token_set && !token_invalid
+      if token && !token_invalid
         begin
-          plans, currency = plan_options(@service.plans(config.token, refresh), config)
+          plans, currency = plan_options(@service.plans(token, refresh), config)
         rescue ex
-          api_error = api_message(ex, config.token)
+          api_error = api_message(ex, token)
         end
-        if !config.plan_id.empty? && api_error.nil?
+        if (plan_id = config.plan_id) && api_error.nil?
           begin
-            groups = YNAB.usable_groups(@service.categories(config.token, config.plan_id, refresh))
+            groups = YNAB.usable_groups(@service.categories(token, plan_id, refresh))
           rescue ex
-            api_error = api_message(ex, config.token)
+            api_error = api_message(ex, token)
           end
         end
       end
-      has_target = !config.account_id.empty?
+      has_target = !config.account_id.nil?
       synced, problems = @d.store.ynab_sync_summary(me.id)
-      data = PageData.new(token_set: token_set, token_invalid: token_invalid, api_error: api_error, plans: plans,
+      data = PageData.new(token_set: !token.nil?, token_invalid: token_invalid, api_error: api_error, plans: plans,
         currency: currency, has_target: has_target, start_date: Store.format_date(config.start_date || @service.today),
         categories: has_target ? category_rows(me.id, groups) : [] of CategoryRow, groups: groups, ready: config.ready?,
         status: state, retry_at: state.retry_at.try { |t| t if t > @service.now.call }, synced: synced, problems: problems,
@@ -150,7 +150,7 @@ module Zipfelkasse::YNAB
     end
 
     private def api_message(ex : Exception, token : String) : String
-      return TOKEN_INVALID_MESSAGE if YNAB.status_of(ex) == 401
+      return TOKEN_INVALID_MESSAGE if Failure.of(ex).unauthorized?
       "YNAB ist gerade nicht erreichbar: " + YNAB.redact(ex.message || "", token)
     end
 
@@ -172,12 +172,11 @@ module Zipfelkasse::YNAB
       plans = begin
         @service.plans(token, true)
       rescue ex
-        message = YNAB.status_of(ex) == 401 ? "YNAB kennt diesen Token nicht. Bitte prüfen und neu kopieren." : api_message(ex, token)
+        message = Failure.of(ex).unauthorized? ? "YNAB kennt diesen Token nicht. Bitte prüfen und neu kopieren." : api_message(ex, token)
         return show(env, 422, message, false)
       end
-      reachable = ->(plan_id : String) { plans.any?(&.id.==(plan_id)) }
       # also resets the rate-limit pause and old errors of the old token
-      reset_target = @service.change_connection { @d.store.set_ynab_token(me.id, token, reachable) }
+      reset_target = @service.change_connection { @d.store.set_ynab_token(me.id, token, plans.to_set(&.id)) }
       if reset_target
         return done(env, "Token gespeichert. Der bisher gewählte Plan ist mit diesem Token nicht erreichbar – bitte Plan und Konto neu wählen.")
       end
@@ -187,14 +186,14 @@ module Zipfelkasse::YNAB
 
     private def disconnect(env : HTTP::Server::Context) : String
       me = env.me
-      @service.change_connection { @d.store.set_ynab_token(me.id, "") }
+      @service.change_connection { @d.store.set_ynab_token(me.id, nil) }
       done(env, "YNAB-Verbindung getrennt. Die Buchungen in YNAB bleiben erhalten.")
     end
 
     private def save_target(env : HTTP::Server::Context) : String
       me = env.me
-      config = @d.store.get_ynab_config?(me.id)
-      return show(env, 422, "Bitte zuerst einen Token eingeben.", false) if config.nil? || config.token.empty?
+      token = @d.store.get_ynab_config?(me.id).try(&.token)
+      return show(env, 422, "Bitte zuerst einen Token eingeben.", false) unless token
       plan_id, _, account_id = env.form("ziel").partition('|')
       start = begin
         Domain.parse_date(env.form("start"))
@@ -202,9 +201,9 @@ module Zipfelkasse::YNAB
         return show(env, 422, "Bitte ein gültiges Startdatum angeben.", false)
       end
       plans = begin
-        @service.plans(config.token, false)
+        @service.plans(token, false)
       rescue ex
-        return show(env, 502, api_message(ex, config.token), false)
+        return show(env, 502, api_message(ex, token), false)
       end
       return show(env, 422, "Bitte Plan und Konto auswählen.", false) unless YNAB.account_exists?(plans, plan_id, account_id)
       plan_name, account_name = YNAB.target_names(plans, plan_id, account_id)
@@ -218,13 +217,12 @@ module Zipfelkasse::YNAB
     private def save_categories(env : HTTP::Server::Context) : String
       me = env.me
       config = @d.store.get_ynab_config?(me.id)
-      if config.nil? || config.token.empty? || config.plan_id.empty?
-        return show(env, 422, "Bitte zuerst Token, Plan und Konto einrichten.", false)
-      end
+      token, plan_id = config.try(&.token), config.try(&.plan_id)
+      return show(env, 422, "Bitte zuerst Token, Plan und Konto einrichten.", false) unless token && plan_id
       groups = begin
-        @service.categories(config.token, config.plan_id, false)
+        @service.categories(token, plan_id, false)
       rescue ex
-        return show(env, 502, api_message(ex, config.token), false)
+        return show(env, 502, api_message(ex, token), false)
       end
       known = YNAB.known_categories(YNAB.usable_groups(groups))
       old = @d.store.ynab_category_map(me.id)

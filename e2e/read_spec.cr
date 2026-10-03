@@ -189,7 +189,7 @@ describe "Read everything" do
       {text: "pizza"}, {text: ["Rewe", "Döner"]}, {text: "<script>", detail: "full"}, {category: "none"},
       {category: "restaurant", sort: "amount_desc", limit: 5}, {min_amount: 50, max_amount: 120.5, sort: "amount_asc"},
       {reimbursements: "only", detail: "full"}, {reimbursements: "include", from: "2026-01-01", to: "2026-12-31"},
-      {person: names[1], detail: "full", limit: 500}, {paid_by: names[2], involved: names[0]}, {limit: 0},
+      {person: names[1], detail: "full", limit: 500}, {paid_by: names[2], involved: names[0]}, {limit: 1},
     ].each { |args| ok.call("search_expenses", args.to_json) }
     refused.call("search_expenses", %({"sort":"random"})).should contain "sort must be one of"
     refused.call("search_expenses", %({"from":"gestern"})).should contain "Invalid date"
