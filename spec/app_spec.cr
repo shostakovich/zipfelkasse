@@ -1,6 +1,6 @@
 require "./spec_helper"
 
-describe Zipfelkasse::App do
+describe App do
   it "says that MCP is disabled without a secret" do
     with_server { SPEC_LOG.to_s.should contain "MCP disabled" }
   end

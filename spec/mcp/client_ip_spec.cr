@@ -1,7 +1,7 @@
 require "../spec_helper"
 
 describe "MCP.client_ip" do
-  trusted = Zipfelkasse::Config::Prefix.parse_list("10.0.0.0/8, 172.16.0.5")
+  trusted = Config::Prefix.parse_list("10.0.0.0/8, 172.16.0.5")
   [
     {"direct", "1.2.3.4:5000", [] of String, "", "1.2.3.4"},
     {"direct IPv6", "[2001:db8::1]:5000", [] of String, "", "2001:db8::1"},

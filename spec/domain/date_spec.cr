@@ -33,14 +33,14 @@ describe Domain do
     end
   end
 
-  it "computes occurrences from the anchor" do
+  it "computes monthly occurrences from the anchor day" do
     anchor = d("2026-01-31")
     ["2026-01-31", "2026-02-28", "2026-03-31", "2026-04-30", "2026-05-31"].each_with_index do |want, n|
       Domain.occurrence(Domain::Frequency::Monthly, anchor, n).to_s(Domain::DATE_LAYOUT).should eq want
     end
   end
 
-  it "computes occurrences for negative and large n" do
+  it "computes occurrences before the anchor and far behind it" do
     anchor = d("2026-01-31")
     {
        -1 => {"2025-12-31", "2025-01-31", "2026-01-24"},
@@ -57,89 +57,62 @@ describe Domain do
     end
   end
 
-  it "names the frequencies by their keys" do
+  it "names the frequencies by their stored keys" do
     Domain::Frequency.values.map(&.key).should eq %w(weekly monthly yearly)
     Domain::Frequency.from_key?("monthly").should eq Domain::Frequency::Monthly
     Domain::Frequency.from_key?("Monthly").should be_nil
     Domain::Frequency.from_key?("daily").should be_nil
   end
 
-  it "parses dates" do
+  describe ".parse_date" do
     {
-      "2026-10-02"   => "2026-10-02",
-      "02.10.2026"   => "2026-10-02",
-      "2.10.2026"    => "2026-10-02",
-      " 2026-10-02 " => "2026-10-02",
-      ""             => nil,
-      "2026-02-30"   => nil,
-      "yesterday"    => nil,
-      "2000-01-01"   => "2000-01-01",
-      "2100-12-31"   => "2100-12-31",
-      "1999-12-31"   => nil,
-      "2101-01-01"   => nil,
-      "0026-10-02"   => nil,
-      "9999-12-31"   => nil,
-    }.each do |input, want|
-      if want
-        got = Domain.parse_date(input)
-        got.to_s(Domain::DATE_LAYOUT).should eq want
-        got.location.should eq Time::Location::UTC
-        got.hour.should eq 0
-      else
-        expect_raises(Domain::ValidationError) { Domain.parse_date(input) }
+      "2026-10-02" => "2026-10-02", "02.10.2026" => "2026-10-02", "2.10.2026" => "2026-10-02", " 2026-10-02 " => "2026-10-02",
+      "2000-01-01" => "2000-01-01", "2100-12-31" => "2100-12-31", "02.1.2026" => "2026-01-02", "2.01.2026" => "2026-01-02",
+      "2028-02-29" => "2028-02-29", "29.02.2028" => "2028-02-29", "\t2026-10-02\u{a0}" => "2026-10-02",
+    }.each do |text, day|
+      it "reads #{text.inspect} as the UTC date #{day}" do
+        parsed = Domain.parse_date(text)
+        parsed.should eq date(day)
+        parsed.location.should eq Time::Location::UTC
+      end
+    end
+
+    {
+      "yesterday" => "„yesterday“", "2026-02-30" => "„2026-02-30“", "2027-02-29" => "„2027-02-29“",
+      "31.4.2026" => "„31.4.2026“", "2026-9-01" => "„2026-9-01“", "2.1.26" => "„2.1.26“", "123.1.2026" => "„123.1.2026“",
+      "+2026-01-01" => "„+2026-01-01“", "+999-01-01" => "„+999-01-01“", "0000-01-01" => "„0000-01-01“",
+      "2026-00-10" => "„2026-00-10“", "2026-13-01" => "„2026-13-01“", "00.01.2026" => "„00.01.2026“",
+      "2026-10-02x" => "„2026-10-02x“", "2026–10–02" => "„2026–10–02“",
+      "\u{ff11}\u{ff12}.1.2026" => "„\u{ff11}\u{ff12}.1.2026“", "\u{661}.1.2026" => "„\u{661}.1.2026“",
+    }.each do |text, shown|
+      it "rejects #{text.inspect} as an invalid date" do
+        expect_invalid("Ungültiges Datum #{shown}.") { Domain.parse_date(text) }
+      end
+    end
+
+    ["", " \u{3000} "].each do |text|
+      it "asks for a date when given #{text.inspect}" do
+        expect_invalid("Bitte ein Datum angeben.") { Domain.parse_date(text) }
+      end
+    end
+
+    ["1999-12-31", "2101-01-01", "0026-10-02", "9999-12-31"].each do |text|
+      it "rejects #{text} as outside the years 2000 to 2100" do
+        expect_invalid("Das Datum „#{text}“ liegt nicht zwischen 2000 und 2100.") { Domain.parse_date(text) }
       end
     end
   end
 
-  it "parses dates strictly" do
-    {
-      "+999-01-01"              => "Ungültiges Datum „+999-01-01“.",
-      "0000-01-01"              => "Ungültiges Datum „0000-01-01“.",
-      "2026-9-01"               => "Ungültiges Datum „2026-9-01“.",
-      "02.1.2026"               => "2026-01-02",
-      "2.01.2026"               => "2026-01-02",
-      "2.1.26"                  => "Ungültiges Datum „2.1.26“.",
-      "+2026-01-01"             => "Ungültiges Datum „+2026-01-01“.",
-      "2028-02-29"              => "2028-02-29",
-      "2027-02-29"              => "Ungültiges Datum „2027-02-29“.",
-      "29.02.2028"              => "2028-02-29",
-      "31.4.2026"               => "Ungültiges Datum „31.4.2026“.",
-      "2026-00-10"              => "Ungültiges Datum „2026-00-10“.",
-      "2026-13-01"              => "Ungültiges Datum „2026-13-01“.",
-      "00.01.2026"              => "Ungültiges Datum „00.01.2026“.",
-      "\t2026-10-02\u{a0}"      => "2026-10-02",
-      "123.1.2026"              => "Ungültiges Datum „123.1.2026“.",
-      "2026-10-02x"             => "Ungültiges Datum „2026-10-02x“.",
-      "\u{ff11}\u{ff12}.1.2026" => "Ungültiges Datum „\u{ff11}\u{ff12}.1.2026“.",
-      "\u{661}.1.2026"          => "Ungültiges Datum „\u{661}.1.2026“.",
-      "2026–10–02"              => "Ungültiges Datum „2026–10–02“.",
-      ""                        => "Bitte ein Datum angeben.",
-      " \u{3000} "              => "Bitte ein Datum angeben.",
-    }.each do |input, want|
-      if want.starts_with?('2')
-        Domain.parse_date(input).should eq d(want)
-      else
-        expect_invalid(want) { Domain.parse_date(input) }
-      end
-    end
-  end
-
-  it "formats dates" do
+  it "writes a date the German way" do
     Domain.format_date(d("2026-10-02")).should eq "02.10.2026"
     Domain.format_date(Time.utc(26, 10, 2)).should eq "02.10.0026"
   end
 
-  it "takes today's date in a time zone" do
+  it "takes the calendar date of a moment in a time zone" do
     berlin = Time::Location.load("Europe/Berlin")
     # 23:30 UTC on Oct 1 is already Oct 2 in Berlin.
     got = Domain.date_of(Time.utc(2026, 10, 1, 23, 30).in(berlin))
     got.to_s(Domain::DATE_LAYOUT).should eq "2026-10-02"
     got.location.should eq Time::Location::UTC
-  end
-
-  it "names the year range in the message" do
-    message = expect_raises(Domain::ValidationError) { Domain.parse_date("0026-10-02") }.message.not_nil!
-    message.should contain "2000"
-    message.should contain "2100"
   end
 end

@@ -1,9 +1,5 @@
 require "../spec_helper"
 
-private def ids(expenses : Array(Store::Expense)) : Array(Int64)
-  expenses.map(&.id)
-end
-
 private def insert_recurring(store : Store, template : String, start : String, next_date : String) : Int64
   store.db.exec("INSERT INTO recurring (template_json, frequency, start_date, next_date, created_at, updated_at) " \
                 "VALUES (?, 'monthly', ?, ?, 'x', 'x')", template, start, next_date).last_insert_id
@@ -12,34 +8,60 @@ end
 describe "Store expenses" do
   use_household
 
-  it "creates and reads an expense" do
-    h = household
-    events = [] of Store::ExpenseChange
-    store.on_expense_change { |c| events << c }
+  describe "creating an expense" do
+    it "normalizes the title and stores the split, the payer and the category" do
+      id = store.create_expense(household.anna, household.equal(" Einkauf  Rewe ", 1000, "2026-09-30", household.anna, household.anna, household.ben, household.cleo))
 
-    id = store.create_expense(h.anna, h.equal(" Einkauf  Rewe ", 1000, "2026-09-30", h.anna, h.anna, h.ben, h.cleo))
-    e = store.get_expense(id)
-    e.title.should eq "Einkauf Rewe"
-    e.paid_by_name.should eq "Anna"
-    e.category_name.should eq "Lebensmittel"
-    e.date.should eq date("2026-09-30")
-    {e.original_currency, e.original_amount_minor, e.fx_rate, e.foreign?}.should eq({"EUR", 1000, 1.0, false})
-    # Expense 1: the extra cent goes to index 1 mod 3 of the tied people (Ben).
-    e.shares.size.should eq 3
-    {e.share_of(h.anna), e.share_of(h.ben), e.share_of(h.cleo)}.should eq({333, 334, 333})
-    e.parts.size.should eq 3
-    e.parts[0].weight.should eq 1
-    events.should eq [Store::ExpenseChange.new(id, Store::Action::ExpenseCreated)]
+      expense = store.get_expense(id)
+      expense.title.should eq "Einkauf Rewe"
+      {expense.paid_by_name, expense.category_name, expense.date}.should eq({"Anna", "Lebensmittel", date("2026-09-30")})
+      {expense.original_currency, expense.original_amount_minor, expense.fx_rate, expense.foreign?}.should eq({"EUR", 1000, 1.0, false})
+      expense.parts.map(&.weight).should eq [1, 1, 1]
+    end
 
-    acts = store.list_activity(Store::ActivityFilter.new(expense_id: id))
-    acts.size.should eq 1
-    a = acts[0]
-    {a.action, a.actor_id, a.actor_name, a.expense_id}.should eq({Store::Action::ExpenseCreated, h.anna, "Anna", id})
-    {a.details.title, a.details.amount_cents}.should eq({"Einkauf Rewe", 1000})
-    expect_raises(Store::NotFound) { store.get_expense(999_i64) }
+    it "gives the extra cent to the person at the expense ID modulo the tied people" do
+      id = store.create_expense(household.anna, household.equal("Einkauf", 1000, "2026-09-30", household.anna, household.anna, household.ben, household.cleo))
+
+      expense = store.get_expense(id)
+      {expense.share_of(household.anna), expense.share_of(household.ben), expense.share_of(household.cleo)}.should eq({333, 334, 333})
+    end
+
+    it "tells the hooks and logs the creation" do
+      changes = [] of Store::ExpenseChange
+      store.on_expense_change { |change| changes << change }
+
+      id = store.create_expense(household.anna, household.equal("Einkauf Rewe", 1000, "2026-09-30", household.anna, household.anna))
+
+      changes.should eq [Store::ExpenseChange.new(id, Store::Action::ExpenseCreated)]
+      entry = store.list_activity(Store::ActivityFilter.new(expense_id: id)).first
+      {entry.action, entry.actor_id, entry.actor_name, entry.expense_id}.should eq({Store::Action::ExpenseCreated, household.anna, "Anna", id})
+      {entry.details.title, entry.details.amount_cents}.should eq({"Einkauf Rewe", 1000})
+    end
+
+    it "keeps the expense and logs the error when a hook fails" do
+      store.on_expense_change { |_| raise "hook broke" }
+
+      id = household.create(household.equal("Kino", 1000, "2026-09-01", household.anna, household.anna))
+
+      store.get_expense(id).title.should eq "Kino"
+      SPEC_LOG.to_s.should contain %(level=ERROR msg="expense change hook failed" expense_id=#{id} err="hook broke")
+    end
+
+    it "does not know an expense that was never created" do
+      expect_raises(Store::NotFound) { store.get_expense(999_i64) }
+    end
+
+    it "predicts the ID of the next expense, also after a deletion" do
+      store.next_expense_id.should eq 1
+      id = household.create(household.equal("Kaffee", 300, "2026-09-01", household.anna, household.anna))
+      store.delete_expense(household.anna, id)
+
+      store.next_expense_id.should eq id + 1
+      household.create(household.equal("Tee", 300, "2026-09-01", household.anna, household.anna)).should eq id + 1
+    end
   end
 
-  describe "validation" do
+  describe "validating an expense" do
     {
       "without a title"                     => {"Bitte einen Titel angeben.", ->(i : Store::ExpenseInput) { i.title = " "; i }},
       "without a date"                      => {"Bitte ein Datum angeben.", ->(i : Store::ExpenseInput) { i.date = nil; i }},
@@ -88,207 +110,233 @@ describe "Store expenses" do
   end
 
   # Line breaks arrive as CR LF but count as one character in the form.
-  it "limits notes to 2000 characters" do
-    h = household
-    input = h.equal("Einkauf", 1000, "2026-08-01", h.anna, h.anna)
+  it "counts a line break of the notes as one character" do
+    input = household.equal("Einkauf", 1000, "2026-08-01", household.anna, household.anna)
     input.notes = "a\r\n" * 999 + "aa"
-    store.create_expense(h.anna, input)
+    store.create_expense(household.anna, input)
+
     input.notes += "a"
-    expect_invalid("Die Notiz ist zu lang (höchstens 2000 Zeichen).") { store.create_expense(h.anna, input) }
+    expect_invalid("Die Notiz ist zu lang (höchstens 2000 Zeichen).") { store.create_expense(household.anna, input) }
   end
 
-  it "updates an expense and logs the changes" do
-    h = household
-    id = store.create_expense(h.anna, h.equal("Pizza", 3000, "2026-09-01", h.anna, h.anna, h.ben))
-    events = [] of Store::ExpenseChange
-    store.on_expense_change { |c| events << c }
+  describe "updating an expense" do
+    expense_id = 0_i64
 
-    e = store.get_expense(id)
-    # Saving unchanged: no log entry, no hook.
-    store.update_expense(h.ben, id, e.to_input)
-    events.should be_empty
+    before_each do
+      expense_id = household.create(household.equal("Pizza", 3000, "2026-09-01", household.anna, household.anna, household.ben))
+    end
 
-    input = e.to_input
-    input.title = "Pizza & Wein"
-    input.amount_cents = 4500
-    input.split_mode = Domain::SplitMode::Shares
-    input.parts = [Domain::Part.new(h.anna, 2), Domain::Part.new(h.ben, 1)]
-    input.category_id = nil
-    store.update_expense(h.ben, id, input)
-    e = store.get_expense(id)
-    {e.title, e.amount_cents, e.share_of(h.anna), e.share_of(h.ben), e.category_id, e.category_name}
-      .should eq({"Pizza & Wein", 4500, 3000, 1500, nil, nil})
-    events.map(&.action).should eq [Store::Action::ExpenseUpdated]
+    it "logs nothing and tells no hook when it is saved unchanged" do
+      changes = [] of Store::ExpenseChange
+      store.on_expense_change { |change| changes << change }
 
-    acts = store.list_activity(Store::ActivityFilter.new(expense_id: id))
-    acts.size.should eq 2
-    {acts[0].action, acts[0].actor_name}.should eq({Store::Action::ExpenseUpdated, "Ben"})
-    fields = acts[0].details.changes.to_h { |c| {c.field, c} }
-    {fields["Betrag"].old, fields["Betrag"].new}.should eq({"30,00 €", "45,00 €"})
-    {fields["Kategorie"].old, fields["Kategorie"].new}.should eq({"Lebensmittel", "–"})
-    fields["Aufteilung"].new.should start_with "Nach Anteilen: Anna 30,00 €"
-    fields.has_key?("Datum").should be_false
+      store.update_expense(household.ben, expense_id, store.get_expense(expense_id).to_input)
 
-    expect_raises(Store::NotFound) { store.update_expense(h.ben, 999_i64, input) }
+      changes.should be_empty
+      store.list_activity(Store::ActivityFilter.new(expense_id: expense_id)).size.should eq 1
+    end
+
+    it "stores the new values and recomputes the shares" do
+      input = store.get_expense(expense_id).to_input
+      input.title = "Pizza & Wein"
+      input.amount_cents = 4500
+      input.split_mode = Domain::SplitMode::Shares
+      input.parts = [Domain::Part.new(household.anna, 2), Domain::Part.new(household.ben, 1)]
+      input.category_id = nil
+      store.update_expense(household.ben, expense_id, input)
+
+      expense = store.get_expense(expense_id)
+      {expense.title, expense.amount_cents, expense.share_of(household.anna), expense.share_of(household.ben), expense.category_id, expense.category_name}
+        .should eq({"Pizza & Wein", 4500, 3000, 1500, nil, nil})
+    end
+
+    it "tells the hooks and lists each changed field with its old and new value" do
+      changes = [] of Store::ExpenseChange
+      store.on_expense_change { |change| changes << change }
+      input = store.get_expense(expense_id).to_input
+      input.amount_cents = 4500
+      input.split_mode = Domain::SplitMode::Shares
+      input.parts = [Domain::Part.new(household.anna, 2), Domain::Part.new(household.ben, 1)]
+      input.category_id = nil
+      store.update_expense(household.ben, expense_id, input)
+
+      changes.map(&.action).should eq [Store::Action::ExpenseUpdated]
+      entry = store.list_activity(Store::ActivityFilter.new(expense_id: expense_id)).first
+      {entry.action, entry.actor_name}.should eq({Store::Action::ExpenseUpdated, "Ben"})
+      fields = entry.details.changes.to_h { |change| {change.field, change} }
+      {fields["Betrag"].old, fields["Betrag"].new}.should eq({"30,00 €", "45,00 €"})
+      {fields["Kategorie"].old, fields["Kategorie"].new}.should eq({"Lebensmittel", "–"})
+      fields["Aufteilung"].new.should start_with "Nach Anteilen: Anna 30,00 €"
+      fields.has_key?("Datum").should be_false
+    end
+
+    it "does not know an expense that was never created" do
+      expect_raises(Store::NotFound) { store.update_expense(household.ben, 999_i64, store.get_expense(expense_id).to_input) }
+    end
+
+    it "keeps rotating the extra cent with the expense ID" do
+      people = [household.anna, household.ben]
+      extra = Hash(Int64, Int32).new(0)
+      4.times do
+        id = household.create(household.equal("Kaffee", 301, "2026-09-01", household.anna, household.ben, household.anna))
+        expense = store.get_expense(id)
+        lucky = people[id % 2]
+        expense.share_of(lucky).should eq 151
+        extra[lucky] += 1
+
+        input = expense.to_input
+        input.amount_cents = 501
+        store.update_expense(household.anna, id, input)
+        store.get_expense(id).share_of(lucky).should eq 251
+      end
+      extra.should eq({household.anna => 2, household.ben => 2})
+    end
   end
 
-  it "deletes an expense softly" do
-    h = household
-    id = store.create_expense(h.anna, h.equal("Bahn", 5000, "2026-09-02", h.anna, h.anna, h.ben))
-    events = [] of Store::ExpenseChange
-    store.on_expense_change { |c| events << c }
+  describe "deleting an expense" do
+    expense_id = 0_i64
 
-    store.delete_expense(h.ben, id)
-    expect_raises(Store::NotFound) { store.delete_expense(h.ben, id) }
-    e = store.get_expense(id)
-    e.deleted?.should be_true
-    expect_raises(Store::NotFound) { store.update_expense(h.ben, id, e.to_input) }
-    store.list_expenses.should be_empty
-    store.balances.should be_empty
-    events.should eq [Store::ExpenseChange.new(id, Store::Action::ExpenseDeleted)]
-    a = store.list_activity(Store::ActivityFilter.new(limit: 1))[0]
-    {a.action, a.details.title}.should eq({Store::Action::ExpenseDeleted, "Bahn"})
+    before_each do
+      expense_id = household.create(household.equal("Bahn", 5000, "2026-09-02", household.anna, household.anna, household.ben))
+    end
+
+    it "keeps it as deleted, out of the list and the balances" do
+      store.delete_expense(household.ben, expense_id)
+
+      store.get_expense(expense_id).deleted?.should be_true
+      store.list_expenses.should be_empty
+      store.balances.should be_empty
+    end
+
+    it "tells the hooks and logs the deletion" do
+      changes = [] of Store::ExpenseChange
+      store.on_expense_change { |change| changes << change }
+
+      store.delete_expense(household.ben, expense_id)
+
+      changes.should eq [Store::ExpenseChange.new(expense_id, Store::Action::ExpenseDeleted)]
+      entry = store.list_activity(Store::ActivityFilter.new(limit: 1)).first
+      {entry.action, entry.details.title}.should eq({Store::Action::ExpenseDeleted, "Bahn"})
+    end
+
+    it "refuses to delete or update a deleted expense" do
+      store.delete_expense(household.ben, expense_id)
+
+      expect_raises(Store::NotFound) { store.delete_expense(household.ben, expense_id) }
+      expect_raises(Store::NotFound) { store.update_expense(household.ben, expense_id, store.get_expense(expense_id).to_input) }
+    end
   end
 
-  it "filters expenses" do
-    h = household
-    a = h.create(h.equal("Rewe Einkauf", 1000, "2026-09-01", h.anna, h.anna, h.ben))
-    b = h.create(h.equal("Kino 100%", 2000, "2026-09-15", h.ben, h.ben, h.cleo))
-    input = h.equal("Tanken", 3000, "2026-10-01", h.cleo, h.cleo)
-    input.category_id = nil
-    input.notes = "Rewe-Tankstelle"
-    c = h.create(input)
+  describe "listing expenses" do
+    before_each do
+      household.create(household.equal("Rewe Einkauf", 1000, "2026-09-01", household.anna, household.anna, household.ben))
+      household.create(household.equal("Kino 100%", 2000, "2026-09-15", household.ben, household.ben, household.cleo))
+      input = household.equal("Tanken", 3000, "2026-10-01", household.cleo, household.cleo)
+      input.category_id = nil
+      input.notes = "Rewe-Tankstelle"
+      household.create(input)
+    end
 
     {
-      "all, newest first"          => {Store::ExpenseFilter.new, [c, b, a]},
-      "text in title/notes"        => {Store::ExpenseFilter.new(text: "rewe"), [c, a]},
-      "LIKE characters"            => {Store::ExpenseFilter.new(text: "100%"), [b]},
-      "category"                   => {Store::ExpenseFilter.new(category_id: h.food), [b, a]},
-      "without category"           => {Store::ExpenseFilter.new(without_category: true), [c]},
-      "person pays or is involved" => {Store::ExpenseFilter.new(participant_id: h.cleo), [c, b]},
-      "date range"                 => {Store::ExpenseFilter.new(from: date("2026-09-01"), to: date("2026-09-15")), [b, a]},
-      "limit/offset"               => {Store::ExpenseFilter.new(limit: 1, offset: 1), [b]},
-      "oldest first"               => {Store::ExpenseFilter.new(sort: Store::ExpenseSort::DateAsc), [a, b, c]},
-      "largest first"              => {Store::ExpenseFilter.new(sort: Store::ExpenseSort::AmountDesc), [c, b, a]},
-      "smallest first"             => {Store::ExpenseFilter.new(sort: Store::ExpenseSort::AmountAsc), [a, b, c]},
-      "amount range"               => {Store::ExpenseFilter.new(min_cents: 1500, max_cents: 2500), [b]},
-    }.each do |name, (filter, want)|
-      es = store.list_expenses(filter)
-      {name, ids(es)}.should eq({name, want})
-      es.each { |e| e.shares.should_not be_empty }
+      "newest first"                           => {Store::ExpenseFilter.new, ["Tanken", "Kino 100%", "Rewe Einkauf"]},
+      "oldest first"                           => {Store::ExpenseFilter.new(sort: Store::ExpenseSort::DateAsc), ["Rewe Einkauf", "Kino 100%", "Tanken"]},
+      "most expensive first"                   => {Store::ExpenseFilter.new(sort: Store::ExpenseSort::AmountDesc), ["Tanken", "Kino 100%", "Rewe Einkauf"]},
+      "cheapest first"                         => {Store::ExpenseFilter.new(sort: Store::ExpenseSort::AmountAsc), ["Rewe Einkauf", "Kino 100%", "Tanken"]},
+      "from the second entry on, at most one"  => {Store::ExpenseFilter.new(limit: 1, offset: 1), ["Kino 100%"]},
+      "with a text in the title or the notes"  => {Store::ExpenseFilter.new(text: "rewe"), ["Tanken", "Rewe Einkauf"]},
+      "with a text that holds a LIKE wildcard" => {Store::ExpenseFilter.new(text: "100%"), ["Kino 100%"]},
+      "in a date range"                        => {Store::ExpenseFilter.new(from: date("2026-09-01"), to: date("2026-09-15")), ["Kino 100%", "Rewe Einkauf"]},
+      "in an amount range"                     => {Store::ExpenseFilter.new(min_cents: 1500, max_cents: 2500), ["Kino 100%"]},
+      "without a category"                     => {Store::ExpenseFilter.new(without_category: true), ["Tanken"]},
+    }.each do |name, (filter, titles)|
+      it "lists the expenses #{name}" do
+        found = store.list_expenses(filter)
+
+        found.map(&.title).should eq titles
+        found.each { |expense| expense.shares.should_not be_empty }
+      end
+    end
+
+    it "lists the expenses of a category" do
+      store.list_expenses(Store::ExpenseFilter.new(category_id: household.food)).map(&.title).should eq ["Kino 100%", "Rewe Einkauf"]
+    end
+
+    it "lists the expenses a person paid or shares" do
+      store.list_expenses(Store::ExpenseFilter.new(participant_id: household.cleo)).map(&.title).should eq ["Tanken", "Kino 100%"]
     end
   end
 
-  it "rotates the extra cent with the expense ID, also after an update" do
-    h = household
-    people = [h.anna, h.ben]
-    extra = Hash(Int64, Int32).new(0)
-    4.times do
-      id = store.create_expense(h.anna, h.equal("Kaffee", 301, "2026-09-01", h.anna, h.ben, h.anna))
-      e = store.get_expense(id)
-      want = people[id % 2]
-      e.share_of(want).should eq 151
-      extra[want] += 1
+  describe "searching a text" do
+    ids = {} of String => Int64
 
-      input = e.to_input
-      input.amount_cents = 501
-      store.update_expense(h.anna, id, input)
-      store.get_expense(id).share_of(want).should eq 251
+    before_each do
+      {"lower" => {"bäckerei am markt", ""}, "upper" => {"BÄCKER SCHMIDT", ""}, "mixed" => {"Brötchen", "vom Bäcker"},
+       "street" => {"Parken Hauptstraße", ""}, "caps" => {"PARKHAUS HAUPTSTRASSE", ""}, "ascii" => {"Baecker ohne Umlaut", ""}}.each do |key, (title, notes)|
+        input = household.equal(title, 1000, "2026-09-01", household.anna, household.anna, household.ben)
+        input.notes = notes
+        ids[key] = household.create(input)
+      end
     end
-    extra.should eq({h.anna => 2, h.ben => 2})
-  end
-
-  it "predicts the next expense ID" do
-    h = household
-    store.next_expense_id.should eq 1
-    id = h.create(h.equal("Kaffee", 300, "2026-09-01", h.anna, h.anna))
-    store.delete_expense(h.anna, id)
-    store.next_expense_id.should eq id + 1
-    h.create(h.equal("Tee", 300, "2026-09-01", h.anna, h.anna)).should eq id + 1
-  end
-
-  it "searches text ignoring the case of umlauts" do
-    h = household
-    mk = ->(title : String, notes : String) do
-      input = h.equal(title, 1000, "2026-09-01", h.anna, h.anna, h.ben)
-      input.notes = notes
-      store.create_expense(h.anna, input)
-    end
-    lower = mk.call("bäckerei am markt", "")
-    upper = mk.call("BÄCKER SCHMIDT", "")
-    mixed = mk.call("Brötchen", "vom Bäcker")
-    street = mk.call("Parken Hauptstraße", "")
-    caps = mk.call("PARKHAUS HAUPTSTRASSE", "")
-    mk.call("Baecker ohne Umlaut", "")
 
     {
-      "BÄCKER"   => [mixed, upper, lower],
-      "bäcker"   => [mixed, upper, lower],
-      "Bäckerei" => [lower],
-      "brötchen" => [mixed],
-      "BRÖTCHEN" => [mixed],
-      "straße"   => [caps, street],
-      "STRASSE"  => [caps, street],
-      "ẞ"        => [caps, street],
-    }.each do |text, want|
-      {text, ids(store.list_expenses(Store::ExpenseFilter.new(text: text)))}.should eq({text, want})
+      "BÄCKER" => %w(mixed upper lower), "bäcker" => %w(mixed upper lower), "Bäckerei" => %w(lower),
+      "brötchen" => %w(mixed), "BRÖTCHEN" => %w(mixed), "straße" => %w(caps street), "STRASSE" => %w(caps street),
+      "ẞ" => %w(caps street),
+    }.each do |text, expected|
+      it "finds #{expected.join(", ")} for #{text.inspect} regardless of the case of umlauts and ß" do
+        store.list_expenses(Store::ExpenseFilter.new(text: text)).map(&.id).should eq expected.map { |key| ids[key] }
+      end
     end
   end
 
-  it "computes balances with a reimbursement" do
-    h = household
-    store.create_expense(h.anna, h.equal("Essen", 3000, "2026-09-01", h.anna, h.anna, h.ben, h.cleo))
-    # Ben pays Anna back 10 €.
-    r = Store::ExpenseInput.new(title: "Rückzahlung", date: date("2026-09-02"), paid_by: h.ben, reimbursement: true,
-      amount_cents: 1000, parts: [Domain::Part.new(h.anna)])
-    e = store.get_expense(store.create_expense(h.ben, r))
-    {e.reimbursement?, e.split_mode, e.share_of(h.anna)}.should eq({true, Domain::SplitMode::Equal, 1000})
-    b = store.balances
-    {b[h.anna], b[h.ben], b[h.cleo]}.should eq({1000, 0, -1000})
+  it "computes the balances with a reimbursement" do
+    store.create_expense(household.anna, household.equal("Essen", 3000, "2026-09-01", household.anna, household.anna, household.ben, household.cleo))
+    paid_back = store.get_expense(store.create_expense(household.ben, household.reimbursement(1000, "2026-09-02", household.ben, household.anna)))
+
+    {paid_back.reimbursement?, paid_back.split_mode, paid_back.share_of(household.anna)}.should eq({true, Domain::SplitMode::Equal, 1000})
+    balances = store.balances
+    {balances[household.anna], balances[household.ben], balances[household.cleo]}.should eq({1000, 0, -1000})
   end
 
-  it "rejects a second instance of a recurrence on the same date" do
-    h = household
-    rid = insert_recurring(store, "{}", "2026-01-31", "2026-02-28")
-    input = h.equal("Miete", 100000, "2026-01-31", h.anna, h.anna, h.ben)
-    input.recurring_id = rid
-    before = store.list_activity.size
-    store.create_expense(nil, input)
-    expect_raises(Store::RecurringExists) { store.create_expense(nil, input) }
-    acts = store.list_activity
-    acts.size.should eq before + 1
-    {acts[0].actor_id, acts[0].actor_name}.should eq({nil, nil})
-  end
+  describe "instances of a recurring expense" do
+    rule_id = 0_i64
 
-  it "rejects an instance of a paused or deleted recurrence" do
-    h = household
-    rid = insert_recurring(store, "{}", "2026-01-31", "2026-02-28")
-    store.db.exec("UPDATE recurring SET active = 0 WHERE id = ?", rid)
-    input = h.equal("Miete", 100000, "2026-01-31", h.anna, h.anna, h.ben)
-    input.recurring_id = rid
-    expect_raises(Store::RecurringChanged) { store.create_expense(nil, input) }
-    input.recurring_id = 999
-    expect_raises(Store::RecurringChanged) { store.create_expense(nil, input) }
-  end
+    before_each do
+      rule_id = insert_recurring(store, "{}", "2026-01-31", "2026-02-28")
+    end
 
-  # An input error, not a 500.
-  it "rejects moving an instance onto the date of another instance" do
-    h = household
-    rid = insert_recurring(store, "{}", "2026-01-31", "2026-03-31")
-    input = h.equal("Miete", 100000, "2026-01-31", h.anna, h.anna, h.ben)
-    input.recurring_id = rid
-    store.create_expense(nil, input)
-    input.date = date("2026-02-28")
-    second = store.create_expense(nil, input)
-    input.date = date("2026-01-31")
-    expect_invalid("Für diesen Termin gibt es schon eine Ausgabe dieser Wiederholung.") { store.update_expense(h.anna, second, input) }
-  end
+    it "allows only one per date, and logs it as entered by the system" do
+      input = household.equal("Miete", 100000, "2026-01-31", household.anna, household.anna, household.ben)
+      input.recurring_id = rule_id
+      entries = store.list_activity.size
+      store.create_expense(nil, input)
 
-  it "logs a failing expense-change hook and keeps the change" do
-    h = household
-    store.on_expense_change { |_| raise "hook broke" }
-    id = h.create(h.equal("Kino", 1000, "2026-09-01", h.anna, h.anna))
-    store.get_expense(id).title.should eq "Kino"
-    SPEC_LOG.to_s.should contain %(level=ERROR msg="expense change hook failed" expense_id=#{id} err="hook broke")
+      expect_raises(Store::RecurringExists) { store.create_expense(nil, input) }
+
+      activities = store.list_activity
+      activities.size.should eq entries + 1
+      {activities[0].actor_id, activities[0].actor_name}.should eq({nil, nil})
+    end
+
+    it "are refused for a paused or deleted rule" do
+      store.db.exec("UPDATE recurring SET active = 0 WHERE id = ?", rule_id)
+      input = household.equal("Miete", 100000, "2026-01-31", household.anna, household.anna, household.ben)
+      input.recurring_id = rule_id
+      expect_raises(Store::RecurringChanged) { store.create_expense(nil, input) }
+
+      input.recurring_id = 999
+      expect_raises(Store::RecurringChanged) { store.create_expense(nil, input) }
+    end
+
+    it "cannot be moved onto the date of another instance, which is an input error" do
+      input = household.equal("Miete", 100000, "2026-01-31", household.anna, household.anna, household.ben)
+      input.recurring_id = rule_id
+      store.create_expense(nil, input)
+      input.date = date("2026-02-28")
+      second = store.create_expense(nil, input)
+
+      input.date = date("2026-01-31")
+      expect_invalid("Für diesen Termin gibt es schon eine Ausgabe dieser Wiederholung.") { store.update_expense(household.anna, second, input) }
+    end
   end
 end

@@ -208,7 +208,7 @@ describe FX::Service do
     it "returns once the stopper fires, although a download hangs" do
       service = service()
       ecb.block
-      stopper = Zipfelkasse::Stopper.new
+      stopper = Stopper.new
       stopped = Channel(Nil).new
       spawn do
         service.run(stopper)

@@ -13,7 +13,7 @@ private def balances(h : Hash(Int32, Int32)) : Hash(Int64, Int64)
 end
 
 describe Domain do
-  it "computes balances" do
+  it "computes each balance from what a person paid and what they share" do
     entries = [
       # A (1) pays 30 € for all three
       Domain::Entry.new(1, 3000, [share(1, 1000), share(2, 1000), share(3, 1000)]),
@@ -53,7 +53,7 @@ describe Domain do
     end
   end
 
-  it "does not modify its input" do
+  it "does not modify the balances it settles" do
     b = balances({1 => 100, 2 => -100})
     Domain.settle(b)
     b.should eq balances({1 => 100, 2 => -100})

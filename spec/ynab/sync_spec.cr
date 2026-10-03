@@ -419,7 +419,7 @@ describe YNAB::Service do
       service.start_delay = 1.millisecond
       hold = Channel(Nil).new
       fake.hold = hold
-      stopper = Zipfelkasse::Stopper.new
+      stopper = Stopper.new
       stopped = Channel(Nil).new
       spawn do
         service.run(stopper)
@@ -720,7 +720,7 @@ describe YNAB::Service do
       connect
       service.debounce = 10.milliseconds
       service.start_delay = 1.hour
-      stopper = Zipfelkasse::Stopper.new
+      stopper = Stopper.new
       stopped = Channel(Nil).new
       spawn do
         service.run(stopper)

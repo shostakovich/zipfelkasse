@@ -1,6 +1,6 @@
 require "./spec_helper"
 
-describe Zipfelkasse::CLI do
+describe CLI do
   describe ".next_backup" do
     berlin = Time::Location.load("Europe/Berlin")
 
@@ -10,7 +10,7 @@ describe Zipfelkasse::CLI do
       "2026-10-02 23:59" => "2026-10-03 03:00",
     }.each do |now, backup|
       it "plans the backup after #{now} for #{backup}" do
-        Zipfelkasse::CLI.next_backup(Time.parse(now, "%F %R", berlin)).to_s("%F %R").should eq backup
+        CLI.next_backup(Time.parse(now, "%F %R", berlin)).to_s("%F %R").should eq backup
       end
     end
   end
@@ -24,17 +24,17 @@ describe Zipfelkasse::CLI do
       "127.0.0.1:8081" => "http://127.0.0.1:8081/healthz",
     }.each do |address, url|
       it "checks #{url} for the address #{address.inspect}" do
-        Zipfelkasse::CLI.health_url(address).should eq url
+        CLI.health_url(address).should eq url
       end
     end
 
     it "rejects an address without a port" do
-      expect_raises(Exception) { Zipfelkasse::CLI.health_url("broken") }
+      expect_raises(Exception) { CLI.health_url("broken") }
     end
   end
 
   it "drops connections that stall reading or writing" do
-    server = Zipfelkasse::CLI::TimeoutServer.new("127.0.0.1", 0)
+    server = CLI::TimeoutServer.new("127.0.0.1", 0)
     client = TCPSocket.new("127.0.0.1", server.local_address.port)
     connection = server.accept?.not_nil!
 

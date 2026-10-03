@@ -1,6 +1,6 @@
 require "../spec_helper"
 
-describe Zipfelkasse::Config do
+describe Config do
   it "has defaults" do
     c = Config.from_env({} of String => String)
     c.addr.should eq ":8080"

@@ -79,7 +79,7 @@ describe Domain do
       end
     end
 
-    it "uses the exact messages" do
+    it "explains why a split is refused" do
       expect_invalid("Anteile dürfen höchstens 1000000 sein.") { Domain.split(Domain::SplitMode::Shares, 100, parts({1, 1_000_001}), 0) }
       expect_invalid("Die Prozente müssen zusammen 100 % ergeben.") { Domain.split(Domain::SplitMode::Percent, 100, parts({1, 10001}), 0) }
       expect_invalid("Die Prozente müssen zusammen 100 % ergeben (aktuell 90,00 %).") { Domain.split(Domain::SplitMode::Percent, 100, parts({1, 5000}, {2, 4000}), 0) }
@@ -87,7 +87,7 @@ describe Domain do
     end
   end
 
-  it "allocates by largest remainder with rotation" do
+  it "allocates by the largest remainder and rotates ties" do
     max = Domain::MAX_AMOUNT_CENTS
     [
       {667_i64, [600_i64, 400_i64], 0_i64, [400_i64, 267_i64]},
@@ -110,7 +110,7 @@ describe Domain do
     end
   end
 
-  it "splits foreign amounts" do
+  it "splits an amount entered in a foreign currency in proportion to the weights" do
     ps = parts({3, 334}, {1, 333}, {2, 333})
     Domain.split_converted(Domain::SplitMode::Amount, 909, 1000, "USD", ps, 0).should eq [
       Domain::Share.new(1, 333, 303), Domain::Share.new(2, 333, 303), Domain::Share.new(3, 334, 303),
@@ -130,14 +130,14 @@ describe Domain do
     end
   end
 
-  it "names the split modes by their keys" do
+  it "names the split modes by their stored keys" do
     Domain::SplitMode.values.map(&.key).should eq %w(equal shares percent amount)
     Domain::SplitMode.from_key?("shares").should eq Domain::SplitMode::Shares
     Domain::SplitMode.from_key?("Shares").should be_nil
     Domain::SplitMode.from_key?("foo").should be_nil
   end
 
-  it "parses weights (parse_weight, weight_decimals)" do
+  it "parses the weights of each split mode" do
     {"5" => 5, " 5 " => 5, "+5" => 5, "-3" => -3, "\t5" => 5}.each do |v, want|
       Domain.parse_weight(Domain::SplitMode::Shares, "EUR", v).should eq want
     end
@@ -152,7 +152,7 @@ describe Domain do
     Domain.weight_decimals(Domain::SplitMode::Shares, "KWD").should eq 0
   end
 
-  it "reads and writes parts and shares as JSON" do
+  it "reads and writes parts and shares as JSON, the format of stored recurring templates" do
     Domain::Part.new(1, 2).to_json.should eq %({"participant_id":1,"weight":2})
     Domain::Share.from_json(%({"participant_id":3,"weight":1,"amount_cents":250})).should eq Domain::Share.new(3, 1, 250)
   end

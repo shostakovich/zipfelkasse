@@ -2,14 +2,14 @@
 # filters and handlers globally; each app starts from scratch, like in
 # Kemal's own specs.
 class TestServer
-  getter app : Zipfelkasse::App
+  getter app : App
   getter store : Store
   @handler : HTTP::Handler
 
   def initialize(config = Config.new, @store = Store.open(":memory:"))
     config.location = Time::Location::UTC
     reset_kemal
-    @app = Zipfelkasse::App.new(config, @store)
+    @app = App.new(config, @store)
     @handler = HTTP::Server.build_middleware(@app.handlers)
   end
 

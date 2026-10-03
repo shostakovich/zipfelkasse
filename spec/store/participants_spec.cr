@@ -3,24 +3,43 @@ require "../spec_helper"
 describe "Store participants" do
   use_store
 
-  it "manages participants" do
-    anna = store.create_participant(nil, "  Anna  ")
-    ben = store.create_participant(nil, "Ben")
-    expect_invalid("„anna“ gibt es schon.") { store.create_participant(nil, "anna") }
+  it "creates a participant with a normalized name" do
+    id = store.create_participant(nil, "  Anna  ")
+
+    participant = store.get_participant(id)
+    {participant.name, participant.archived?}.should eq({"Anna", false})
+    participant.created_at.should_not be_nil
+  end
+
+  it "refuses an empty name and a name that exists, regardless of its case" do
+    store.create_participant(nil, "Anna")
+
     expect_invalid("Bitte einen Namen für die Person angeben.") { store.create_participant(nil, "   ") }
-    p = store.get_participant(anna)
-    p.name.should eq "Anna"
-    p.archived?.should be_false
-    p.created_at.should_not be_nil
+    expect_invalid("„anna“ gibt es schon.") { store.create_participant(nil, "anna") }
+  end
+
+  it "renames a participant, but not to the name of another" do
+    store.create_participant(nil, "Anna")
+    ben = store.create_participant(nil, "Ben")
 
     store.rename_participant(nil, ben, "Benedikt")
+    store.get_participant(ben).name.should eq "Benedikt"
     expect_invalid("„ANNA“ gibt es schon.") { store.rename_participant(nil, ben, "ANNA") }
+  end
+
+  it "lists archived participants only on request and restores them" do
+    store.create_participant(nil, "Anna")
+    ben = store.create_participant(nil, "Ben")
     store.set_participant_archived(nil, ben, true)
+
     store.list_participants.size.should eq 1
-    all = store.list_participants(true)
-    all.size.should eq 2
-    all[1].archived?.should be_true
+    store.list_participants(true).map(&.archived?).should eq [false, true]
+
     store.set_participant_archived(nil, ben, false)
+    store.list_participants.size.should eq 2
+  end
+
+  it "does not know a participant that was never created" do
     expect_raises(Store::NotFound) { store.get_participant(999_i64) }
     expect_raises(Store::NotFound) { store.rename_participant(nil, 999_i64, "X") }
   end

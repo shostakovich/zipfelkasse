@@ -287,7 +287,7 @@ describe Recurring::Service do
       starts = [] of Time::Instant
       household.fx.on_call = -> { starts << Time.instant; sleep 150.milliseconds }
       household.fx.failure = Exception.new("ECB not reachable")
-      stopper = Zipfelkasse::Stopper.new
+      stopper = Stopper.new
       stopped = Channel(Nil).new
       spawn do
         service.run(stopper, every: 200.milliseconds)
