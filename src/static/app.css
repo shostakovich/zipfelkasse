@@ -9,7 +9,11 @@
 /* --- Base ----------------------------------------------------------------- */
 
 html { -webkit-tap-highlight-color: transparent; }
-body { min-height: 100dvh; overflow-x: hidden; }
+body { min-height: 100dvh; overflow-x: hidden; font-size: .875rem; }
+/* iOS zooms into fields below 16px. */
+@media (pointer: coarse) {
+  .form-control, .form-select { font-size: 1rem; }
+}
 
 .icon {
   width: 1rem; height: 1rem; flex: none;
