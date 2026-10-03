@@ -120,6 +120,9 @@ func serve() error {
 		return fmt.Errorf("database %s: %w", cfg.DBPath, err)
 	}
 	defer st.Close()
+	if cfg.Now != nil {
+		st.SetClock(cfg.Now)
+	}
 	a, err := newApp(cfg, st, log)
 	if err != nil {
 		return err

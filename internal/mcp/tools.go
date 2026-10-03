@@ -157,7 +157,7 @@ func (s *server) addTool(annotations map[string]any, name, title, desc string, s
 }
 
 func newServer(d web.Deps) *server {
-	s := &server{d: d, log: newLogger(d), tools: map[string]tool{}, sqlSem: make(chan struct{}, 2), now: time.Now}
+	s := &server{d: d, log: newLogger(d), tools: map[string]tool{}, sqlSem: make(chan struct{}, 2), now: d.Config.Clock()}
 	readOnly := map[string]any{"readOnlyHint": true, "destructiveHint": false, "idempotentHint": true, "openWorldHint": false}
 	add := func(name, title, desc string, schema map[string]any, run func(context.Context, json.RawMessage) (toolResult, error)) {
 		s.addTool(readOnly, name, title, desc, schema, run)

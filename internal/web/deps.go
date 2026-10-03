@@ -42,7 +42,7 @@ func (d Deps) Today() time.Time {
 	if loc == nil {
 		loc = time.Local
 	}
-	return domain.Today(loc)
+	return domain.DateOf(d.Config.Clock()().In(loc))
 }
 
 // ServerError logs err and renders the error page with status 500. The path

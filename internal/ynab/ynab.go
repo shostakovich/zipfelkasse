@@ -76,11 +76,17 @@ func New(d web.Deps) (*Service, error) {
 		d: d, pages: pages,
 		http:     &http.Client{Timeout: httpTimeout},
 		baseURL:  DefaultBaseURL,
-		now:      time.Now,
+		now:      d.Config.Clock(),
 		wake:     make(chan struct{}, 1),
 		debounce: defaultDebounce, startDelay: defaultStartDelay,
 		cache:  map[string]cacheEntry{},
 		bgBusy: map[int64]bool{},
+	}
+	if d.Config.YNABBaseURL != "" {
+		s.baseURL = d.Config.YNABBaseURL
+	}
+	if d.Config.YNABDelay > 0 {
+		s.debounce, s.startDelay = d.Config.YNABDelay, d.Config.YNABDelay
 	}
 	s.bgCtx, s.bgCancel = context.WithCancel(context.Background())
 	d.Store.OnExpenseChange(func(c store.ExpenseChange) { s.Trigger(c.ExpenseID) })

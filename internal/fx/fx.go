@@ -69,9 +69,12 @@ func New(d web.Deps) (*Service, error) {
 		pages:   pages,
 		client:  &http.Client{Timeout: 60 * time.Second},
 		baseURL: defaultBaseURL,
-		now:     time.Now,
+		now:     d.Config.Clock(),
 		berlin:  berlin,
 		loads:   map[string]*load{},
+	}
+	if d.Config.ECBBaseURL != "" {
+		s.baseURL = d.Config.ECBBaseURL
 	}
 	s.bgCtx, s.bgCancel = context.WithCancel(context.Background())
 	return s, nil

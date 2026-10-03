@@ -18,6 +18,21 @@ type Config struct {
 	MCPAllowedCIDRs []netip.Prefix // MCP_ALLOWED_CIDRS, default 160.79.104.0/21
 	TrustedProxies  []netip.Prefix // TRUSTED_PROXIES (IPs or CIDRs), default empty
 	Location        *time.Location // from TZ (Go reads TZ itself), default UTC
+
+	// Test-only overrides for the black-box E2E suite (e2e/). Never set them
+	// in production.
+	Now         func() time.Time // ZIPFELKASSE_TEST_NOW (RFC 3339): frozen clock; nil = time.Now
+	ECBBaseURL  string           // ZIPFELKASSE_TEST_ECB_URL: replaces https://www.ecb.europa.eu/stats/eurofxref/
+	YNABBaseURL string           // ZIPFELKASSE_TEST_YNAB_URL: replaces https://api.ynab.com/v1
+	YNABDelay   time.Duration    // ZIPFELKASSE_TEST_YNAB_DELAY: start delay and debounce of the YNAB sync
+}
+
+// Clock returns the clock to use: the frozen test clock or time.Now.
+func (c Config) Clock() func() time.Time {
+	if c.Now != nil {
+		return c.Now
+	}
+	return time.Now
 }
 
 // DefaultMCPAllowedCIDRs is Anthropic's address range.
@@ -44,7 +59,31 @@ func FromEnv(getenv func(string) string) (Config, error) {
 			return c, fmt.Errorf("TZ: %w", err)
 		}
 	}
+	if err := c.testOverrides(getenv); err != nil {
+		return c, err
+	}
 	return c, nil
+}
+
+// testOverrides reads the ZIPFELKASSE_TEST_* variables of the E2E suite.
+func (c *Config) testOverrides(getenv func(string) string) error {
+	if v := strings.TrimSpace(getenv("ZIPFELKASSE_TEST_NOW")); v != "" {
+		t, err := time.Parse(time.RFC3339, v)
+		if err != nil {
+			return fmt.Errorf("ZIPFELKASSE_TEST_NOW: %w", err)
+		}
+		c.Now = func() time.Time { return t }
+	}
+	c.ECBBaseURL = strings.TrimSpace(getenv("ZIPFELKASSE_TEST_ECB_URL"))
+	c.YNABBaseURL = strings.TrimSpace(getenv("ZIPFELKASSE_TEST_YNAB_URL"))
+	if v := strings.TrimSpace(getenv("ZIPFELKASSE_TEST_YNAB_DELAY")); v != "" {
+		d, err := time.ParseDuration(v)
+		if err != nil {
+			return fmt.Errorf("ZIPFELKASSE_TEST_YNAB_DELAY: %w", err)
+		}
+		c.YNABDelay = d
+	}
+	return nil
 }
 
 // ParsePrefixes parses a comma- or whitespace-separated list of CIDRs or

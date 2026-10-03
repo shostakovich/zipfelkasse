@@ -3,7 +3,37 @@ package config
 import (
 	"net/netip"
 	"testing"
+	"time"
 )
+
+func TestFromEnvTestOverrides(t *testing.T) {
+	c, err := FromEnv(env(map[string]string{
+		"ZIPFELKASSE_TEST_NOW":        "2026-10-03T10:00:00Z",
+		"ZIPFELKASSE_TEST_ECB_URL":    "http://127.0.0.1:9/ecb/",
+		"ZIPFELKASSE_TEST_YNAB_URL":   "http://127.0.0.1:9/v1",
+		"ZIPFELKASSE_TEST_YNAB_DELAY": "200ms",
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := c.Clock()(); !got.Equal(time.Date(2026, 10, 3, 10, 0, 0, 0, time.UTC)) {
+		t.Errorf("Clock() = %v", got)
+	}
+	if c.ECBBaseURL != "http://127.0.0.1:9/ecb/" || c.YNABBaseURL != "http://127.0.0.1:9/v1" || c.YNABDelay != 200*time.Millisecond {
+		t.Errorf("Config = %+v", c)
+	}
+	if c, _ := FromEnv(env(nil)); c.Now != nil || c.Clock() == nil {
+		t.Errorf("default clock not time.Now")
+	}
+	for _, m := range []map[string]string{
+		{"ZIPFELKASSE_TEST_NOW": "gestern"},
+		{"ZIPFELKASSE_TEST_YNAB_DELAY": "kurz"},
+	} {
+		if _, err := FromEnv(env(m)); err == nil {
+			t.Errorf("FromEnv(%v) returned no error", m)
+		}
+	}
+}
 
 func env(m map[string]string) func(string) string {
 	return func(k string) string { return m[k] }

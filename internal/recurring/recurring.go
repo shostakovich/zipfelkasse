@@ -44,7 +44,7 @@ func New(d web.Deps) (*Service, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Service{d: d, pages: pages, now: time.Now}, nil
+	return &Service{d: d, pages: pages, now: d.Config.Clock()}, nil
 }
 
 // today returns today's date in the configured time zone.

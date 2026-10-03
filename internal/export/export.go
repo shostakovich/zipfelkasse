@@ -36,7 +36,7 @@ func Register(mux *http.ServeMux, d web.Deps) error {
 	if err != nil {
 		return err
 	}
-	h := handlers{d: d, pages: pages, now: time.Now}
+	h := handlers{d: d, pages: pages, now: d.Config.Clock()}
 	mux.HandleFunc("GET /export", h.page)
 	mux.HandleFunc("GET /export/ausgaben.csv", h.expensesCSV)
 	mux.HandleFunc("GET /export/ausgaben.json", h.expensesJSON)
