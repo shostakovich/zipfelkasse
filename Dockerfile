@@ -2,18 +2,19 @@
 
 FROM crystallang/crystal:1.21.1-alpine AS build
 RUN apk add --no-cache sqlite-static sqlite-dev ca-certificates tzdata
+# SQLite writes temporary files (sorting, VACUUM INTO) to /tmp, which scratch lacks.
+RUN mkdir -p /out/data /out/tmp && chmod 1777 /out/tmp
 WORKDIR /src
 COPY shard.yml shard.lock ./
 RUN shards install --production
-COPY . .
-RUN mkdir -p /out/data /out/tmp && chmod 1777 /out/tmp \
- && crystal build --release --static --no-debug -o /out/zipfelkasse src/zipfelkasse.cr
+COPY src ./src
+RUN shards build --release --static --no-debug
 
 FROM scratch
 # The static OpenSSL looks for its CA bundle here.
 COPY --from=build /etc/ssl/certs/ca-certificates.crt /etc/ssl/cert.pem
 COPY --from=build /usr/share/zoneinfo /usr/share/zoneinfo
-COPY --from=build /out/zipfelkasse /zipfelkasse
+COPY --from=build /src/bin/zipfelkasse /zipfelkasse
 COPY --from=build /out/tmp /tmp
 COPY --from=build --chown=65532:65532 /out/data /data
 ENV ZIPFELKASSE_ADDR=:8080 \
