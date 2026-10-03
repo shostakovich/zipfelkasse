@@ -74,11 +74,14 @@ module Zipfelkasse::MCP
       conn.exec("PRAGMA query_only = ON")
     end
 
-    # The newline ends a trailing "--" comment of the query.
+    # The newline ends a trailing "--" comment of the query, but "/*" can still comment out the LIMIT.
     def self.select_rows(conn : SQLite3::Connection, body : String) : Result
       conn.query("SELECT * FROM (\n#{body}\n) LIMIT #{MAX_ROWS + 1}") do |rs|
         rows = [] of Array(Value)
-        rs.each { rows << Array(Value).new(rs.column_count) { cell(rs.read) } }
+        rs.each do
+          rows << Array(Value).new(rs.column_count) { cell(rs.read) }
+          break if rows.size > MAX_ROWS
+        end
         Result.new(rs.column_names, rows.first(MAX_ROWS), rows.size > MAX_ROWS)
       end
     end

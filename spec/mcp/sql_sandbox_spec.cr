@@ -27,6 +27,13 @@ describe MCP::SQLSandbox do
       end
     end
 
+    it "stops reading after the row limit, even when the query comments out the wrapper's LIMIT" do
+      query = "WITH RECURSIVE n(x) AS (SELECT 1 UNION ALL SELECT x + 1 FROM n) SELECT x FROM n) LIMIT 100000000 /*"
+      result = MCP::SQLSandbox.new(store.path).query(query)
+
+      {result.rows.size, result.rows.last, result.truncated}.should eq({MCP::SQLSandbox::MAX_ROWS, [500_i64], true})
+    end
+
     it "refuses a NUL character" do
       expect_invalid("The query contains a NUL character.") { MCP::SQLSandbox.new(store.path).query("SELECT 1\0; DROP TABLE expenses") }
     end
