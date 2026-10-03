@@ -1,0 +1,37 @@
+<div class="stack">
+  <section class="card">
+    <div class="card-header">
+      <h1 class="card-title">Wer bist du?</h1>
+      <p class="card-description">Wähle dich aus. Die App merkt sich das auf diesem Gerät.</p>
+    </div>
+    <div class="card-content">
+      <%- if !participants.empty? %>
+      <form method="post" action="/wer" class="stack-sm">
+        <input type="hidden" name="zurueck" value="<%= return_to %>">
+        <%- participants.each do |p| %>
+        <button class="btn btn-outline btn-block btn-lg" type="submit" name="id" value="<%= p.id %>"
+          <%- if me.try(&.id) == p.id %> aria-current="true"<% end %>><%= p.name %></button>
+        <%- end %>
+      </form>
+      <%- else %>
+      <p class="muted">Noch niemand da. Leg dich unten als erste Person an.</p>
+      <%- end %>
+    </div>
+  </section>
+
+  <section class="card">
+    <div class="card-header">
+      <h2 class="card-title">Neue Person</h2>
+    </div>
+    <div class="card-content">
+      <form method="post" action="/wer/neu" class="form">
+        <input type="hidden" name="zurueck" value="<%= return_to %>">
+        <div class="field">
+          <label for="name">Name</label>
+          <input id="name" name="name" value="<%= name %>" required maxlength="60" autocomplete="given-name">
+        </div>
+        <button class="btn btn-primary btn-block" type="submit">Anlegen und auswählen</button>
+      </form>
+    </div>
+  </section>
+</div>

@@ -1,7 +1,5 @@
-.git
-.claude
-data
-zipfelkasse
-*.db
-*.db-shm
-*.db-wal
+*
+!shard.yml
+!shard.lock
+!src
+**/.DS_Store

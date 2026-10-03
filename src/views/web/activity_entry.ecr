@@ -1,0 +1,28 @@
+<%- if link %>
+<a class="activity-item" href="/ausgaben/<%= a.expense_id %>">
+<%- else %>
+<div class="activity-item">
+<%- end %>
+  <div class="activity-main">
+    <div>
+      <%- if a.verb -%>
+      <strong><%= a.actor %></strong> hat <em>„<%= a.details.title %>“</em> <%= a.verb %><% if a.show_amount %> <span class="amount muted">(<%= eur a.amount_cents %>)</span><% end %>.
+      <%- else -%>
+      <strong><%= a.actor %></strong>: <%= a.details.text || a.action.key %>
+      <%- end -%>
+    </div>
+    <%- unless a.details.changes.empty? %>
+    <ul class="changes">
+      <%- a.details.changes.each do |c| %>
+      <li><%= c.field %>: <del><%= c.old.empty? ? "–" : c.old %></del> → <ins><%= c.new.empty? ? "–" : c.new %></ins></li>
+      <%- end %>
+    </ul>
+    <%- end %>
+    <div class="activity-time"><time datetime="<%= a.at.to_rfc3339 %>"><%= date_time a.at %></time></div>
+  </div>
+<%- if link %>
+  <span class="expense-chevron"><%= icon "chevron-right" %></span>
+</a>
+<%- else %>
+</div>
+<%- end %>

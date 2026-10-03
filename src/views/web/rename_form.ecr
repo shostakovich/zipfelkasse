@@ -1,0 +1,5 @@
+<form class="inline-form" method="post" action="<%= action %>/<%= row.id %>">
+            <label class="sr-only" for="name-<%= row.id %>">Name</label>
+            <input id="name-<%= row.id %>" name="name" value="<%= row.name %>" required maxlength="60">
+            <button class="btn btn-outline btn-icon" type="submit" title="Umbenennen" aria-label="<%= row.name %> umbenennen"><%= icon "save" %></button>
+          </form>

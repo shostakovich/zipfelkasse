@@ -10,19 +10,44 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
+
 env:
   IMAGE: ghcr.io/${{ github.repository }}
 
 jobs:
   test:
+    name: ${{ matrix.suite }}
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - suite: unit
+            command: crystal tool format --check && crystal spec
+          - suite: e2e
+            command: shards build -Dtest_hooks && E2E_BIN=bin/zipfelkasse crystal spec e2e/
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-go@v7
+      - uses: actions/cache@v4
         with:
-          go-version-file: go.mod
-      - run: go vet ./...
-      - run: go test ./...
+          path: lib
+          key: shards-${{ hashFiles('shard.lock') }}
+      - uses: actions/cache@v4
+        with:
+          path: .crystal
+          key: crystal-${{ matrix.suite }}-${{ hashFiles('shard.lock') }}
+      # The Alpine image links the same SQLite as the release build (Ubuntu's
+      # is too old for the week statistics).
+      - name: Run ${{ matrix.suite }}
+        run: |
+          docker run --rm -v "$PWD:/src" -w /src -e CRYSTAL_CACHE_DIR=/src/.crystal crystallang/crystal:1.21.1-alpine sh -euc '
+            apk add --no-cache sqlite-dev tzdata
+            shards install --frozen
+            ${{ matrix.command }}
+          '
 
   docker:
     needs: test
@@ -63,6 +88,8 @@ jobs:
         id: meta
         with:
           images: ${{ env.IMAGE }}
+          flavor: |
+            latest=false
           tags: |
             type=raw,value=latest,enable={{is_default_branch}}
             type=semver,pattern={{version}}

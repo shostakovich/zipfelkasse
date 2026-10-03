@@ -1,7 +1,7 @@
 # Zipfelkasse
 
-Zipfelkasse is a port of [Spliit](https://github.com/spliit-app/spliit): a slimmed-down, single-group
-rewrite in Go + SQLite for sharing expenses within a household. **The user interface is German.**
+Zipfelkasse shares expenses within a household: a slimmed-down, single-group app in Crystal + SQLite,
+inspired by [Spliit](https://github.com/spliit-app/spliit). **The user interface is German.**
 
 ## Before you use this
 
@@ -27,11 +27,12 @@ One group, no login ("Wer bist du?" – who are you?), SQLite, a single binary.
 
 ## Quick start
 
-Locally (Go 1.26):
+Locally (Crystal 1.21, SQLite 3.46 or newer):
 
 ```sh
-go run .                 # = go run . serve, listens on :8080, DB in ./data/zipfelkasse.db
-go test ./... && go vet ./...
+shards install
+shards build                     # bin/zipfelkasse
+bin/zipfelkasse                  # = serve, listens on :8080, DB in ./data/zipfelkasse.db
 ```
 
 With Docker:
@@ -52,6 +53,22 @@ The image is based on `scratch` and runs as user `65532`. If you use a bind moun
 directory must be writable for that user (`chown 65532:65532 ./data`). The container health check runs
 `zipfelkasse healthcheck` (checks `GET /healthz`).
 
+## Tests
+
+```sh
+crystal spec                                                          # unit specs
+shards build -Dtest_hooks && E2E_BIN=bin/zipfelkasse crystal spec e2e/ # black-box suite
+```
+
+The E2E suite needs a binary built with `-Dtest_hooks` (it reads the `ZIPFELKASSE_TEST_*` variables only
+then) and the libxml2 development files, because it parses the HTML answers with Crystal's `XML` module
+(already present on macOS; Debian/Ubuntu: `libxml2-dev`, Alpine: `libxml2-dev`). How it works:
+[e2e/README.md](e2e/README.md).
+
+`.claude/launch.json` (for the preview in Claude Code) serves a copy of real data from `data/prod/` on
+port 8090. It builds with `-Dtest_hooks` only to point YNAB at a dead address, so that a copy of real data
+never talks to the real YNAB.
+
 ## Environment variables
 
 | Variable | Default | Meaning |
@@ -68,3 +85,7 @@ directory must be writable for that user (`chown 65532:65532 ./data`). The conta
 
 - `zipfelkasse serve` (default) – starts the server
 - `zipfelkasse healthcheck` – exit code 0 if `GET /healthz` on `ZIPFELKASSE_ADDR` answers with 200
+
+## License
+
+Unlicense (public domain), see [LICENSE](LICENSE). Icons come from Lucide; see [THIRD_PARTY.md](THIRD_PARTY.md).

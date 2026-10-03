@@ -1,0 +1,46 @@
+<div class="stack">
+  <section class="card">
+    <div class="card-header">
+      <h1 class="card-title">Kategorien</h1>
+      <p class="card-description">Umbenennen, sortieren oder archivieren. Archivierte Kategorien stehen bei neuen Ausgaben nicht mehr zur Wahl.</p>
+    </div>
+    <div class="card-content">
+      <ul class="rows">
+        <%- active.each do |row| %>
+        <li id="kategorie-<%= row.id %>">
+          <span class="muted"><%= icon category_icon(row.name) %></span>
+          <%= RenameForm.new("/einstellungen/kategorien", row) %>
+          <div class="row-actions">
+            <form method="post" action="/einstellungen/kategorien/<%= row.id %>/hoch">
+              <button class="btn btn-ghost btn-icon" type="submit" title="Nach oben" aria-label="<%= row.name %> nach oben"<% if row.first %> disabled<% end %>><%= icon "chevron-up" %></button>
+            </form>
+            <form method="post" action="/einstellungen/kategorien/<%= row.id %>/runter">
+              <button class="btn btn-ghost btn-icon" type="submit" title="Nach unten" aria-label="<%= row.name %> nach unten"<% if row.last %> disabled<% end %>><%= icon "chevron-down" %></button>
+            </form>
+            <form method="post" action="/einstellungen/kategorien/<%= row.id %>/archivieren">
+              <button class="btn btn-ghost btn-icon" type="submit" title="Archivieren" aria-label="<%= row.name %> archivieren"><%= icon "archive" %></button>
+            </form>
+          </div>
+          <p class="row-meta"><%= expense_count row.expenses %></p>
+        </li>
+        <%- end %>
+      </ul>
+    </div>
+  </section>
+
+  <section class="card">
+    <div class="card-header">
+      <h2 class="card-title">Kategorie hinzufügen</h2>
+    </div>
+    <div class="card-content">
+      <form method="post" action="/einstellungen/kategorien" class="inline-form">
+        <label class="sr-only" for="neu-name">Name</label>
+        <input id="neu-name" name="name" value="<%= name %>" required maxlength="60" placeholder="Name" autocomplete="off">
+        <button class="btn btn-primary" type="submit"><%= icon "plus" %> Hinzufügen</button>
+      </form>
+    </div>
+  </section>
+
+  <%= ArchivedRows.new("/einstellungen/kategorien", "kategorie", archived) %>
+  <p class="small"><a href="/einstellungen">← Zurück zu den Einstellungen</a></p>
+</div>

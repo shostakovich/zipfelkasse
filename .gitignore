@@ -1,5 +1,10 @@
 /data/
-/zipfelkasse
+/.crystal/
+/lib/
+/bin/
+/.shards/
 *.db-shm
 *.db-wal
-.claude/worktrees/
+.DS_Store
+/.claude/*
+!/.claude/launch.json
