@@ -156,9 +156,9 @@ module Zipfelkasse::MCP
       JSON::Any.new({"supported" => JSON::Any.new(ALL_VERSIONS.map { |v| JSON::Any.new(v) }), "requested" => JSON::Any.new(version)}))
   end
 
-  # The first value of a header.
+  # The first value of a header, without the whitespace around it.
   def self.header(headers : HTTP::Headers, name : String) : String
-    headers.get?(name).try(&.first?) || ""
+    headers.get?(name).try(&.first?).try(&.strip) || ""
   end
 
   # The mandatory headers of modern requests against the body; the error

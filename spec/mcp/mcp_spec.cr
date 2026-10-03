@@ -202,6 +202,16 @@ describe "MCP protocol" do
     end
   end
 
+  it "trims the whitespace around header values" do
+    with_env do |e|
+      e.post(Env.body("tools/list"), {"MCP-Protocol-Version" => " 2025-06-18 "}).result["tools"].as_a.size.should eq 9
+      r = e.modern("tools/call", %({"name":"balances"}), {"Mcp-Name" => "balances ", "Mcp-Method" => "\ttools/call "})
+      r.result["isError"].should eq false
+      e.send("POST", MCPSpec::PATH, Env.body("ping"), {"Content-Type" => "application/json "}).status.should eq 200
+      e.send("POST", MCPSpec::PATH, Env.body("ping"), {"Origin" => " "}).status.should eq 200
+    end
+  end
+
   it "rejects malformed messages" do
     with_env do |e|
       [
