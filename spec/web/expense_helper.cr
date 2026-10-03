@@ -11,7 +11,7 @@ class FakeFX
 
   def rate(currency : String, date : Time) : Zipfelkasse::Domain::FXRate
     r = @rates[currency]? || raise "no rate"
-    Zipfelkasse::Domain::FXRate.new(currency, date, r, Zipfelkasse::Domain::FX_SOURCE_ECB)
+    Zipfelkasse::Domain::FXRate.new(currency, date, r, Zipfelkasse::Domain::FXSource::Ecb)
   end
 end
 

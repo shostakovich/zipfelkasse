@@ -12,6 +12,8 @@ require "wait_group"
 #   the daily file for today/yesterday, the 90-day file for recent dates,
 #   otherwise the complete history once (eurofxref-hist.zip).
 module Zipfelkasse::FX
+  Log = ::Log.for(self)
+
   # How far an ECB rate may lie before the requested date (weekends, holidays).
   LOOKBACK_DAYS = 10
 
@@ -60,7 +62,7 @@ module Zipfelkasse::FX
     def rate(currency : String, date : Time) : Domain::FXRate
       cur = currency.strip.upcase
       date = Domain.date_of(date)
-      return Domain::FXRate.new("EUR", date, 1.0, Domain::FX_SOURCE_FIXED) if cur == "EUR"
+      return Domain::FXRate.new("EUR", date, 1.0, Domain::FXSource::Fixed) if cur == "EUR"
       unless Domain.valid_currency_code?(cur)
         raise Domain::ValidationError.new("Bitte eine Währung angeben.") if cur.empty?
         raise Domain::ValidationError.new("Ungültige Währung „#{currency}“.")
@@ -68,9 +70,8 @@ module Zipfelkasse::FX
       today = self.today
       date = today if date > today # future: latest rate
 
-      begin
-        return @d.store.lookup_fx_rate(cur, Domain::FX_SOURCE_MANUAL, date)
-      rescue Store::NotFound
+      if manual = @d.store.lookup_fx_rate?(cur, Domain::FXSource::Manual, date)
+        return manual
       end
 
       window = date.shift(days: -LOOKBACK_DAYS)
@@ -101,9 +102,7 @@ module Zipfelkasse::FX
     end
 
     private def lookup_ecb(cur : String, date : Time, window : Time) : Domain::FXRate?
-      @d.store.lookup_fx_rate(cur, Domain::FX_SOURCE_ECB, date, window)
-    rescue Store::NotFound
-      nil
+      @d.store.lookup_fx_rate?(cur, Domain::FXSource::Ecb, date, window)
     end
 
     private def hist_covers?(date : Time) : Bool
@@ -164,7 +163,7 @@ module Zipfelkasse::FX
     private def refresh_logged(stopper : Stopper) : Time?
       refresh
     rescue ex
-      @d.log.error("refresh ECB rates", err: ex) unless stopper.stopped?
+      Log.error(exception: ex) { "refresh ECB rates" } unless stopper.stopped?
       nil
     end
 

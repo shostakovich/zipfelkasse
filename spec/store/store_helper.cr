@@ -14,7 +14,7 @@ def with_store(&)
 end
 
 def must_participant(s : Zipfelkasse::Store, name : String) : Int64
-  s.create_participant(0_i64, name)
+  s.create_participant(nil, name)
 end
 
 def date(s : String) : Time

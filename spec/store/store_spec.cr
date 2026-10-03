@@ -4,10 +4,6 @@ require "./expense_fixture"
 private alias Store = Zipfelkasse::Store
 private alias Domain = Zipfelkasse::Domain
 
-private def latest_version : Int32
-  (Store::MIGRATION_FILES.map(&.[0]) + Store::DATA_MIGRATIONS.keys).max
-end
-
 private def with_temp_dir(&)
   dir = File.tempname("zipfelkasse-spec")
   Dir.mkdir_p(dir)
@@ -28,7 +24,7 @@ end
 
 private def field_changes(s : Store, expense_id : Int64) : Hash(String, Store::FieldChange)
   acts = s.list_activity(Store::ActivityFilter.new(expense_id: expense_id, limit: 1))
-  return {} of String => Store::FieldChange unless acts.size == 1 && acts[0].action == Store::ACTION_EXPENSE_UPDATED
+  return {} of String => Store::FieldChange unless acts.size == 1 && acts[0].action == Store::Action::ExpenseUpdated
   acts[0].details.changes.to_h { |c| {c.field, c} }
 end
 
@@ -47,16 +43,33 @@ end
 describe Zipfelkasse::Store do
   it "migrates and seeds a new database" do
     with_store do |s|
-      v = s.schema_version
-      v.should eq latest_version
-      v.should be >= 4
+      s.schema_version.should eq Store::LATEST_VERSION
       s.list_activity.should be_empty
       cats = s.list_categories
       cats.size.should eq 10
       cats.first.name.should eq "Lebensmittel"
       cats.last.name.should eq "Sonstiges"
       s.group_name.should eq "Zipfelkasse"
-      s.get_setting(Store::SETTING_DEFAULT_CURRENCY).should eq "EUR"
+    end
+  end
+
+  it "rejects schema versions it cannot handle" do
+    with_store do |s|
+      [3, Store::LATEST_VERSION + 1].each do |version|
+        s.db.exec("PRAGMA user_version = #{version}")
+        expect_raises(Store::Error, /schema version #{version}/) { s.migrate }
+      end
+    end
+  end
+
+  it "applies migrations above the base version once" do
+    with_store do |s|
+      migrations = [{6, "ALTER TABLE settings ADD COLUMN note TEXT"}, {7, "UPDATE settings SET value = 'Neu'"}]
+      2.times do
+        s.migrate(migrations)
+        s.schema_version.should eq 7
+      end
+      s.group_name.should eq "Neu"
     end
   end
 
@@ -79,35 +92,35 @@ describe Zipfelkasse::Store do
     with_store do |s|
       anna = must_participant(s, "  Anna  ")
       ben = must_participant(s, "Ben")
-      store_validation_error { s.create_participant(0_i64, "anna") }
-      store_validation_error { s.create_participant(0_i64, "   ") }
+      store_validation_error { s.create_participant(nil, "anna") }
+      store_validation_error { s.create_participant(nil, "   ") }
       p = s.get_participant(anna)
       p.name.should eq "Anna"
       p.archived?.should be_false
       p.created_at.should_not be_nil
 
-      s.rename_participant(0_i64, ben, "Benedikt")
-      store_validation_error { s.rename_participant(0_i64, ben, "ANNA") }
-      s.set_participant_archived(0_i64, ben, true)
+      s.rename_participant(nil, ben, "Benedikt")
+      store_validation_error { s.rename_participant(nil, ben, "ANNA") }
+      s.set_participant_archived(nil, ben, true)
       s.list_participants.size.should eq 1
       all = s.list_participants(true)
       all.size.should eq 2
       all[1].archived?.should be_true
-      s.set_participant_archived(0_i64, ben, false)
+      s.set_participant_archived(nil, ben, false)
       expect_raises(Store::NotFound) { s.get_participant(999_i64) }
-      expect_raises(Store::NotFound) { s.rename_participant(0_i64, 999_i64, "X") }
+      expect_raises(Store::NotFound) { s.rename_participant(nil, 999_i64, "X") }
     end
   end
 
   it "manages categories" do
     with_store do |s|
-      id = s.create_category(0_i64, "Haustiere")
+      id = s.create_category(nil, "Haustiere")
       cats = s.list_categories
       cats[-1].name.should eq "Sonstiges"
       cats[-2].id.should eq id
-      store_validation_error { s.create_category(0_i64, "lebensmittel") }
-      s.rename_category(0_i64, id, "Tiere")
-      s.set_category_archived(0_i64, id, true)
+      store_validation_error { s.create_category(nil, "lebensmittel") }
+      s.rename_category(nil, id, "Tiere")
+      s.set_category_archived(nil, id, true)
       c = s.get_category(id)
       c.name.should eq "Tiere"
       c.archived?.should be_true
@@ -140,12 +153,12 @@ describe Zipfelkasse::Store do
       {e.share_of(f.anna), e.share_of(f.ben), e.share_of(f.cleo)}.should eq({333, 334, 333})
       e.parts.size.should eq 3
       e.parts[0].weight.should eq 1
-      events.should eq [Store::ExpenseChange.new(id, Store::ACTION_EXPENSE_CREATED)]
+      events.should eq [Store::ExpenseChange.new(id, Store::Action::ExpenseCreated)]
 
       acts = f.s.list_activity(Store::ActivityFilter.new(expense_id: id))
       acts.size.should eq 1
       a = acts[0]
-      {a.action, a.actor_id, a.actor_name, a.expense_id}.should eq({Store::ACTION_EXPENSE_CREATED, f.anna, "Anna", id})
+      {a.action, a.actor_id, a.actor_name, a.expense_id}.should eq({Store::Action::ExpenseCreated, f.anna, "Anna", id})
       {a.details.title, a.details.amount_cents}.should eq({"Einkauf Rewe", 1000})
       expect_raises(Store::NotFound) { f.s.get_expense(999_i64) }
     end
@@ -165,7 +178,7 @@ describe Zipfelkasse::Store do
         "unknown person"   => ->(i : Store::ExpenseInput) { i.parts = i.parts + [Domain::Part.new(999)]; i },
         "unknown category" => ->(i : Store::ExpenseInput) { i.category_id = 999; i },
         "wrong percent"    => ->(i : Store::ExpenseInput) {
-          i.split_mode = Domain::SPLIT_PERCENT
+          i.split_mode = Domain::SplitMode::Percent
           i.parts = [Domain::Part.new(f.anna, 5000)]
           i
         },
@@ -203,13 +216,13 @@ describe Zipfelkasse::Store do
   it "archives a person only without a balance" do
     with_expense_fixture do |f|
       id = f.must_create(f.equal("Einkauf", 1000, "2026-08-01", f.anna, f.anna, f.ben))
-      store_validation_error { f.s.set_participant_archived(0_i64, f.ben, true) }
+      store_validation_error { f.s.set_participant_archived(nil, f.ben, true) }
         .should contain "Ben hat noch einen Saldo von -5,00 €"
       f.s.get_participant(f.ben).archived?.should be_false
-      f.s.set_participant_archived(0_i64, f.cleo, true)
-      expect_raises(Store::NotFound) { f.s.set_participant_archived(0_i64, 999_i64, true) }
+      f.s.set_participant_archived(nil, f.cleo, true)
+      expect_raises(Store::NotFound) { f.s.set_participant_archived(nil, 999_i64, true) }
       f.s.delete_expense(f.anna, id)
-      f.s.set_participant_archived(0_i64, f.ben, true)
+      f.s.set_participant_archived(nil, f.ben, true)
     end
   end
 
@@ -227,9 +240,9 @@ describe Zipfelkasse::Store do
   it "stores a foreign currency" do
     with_expense_fixture do |f|
       input = f.equal("Diner NYC", Domain.to_eur_cents(10000, "USD", 1.0823), "2026-08-01", f.ben, f.anna, f.ben)
-      input.original_currency, input.original_amount_minor, input.fx_rate, input.fx_source = "usd", 10000_i64, 1.0823, Domain::FX_SOURCE_ECB
+      input.original_currency, input.original_amount_minor, input.fx_rate, input.fx_source = "usd", 10000_i64, 1.0823, Domain::FXSource::Ecb
       e = f.s.get_expense(f.s.create_expense(f.ben, input))
-      {e.foreign?, e.original_currency, e.amount_cents, e.fx_rate, e.fx_source}.should eq({true, "USD", 9240, 1.0823, "ezb"})
+      {e.foreign?, e.original_currency, e.amount_cents, e.fx_rate, e.fx_source}.should eq({true, "USD", 9240, 1.0823, Domain::FXSource::Ecb})
     end
   end
 
@@ -242,7 +255,7 @@ describe Zipfelkasse::Store do
       e = f.s.get_expense(id)
       e.amount_cents.should eq 9240
       (e.share_of(f.anna) + e.share_of(f.ben)).should eq 9240
-      input = e.input
+      input = e.to_input
       input.amount_cents = 1
       f.s.update_expense(f.ben, id, input)
       f.s.get_expense(id).amount_cents.should eq 9240
@@ -256,7 +269,7 @@ describe Zipfelkasse::Store do
         input = f.equal("Taxi", 0, "2026-09-01", f.anna, f.anna, f.ben)
         # 10,00 USD at 0,999 = 10,01 €, split 5,00 USD : 5,00 USD.
         input.original_currency, input.original_amount_minor, input.fx_rate = "USD", 1000_i64, 0.999
-        input.split_mode = Domain::SPLIT_AMOUNT
+        input.split_mode = Domain::SplitMode::Amount
         input.parts = [Domain::Part.new(f.anna, 500), Domain::Part.new(f.ben, 500)]
         id = f.s.create_expense(f.anna, input)
         e = f.s.get_expense(id)
@@ -272,7 +285,7 @@ describe Zipfelkasse::Store do
     with_expense_fixture do |f|
       input = f.equal("Hotel", 0, "2026-08-01", f.anna, f.anna, f.ben, f.cleo)
       input.original_currency, input.original_amount_minor, input.fx_rate = "USD", 1000_i64, 1.1
-      input.split_mode = Domain::SPLIT_AMOUNT
+      input.split_mode = Domain::SplitMode::Amount
       input.parts = [Domain::Part.new(f.cleo, 334), Domain::Part.new(f.anna, 333), Domain::Part.new(f.ben, 333)]
       id = f.s.create_expense(f.anna, input)
       e = f.s.get_expense(id)
@@ -283,11 +296,11 @@ describe Zipfelkasse::Store do
 
       # The stored input round-trips: saving it unchanged logs nothing.
       acts = f.s.list_activity
-      f.s.update_expense(f.anna, id, e.input)
+      f.s.update_expense(f.anna, id, e.to_input)
       f.s.list_activity.size.should eq acts.size
 
       # A new rate: same weights, new euro shares.
-      input = e.input
+      input = e.to_input
       input.fx_rate = 1.25
       f.s.update_expense(f.anna, id, input)
       e = f.s.get_expense(id)
@@ -299,7 +312,7 @@ describe Zipfelkasse::Store do
       acts[0].details.changes.map { |c| "#{c.field}: #{c.old} → #{c.new}" }.join("\n").should contain "Anna 3,46 €"
       # If only the amounts in USD change, not the euro shares, the history
       # lists the amounts in USD.
-      Store.weight_summary(Domain::SPLIT_AMOUNT, "USD", [Domain::Share.new(f.anna, 433)], {f.anna => "Anna"})
+      Store.weight_summary(Domain::SplitMode::Amount, "USD", [Domain::Share.new(f.anna, 433)], {f.anna => "Anna"})
         .should eq "Anna 4,33 USD"
 
       # The amounts must add up to the amount in USD.
@@ -320,24 +333,24 @@ describe Zipfelkasse::Store do
 
       e = f.s.get_expense(id)
       # Saving unchanged: no log entry, no hook.
-      f.s.update_expense(f.ben, id, e.input)
+      f.s.update_expense(f.ben, id, e.to_input)
       events.should be_empty
 
-      input = e.input
+      input = e.to_input
       input.title = "Pizza & Wein"
       input.amount_cents = 4500
-      input.split_mode = Domain::SPLIT_SHARES
+      input.split_mode = Domain::SplitMode::Shares
       input.parts = [Domain::Part.new(f.anna, 2), Domain::Part.new(f.ben, 1)]
-      input.category_id = 0
+      input.category_id = nil
       f.s.update_expense(f.ben, id, input)
       e = f.s.get_expense(id)
       {e.title, e.amount_cents, e.share_of(f.anna), e.share_of(f.ben), e.category_id, e.category_name}
-        .should eq({"Pizza & Wein", 4500, 3000, 1500, 0, ""})
-      events.map(&.action).should eq [Store::ACTION_EXPENSE_UPDATED]
+        .should eq({"Pizza & Wein", 4500, 3000, 1500, nil, nil})
+      events.map(&.action).should eq [Store::Action::ExpenseUpdated]
 
       acts = f.s.list_activity(Store::ActivityFilter.new(expense_id: id))
       acts.size.should eq 2
-      {acts[0].action, acts[0].actor_name}.should eq({Store::ACTION_EXPENSE_UPDATED, "Ben"})
+      {acts[0].action, acts[0].actor_name}.should eq({Store::Action::ExpenseUpdated, "Ben"})
       fields = acts[0].details.changes.to_h { |c| {c.field, c} }
       {fields["Betrag"].old, fields["Betrag"].new}.should eq({"30,00 €", "45,00 €"})
       {fields["Kategorie"].old, fields["Kategorie"].new}.should eq({"Lebensmittel", "–"})
@@ -353,8 +366,8 @@ describe Zipfelkasse::Store do
   it "updates rate, rate source and weights" do
     with_expense_fixture do |f|
       input = f.equal("Diner", Domain.to_eur_cents(1000, "USD", 1.25), "2026-08-01", f.ben, f.anna, f.ben)
-      input.original_currency, input.original_amount_minor, input.fx_rate, input.fx_source = "USD", 1000_i64, 1.25, Domain::FX_SOURCE_ECB
-      input.split_mode = Domain::SPLIT_SHARES
+      input.original_currency, input.original_amount_minor, input.fx_rate, input.fx_source = "USD", 1000_i64, 1.25, Domain::FXSource::Ecb
+      input.split_mode = Domain::SplitMode::Shares
       input.parts = [Domain::Part.new(f.anna, 1), Domain::Part.new(f.ben, 1)]
       id = f.s.create_expense(f.ben, input)
 
@@ -364,9 +377,9 @@ describe Zipfelkasse::Store do
       c = field_changes(f.s, id)["Kurs"]
       {c.old, c.new}.should eq({"1 € = 1,25 USD (EZB)", "1 € = 1,2501 USD (EZB)"})
 
-      input.fx_source = Domain::FX_SOURCE_MANUAL
+      input.fx_source = Domain::FXSource::Manual
       f.s.update_expense(f.anna, id, input)
-      f.s.get_expense(id).fx_source.should eq Domain::FX_SOURCE_MANUAL
+      f.s.get_expense(id).fx_source.should eq Domain::FXSource::Manual
       field_changes(f.s, id)["Kurs"].new.should eq "1 € = 1,2501 USD (manuell)"
 
       input.parts = [Domain::Part.new(f.anna, 2), Domain::Part.new(f.ben, 2)]
@@ -387,12 +400,12 @@ describe Zipfelkasse::Store do
       expect_raises(Store::NotFound) { f.s.delete_expense(f.ben, id) }
       e = f.s.get_expense(id)
       e.deleted?.should be_true
-      expect_raises(Store::NotFound) { f.s.update_expense(f.ben, id, e.input) }
+      expect_raises(Store::NotFound) { f.s.update_expense(f.ben, id, e.to_input) }
       f.s.list_expenses.should be_empty
       f.s.balances.should be_empty
-      events.should eq [Store::ExpenseChange.new(id, Store::ACTION_EXPENSE_DELETED)]
+      events.should eq [Store::ExpenseChange.new(id, Store::Action::ExpenseDeleted)]
       a = f.s.list_activity(Store::ActivityFilter.new(limit: 1))[0]
-      {a.action, a.details.title}.should eq({Store::ACTION_EXPENSE_DELETED, "Bahn"})
+      {a.action, a.details.title}.should eq({Store::Action::ExpenseDeleted, "Bahn"})
     end
   end
 
@@ -401,7 +414,7 @@ describe Zipfelkasse::Store do
       a = f.must_create(f.equal("Rewe Einkauf", 1000, "2026-09-01", f.anna, f.anna, f.ben))
       b = f.must_create(f.equal("Kino 100%", 2000, "2026-09-15", f.ben, f.ben, f.cleo))
       input = f.equal("Tanken", 3000, "2026-10-01", f.cleo, f.cleo)
-      input.category_id = 0
+      input.category_id = nil
       input.notes = "Rewe-Tankstelle"
       c = f.must_create(input)
 
@@ -414,12 +427,15 @@ describe Zipfelkasse::Store do
         "person pays or is involved" => {Store::ExpenseFilter.new(participant_id: f.cleo), [c, b]},
         "date range"                 => {Store::ExpenseFilter.new(from: date("2026-09-01"), to: date("2026-09-15")), [b, a]},
         "limit/offset"               => {Store::ExpenseFilter.new(limit: 1, offset: 1), [b]},
+        "oldest first"               => {Store::ExpenseFilter.new(sort: Store::ExpenseSort::DateAsc), [a, b, c]},
+        "largest first"              => {Store::ExpenseFilter.new(sort: Store::ExpenseSort::AmountDesc), [c, b, a]},
+        "smallest first"             => {Store::ExpenseFilter.new(sort: Store::ExpenseSort::AmountAsc), [a, b, c]},
+        "amount range"               => {Store::ExpenseFilter.new(min_cents: 1500, max_cents: 2500), [b]},
       }.each do |name, (filter, want)|
         es = f.s.list_expenses(filter)
         {name, ids(es)}.should eq({name, want})
         es.each { |e| e.shares.should_not be_empty }
       end
-      expect_raises(ArgumentError, "unknown sort order \"nope\"") { f.s.list_expenses(Store::ExpenseFilter.new(sort: "nope")) }
     end
   end
 
@@ -434,110 +450,12 @@ describe Zipfelkasse::Store do
         e.share_of(want).should eq 151
         extra[want] += 1
 
-        input = e.input
+        input = e.to_input
         input.amount_cents = 501
         f.s.update_expense(f.anna, id, input)
         f.s.get_expense(id).share_of(want).should eq 251
       end
       extra.should eq({f.anna => 2, f.ben => 2})
-    end
-  end
-
-  # Migration 2 redistributes the leftover cents of existing expenses with the
-  # rotating rule, exactly once.
-  it "resplits shares in migration 2" do
-    with_temp_dir do |dir|
-      path = File.join(dir, "zipfelkasse.db")
-      f = ExpenseFixture.new(Store.open(path))
-      s = f.s
-      ids = Array.new(4) { f.must_create(f.equal("Kaffee", 301, "2026-09-01", f.anna, f.anna, f.ben)) }
-      fixed = f.equal("Fest", 301, "2026-09-01", f.anna, f.anna, f.ben)
-      fixed.split_mode = Domain::SPLIT_AMOUNT
-      fixed.parts = [Domain::Part.new(f.anna, 151), Domain::Part.new(f.ben, 150)]
-      fixed_id = f.must_create(fixed)
-      gone = f.must_create(f.equal("Gelöscht", 1000, "2026-09-01", f.anna, f.anna, f.ben, f.cleo))
-      s.delete_expense(f.anna, gone)
-      # Old state: extra cent to the smallest ID (for deleted expense 6 to
-      # Ben; under the new rule it belongs to index 6 mod 3 = Anna), schema
-      # version 1.
-      s.db.exec("UPDATE expense_shares SET amount_cents = 151 WHERE participant_id = 1 AND expense_id <= 4")
-      s.db.exec("UPDATE expense_shares SET amount_cents = 150 WHERE participant_id = 2 AND expense_id <= 4")
-      s.db.exec("UPDATE expense_shares SET amount_cents = CASE participant_id WHEN 2 THEN 334 ELSE 333 END WHERE expense_id = 6")
-      s.db.exec("PRAGMA user_version = 1")
-      before = s.list_activity.size
-      s.close
-
-      2.times do
-        s = Store.open(path)
-        s.schema_version.should eq latest_version
-        ids.each do |id|
-          s.get_expense(id).share_of([f.anna, f.ben][id % 2]).should eq 151
-        end
-        e = s.get_expense(fixed_id)
-        {e.share_of(f.anna), e.share_of(f.ben)}.should eq({151, 150})
-        e = s.get_expense(gone)
-        {e.share_of(f.anna), e.share_of(f.ben), e.share_of(f.cleo)}.should eq({334, 333, 333})
-        acts = s.list_activity
-        acts.size.should eq before + 1
-        {acts[0].action, acts[0].actor_id}.should eq({Store::ACTION_SHARES_RECALCULATED, 0})
-        acts[0].details.text.should contain "3 Ausgaben"
-        s.close
-      end
-    end
-  end
-
-  # Migration 4 converts the weights of "by amounts" in a foreign currency
-  # from euro cents to amounts in that currency (also in recurrence
-  # templates), keeping the euro shares, exactly once.
-  it "converts foreign amount weights in migration 4" do
-    with_temp_dir do |dir|
-      path = File.join(dir, "zipfelkasse.db")
-      f = ExpenseFixture.new(Store.open(path))
-      s = f.s
-      usd = ->(title : String, mode : Domain::SplitMode, ws : Array(Int64)) do
-        input = f.equal(title, 0, "2026-09-01", f.anna, f.anna, f.ben, f.cleo)
-        input.original_currency, input.original_amount_minor, input.fx_rate, input.fx_source = "USD", 1000_i64, 1.1, Domain::FX_SOURCE_ECB
-        input.split_mode = mode
-        input.parts = input.parts.map_with_index { |p, i| p.copy_with(weight: ws[i]? || 0_i64) }
-        input
-      end
-      hotel = f.must_create(usd.call("Hotel", Domain::SPLIT_AMOUNT, [333_i64, 333_i64, 334_i64]))
-      gone = f.must_create(usd.call("Gelöscht", Domain::SPLIT_AMOUNT, [500_i64, 250_i64, 250_i64]))
-      s.delete_expense(f.anna, gone)
-      equal = f.must_create(usd.call("Taxi", Domain::SPLIT_EQUAL, [] of Int64))
-      eur = f.equal("Fest", 301, "2026-09-01", f.anna, f.anna, f.ben)
-      eur.split_mode = Domain::SPLIT_AMOUNT
-      eur.parts = [Domain::Part.new(f.anna, 151), Domain::Part.new(f.ben, 150)]
-      eur_id = f.must_create(eur)
-      # Old state: the weights are the euro shares (cents); schema version 3.
-      s.db.exec("UPDATE expense_shares SET weight = amount_cents " \
-                "WHERE expense_id IN (SELECT id FROM expenses WHERE split_mode = 'amount')")
-      template = s.get_expense(hotel).input
-      template.date = nil
-      rule = insert_recurring(s, template.to_json, "2026-09-01", "2026-10-01")
-      old_shares = [hotel, gone, equal, eur_id].to_h { |id| {id, s.get_expense(id).shares} }
-      s.db.exec("PRAGMA user_version = 3")
-      before = s.list_activity.size
-      s.close
-
-      want = {hotel => [334_i64, 333_i64, 333_i64], gone => [500_i64, 250_i64, 250_i64], equal => [1_i64, 1_i64, 1_i64], eur_id => [151_i64, 150_i64]}
-      2.times do
-        s = Store.open(path)
-        s.schema_version.should eq latest_version
-        want.each do |id, w|
-          e = s.get_expense(id)
-          weights(e).should eq w
-          e.shares.should eq old_shares[id].map_with_index { |sh, i| sh.copy_with(weight: w[i]) }
-        end
-        t = Store::ExpenseInput.from_json(s.db.scalar("SELECT template_json FROM recurring WHERE id = ?", rule).as(String))
-        t.parts.map(&.weight).should eq [334, 333, 333]
-        t.amount_cents.should eq 909
-        acts = s.list_activity
-        acts.size.should eq before + 1
-        {acts[0].action, acts[0].actor_id}.should eq({Store::ACTION_WEIGHTS_CONVERTED, 0})
-        acts[0].details.text.should contain "2 Ausgaben und 1 wiederkehrende Ausgabe"
-        s.close
-      end
     end
   end
 
@@ -587,7 +505,7 @@ describe Zipfelkasse::Store do
       r = Store::ExpenseInput.new(title: "Rückzahlung", date: date("2026-09-02"), paid_by: f.ben, reimbursement: true,
         amount_cents: 1000, parts: [Domain::Part.new(f.anna)])
       e = f.s.get_expense(f.s.create_expense(f.ben, r))
-      {e.reimbursement?, e.split_mode, e.share_of(f.anna)}.should eq({true, Domain::SPLIT_EQUAL, 1000})
+      {e.reimbursement?, e.split_mode, e.share_of(f.anna)}.should eq({true, Domain::SplitMode::Equal, 1000})
       b = f.s.balances
       {b[f.anna], b[f.ben], b[f.cleo]}.should eq({1000, 0, -1000})
     end
@@ -599,11 +517,11 @@ describe Zipfelkasse::Store do
       input = f.equal("Miete", 100000, "2026-01-31", f.anna, f.anna, f.ben)
       input.recurring_id = rid
       before = f.s.list_activity.size
-      f.s.create_expense(0_i64, input)
-      expect_raises(Store::RecurringExists) { f.s.create_expense(0_i64, input) }
+      f.s.create_expense(nil, input)
+      expect_raises(Store::RecurringExists) { f.s.create_expense(nil, input) }
       acts = f.s.list_activity
       acts.size.should eq before + 1
-      {acts[0].actor_id, acts[0].actor_name}.should eq({0, ""})
+      {acts[0].actor_id, acts[0].actor_name}.should eq({nil, nil})
     end
   end
 
@@ -613,9 +531,9 @@ describe Zipfelkasse::Store do
       f.s.db.exec("UPDATE recurring SET active = 0 WHERE id = ?", rid)
       input = f.equal("Miete", 100000, "2026-01-31", f.anna, f.anna, f.ben)
       input.recurring_id = rid
-      expect_raises(Store::RecurringChanged) { f.s.create_expense(0_i64, input) }
+      expect_raises(Store::RecurringChanged) { f.s.create_expense(nil, input) }
       input.recurring_id = 999
-      expect_raises(Store::RecurringChanged) { f.s.create_expense(0_i64, input) }
+      expect_raises(Store::RecurringChanged) { f.s.create_expense(nil, input) }
     end
   end
 
@@ -625,9 +543,9 @@ describe Zipfelkasse::Store do
       rid = insert_recurring(f.s, "{}", "2026-01-31", "2026-03-31")
       input = f.equal("Miete", 100000, "2026-01-31", f.anna, f.anna, f.ben)
       input.recurring_id = rid
-      f.s.create_expense(0_i64, input)
+      f.s.create_expense(nil, input)
       input.date = date("2026-02-28")
-      second = f.s.create_expense(0_i64, input)
+      second = f.s.create_expense(nil, input)
       input.date = date("2026-01-31")
       store_validation_error { f.s.update_expense(f.anna, second, input) }.should contain "Termin"
     end
@@ -649,6 +567,23 @@ describe Zipfelkasse::Store do
         b.list_participants.size.should eq 3
         b.close
       end
+    end
+  end
+
+  it "writes backups readable by the owner only" do
+    with_expense_fixture do |f|
+      with_temp_dir do |dir|
+        File.info(f.s.backup(dir, 7)).permissions.should eq File::Permissions.new(0o600)
+      end
+    end
+  end
+
+  it "logs a failing expense-change hook and keeps the change" do
+    with_expense_fixture do |f|
+      f.s.on_expense_change { |_| raise "hook broke" }
+      id = f.must_create(f.equal("Kino", 1000, "2026-09-01", f.anna, f.anna))
+      f.s.get_expense(id).title.should eq "Kino"
+      SPEC_LOG.to_s.should contain %(level=ERROR msg="expense change hook failed" expense_id=#{id} err="hook broke")
     end
   end
 
@@ -675,7 +610,7 @@ describe Zipfelkasse::Store do
     with_store do |s|
       leave_transaction_early(s)
       s.get_setting(Store::SETTING_GROUP_NAME).should eq "Zipfelkasse"
-      s.set_group_name(0_i64, "WG")
+      s.set_group_name(nil, "WG")
       s.group_name.should eq "WG"
     end
   end

@@ -5,12 +5,12 @@ private alias Domain = Zipfelkasse::Domain
 private alias Export = Zipfelkasse::Export
 private alias YNAB = Zipfelkasse::YNAB
 
-private ANNA    = Store::Participant.new(1_i64, "Anna", nil, nil)
-private BEN     = Store::Participant.new(2_i64, "Ben", nil, nil)
-private JUERGEN = Store::Participant.new(3_i64, "Jürgen", nil, nil)
-private CLEO    = Store::Participant.new(4_i64, "Cleo", nil, date("2026-01-01")) # not involved anywhere
-private PEOPLE  = [ANNA, BEN, CLEO, JUERGEN]
 private STAMP   = Time.utc(2026, 9, 1, 10, 0, 0)
+private ANNA    = Store::Participant.new(1_i64, "Anna", STAMP, nil)
+private BEN     = Store::Participant.new(2_i64, "Ben", STAMP, nil)
+private JUERGEN = Store::Participant.new(3_i64, "Jürgen", STAMP, nil)
+private CLEO    = Store::Participant.new(4_i64, "Cleo", STAMP, date("2026-01-01")) # not involved anywhere
+private PEOPLE  = [ANNA, BEN, CLEO, JUERGEN]
 
 private def sh(p : Store::Participant, cents : Int64) : Domain::Share
   Domain::Share.new(p.id, 1_i64, cents)
@@ -18,16 +18,15 @@ end
 
 private def eur(id : Int64, title : String, d : String, cents : Int64, cat : Int64, cat_name : String,
                 payer : Store::Participant, *shares : Domain::Share) : Store::Expense
-  input = Store::ExpenseInput.new(title: title, date: date(d), category_id: cat, paid_by: payer.id,
-    split_mode: Domain::SPLIT_EQUAL, amount_cents: cents, original_amount_minor: cents, original_currency: "EUR",
+  input = Store::ExpenseInput.new(title: title, date: date(d), category_id: cat.zero? ? nil : cat, paid_by: payer.id,
+    split_mode: Domain::SplitMode::Equal, amount_cents: cents, original_amount_minor: cents, original_currency: "EUR",
     fx_rate: 1.0, parts: shares.map { |s| Domain::Part.new(s.participant_id, s.weight) }.to_a)
-  Store::Expense.new(id, input, shares.to_a, cat_name, payer.name, STAMP, STAMP)
+  build_expense(id, input, shares.to_a, cat_name.presence, payer.name, STAMP)
 end
 
-# ExpenseInput is a struct: the block changes a copy, which is stored back.
+# The block changes the input the expense was built from.
 private def edit(e : Store::Expense, & : Store::ExpenseInput -> Store::ExpenseInput) : Store::Expense
-  e.input = yield e.input
-  e
+  build_expense(e.id, yield(e.to_input), e.shares, e.category_name, e.paid_by_name, e.created_at)
 end
 
 # Chronological.
@@ -36,7 +35,7 @@ private def sample : Array(Store::Expense)
   cafe = edit(cafe) { |i| i.notes = "lecker; „süß“"; i }
   diner = eur(2, %(Diner "NYC"), "2026-09-03", 8000, 0, "", BEN, sh(ANNA, 4000), sh(BEN, 4000))
   diner = edit(diner) do |i|
-    i.original_amount_minor, i.original_currency, i.fx_rate, i.fx_source = 9000_i64, "USD", 1.125, "ezb"
+    i.original_amount_minor, i.original_currency, i.fx_rate, i.fx_source = 9000_i64, "USD", 1.125, Domain::FXSource::Ecb
     i.recurring_id = 7_i64
     i
   end
@@ -56,8 +55,8 @@ private class Fixture
   getter juer : Int64
 
   def initialize
-    @anna = st.create_participant(0_i64, "Anna")
-    @juer = st.create_participant(0_i64, "Jürgen")
+    @anna = st.create_participant(nil, "Anna")
+    @juer = st.create_participant(nil, "Jürgen")
     add("Brötchen", "2026-08-30", 400, juer, anna, juer)
     add("Käse", "2026-09-02", 1000, juer, anna, juer)
     gone = add("Gelöscht", "2026-09-03", 999, anna, anna, juer)
@@ -70,7 +69,7 @@ private class Fixture
   end
 
   def input(title : String, d : Time, cents : Int64, payer : Int64, *who : Int64) : Store::ExpenseInput
-    Store::ExpenseInput.new(title: title, date: d, paid_by: payer, split_mode: Domain::SPLIT_EQUAL,
+    Store::ExpenseInput.new(title: title, date: d, paid_by: payer, split_mode: Domain::SplitMode::Equal,
       amount_cents: cents, parts: who.map { |id| Domain::Part.new(id) }.to_a)
   end
 

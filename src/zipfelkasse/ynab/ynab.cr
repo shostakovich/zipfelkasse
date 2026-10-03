@@ -9,6 +9,8 @@ require "wait_group"
 # reimbursements are marked in YNAB as transfers to/from "Geteilt". Then the
 # balance of "Geteilt" in YNAB equals the person's balance in the app.
 module Zipfelkasse::YNAB
+  Log = ::Log.for(self)
+
   DEFAULT_DEBOUNCE    = 5.seconds  # collect changes before a run
   DEFAULT_START_DELAY = 15.seconds # first full sync after startup
   FULL_INTERVAL       = 1.hour
@@ -101,7 +103,7 @@ module Zipfelkasse::YNAB
       cfgs = begin
         @d.store.list_ynab_configs
       rescue ex
-        @d.log.error("ynab: read configs", err: ex)
+        Log.error(exception: ex) { "ynab: read configs" }
         return RETRY_DELAY
       end
       cfgs.each do |c|
@@ -125,11 +127,11 @@ module Zipfelkasse::YNAB
     def log_sync(how : String, cfg : Store::YNABConfig, res : SyncResult, err : Exception?) : Nil
       case err
       when nil
-        @d.log.info("ynab: synced" + how, person: cfg.participant_id, result: res.log_value)
+        Log.info(&.emit("ynab: synced" + how, person: cfg.participant_id, result: res.log_value))
       when BackoffError, TokenInvalidError
       else
-        @d.log.warn("ynab: sync" + how + " failed", person: cfg.participant_id,
-          err: YNAB.redact(err.message || err.class.name, cfg.token))
+        Log.warn(&.emit("ynab: sync" + how + " failed", person: cfg.participant_id,
+          err: YNAB.redact(err.message || err.class.name, cfg.token)))
       end
     end
 

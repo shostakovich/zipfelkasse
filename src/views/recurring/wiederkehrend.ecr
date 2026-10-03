@@ -20,7 +20,7 @@
             <td>
               <div class="stack-sm">
                 <strong><%= rule.template.title %></strong>
-                <span class="muted"><%= rule.frequency.label %> seit <%= date rule.start_date %><% unless paid_by_name.empty? %> · zahlt <%= paid_by_name %><% end %></span>
+                <span class="muted"><%= Web.frequency_label(rule.frequency) %> seit <%= date rule.start_date %><% unless paid_by_name.empty? %> · zahlt <%= paid_by_name %><% end %></span>
               </div>
             </td>
             <td class="amount">

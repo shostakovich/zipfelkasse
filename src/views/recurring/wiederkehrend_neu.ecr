@@ -15,10 +15,10 @@
         <%- if e.foreign? %><%= money e.original_amount_minor, e.original_currency %> (<%= eur e.amount_cents %>; künftig zum Kurs des jeweiligen Tages)
         <%- else %><%= eur e.amount_cents %><% end %></td></tr>
       <tr><th scope="row">Bezahlt von</th><td><%= e.paid_by_name %></td></tr>
-      <%- unless e.category_name.empty? %>
+      <%- if e.category_name %>
       <tr><th scope="row">Kategorie</th><td><%= e.category_name %></td></tr>
       <%- end %>
-      <tr><th scope="row">Aufteilung</th><td><%= e.split_mode.label %></td></tr>
+      <tr><th scope="row">Aufteilung</th><td><%= Web.split_mode_label(e.split_mode) %></td></tr>
       <%- unless e.notes.empty? %>
       <tr><th scope="row">Notiz</th><td><%= e.notes %></td></tr>
       <%- end %>
@@ -30,7 +30,7 @@
   <%- if expense.nil? %>
     <p class="muted">Öffne zuerst die Ausgabe, die sich wiederholen soll, und wähle dort „Wiederkehrend machen“.</p>
     <p><a href="/">Zu den Ausgaben</a></p>
-  <%- elsif existing != 0 %>
+  <%- elsif existing %>
     <p>Diese Ausgabe gehört schon zu einer wiederkehrenden Ausgabe.</p>
     <p><a href="/einstellungen/wiederkehrend">Zu den wiederkehrenden Ausgaben</a></p>
   <%- else %>
@@ -40,7 +40,7 @@
         <legend>Wie oft?</legend>
         <%- options.each do |o| %>
         <label class="row">
-          <input type="radio" name="haeufigkeit" value="<%= o.value %>" required<% if o.checked? %> checked<% end %>>
+          <input type="radio" name="haeufigkeit" value="<%= o.value.key %>" required<% if o.checked? %> checked<% end %>>
           <span><%= o.label %> <span class="muted">– nächster Termin <%= date o.next_date %><% unless (note = o.note).empty? %>; <%= note %><% end %></span></span>
         </label>
         <%- end %>

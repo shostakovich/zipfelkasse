@@ -3,57 +3,61 @@ module Zipfelkasse
   # per person), ynab_category_map (app category → YNAB category per person)
   # and ynab_sync (sync state per expense and person).
   class Store
-    # token is secret: never print or log it.
-    struct YNABConfig
-      getter participant_id : Int64
-      getter token : String   # "" = not connected
-      getter plan_id : String # column budget_id
-      getter account_id : String
-      getter start_date : Time? # expenses from this date on
-      getter? enabled : Bool
-      getter updated_at : Time?
+    # A person's connection to YNAB. "" means not set (token, plan and
+    # account are NOT NULL columns).
+    record YNABConfig,
+      participant_id : Int64,
+      token : String,
+      plan_id : String,
+      account_id : String,
+      start_date : Time?, # expenses from this date on
+      enabled : Bool,
+      updated_at : Time?,
       # Since when plan and account have been chosen. Expenses entered after
-      # that go to YNAB even if their date is before start_date. nil = unknown
-      # (legacy data, see ensure_ynab_connected_at).
-      getter connected_at : Time?
+      # that go to YNAB even if their date is before start_date. nil =
+      # unknown (see ensure_ynab_connected_at).
+      connected_at : Time? do
+      include DB::Serializable
 
-      def initialize(@participant_id, @token, @plan_id, @account_id, @start_date, @enabled, @updated_at, @connected_at)
+      @[DB::Field(key: "budget_id")]
+      @plan_id : String
+      @[DB::Field(converter: Zipfelkasse::Store::DateText)]
+      @start_date : Time?
+      @[DB::Field(converter: Zipfelkasse::Store::TimeText)]
+      @updated_at : Time?
+      @[DB::Field(converter: Zipfelkasse::Store::TimeText)]
+      @connected_at : Time?
+
+      def enabled? : Bool
+        enabled
       end
 
       def ready? : Bool
         enabled? && !token.empty? && !plan_id.empty? && !account_id.empty? && !start_date.nil?
       end
+
+      def inspect(io : IO) : Nil
+        io << "YNABConfig(participant_id=" << participant_id << ", token=" << (token.empty? ? "none" : "[redacted]")
+        io << ", plan_id=" << plan_id.inspect << ", account_id=" << account_id.inspect << ", enabled=" << enabled << ")"
+      end
     end
 
     YNAB_CONFIG_COLS = "participant_id, token, budget_id, account_id, start_date, enabled, updated_at, connected_at"
 
-    protected def self.read_ynab_config(rs : DB::ResultSet) : YNABConfig
-      pid, token, plan, account = rs.read(Int64), rs.read(String), rs.read(String), rs.read(String)
-      start = rs.read(String?).try { |s| parse_date(s) unless s.empty? }
-      YNABConfig.new(pid, token, plan, account, start, rs.read(Bool), parse_time(rs.read(String?)), parse_time(rs.read(String?)))
+    def get_ynab_config?(participant_id : Int64, db : DB::QueryMethods = @db) : YNABConfig?
+      db.query_one?("SELECT #{YNAB_CONFIG_COLS} FROM ynab_config WHERE participant_id = ?", participant_id, as: YNABConfig)
     end
 
-    # Raises NotFound.
-    def get_ynab_config(participant_id : Int64) : YNABConfig
-      Store.get_ynab_config(@db, participant_id)
-    end
-
-    def self.get_ynab_config(db : DB::QueryMethods, participant_id : Int64) : YNABConfig
-      db.query("SELECT #{YNAB_CONFIG_COLS} FROM ynab_config WHERE participant_id = ?", participant_id) do |rs|
-        rs.each { return read_ynab_config(rs) }
-      end
-      raise NotFound.new
+    def get_ynab_config(participant_id : Int64, db : DB::QueryMethods = @db) : YNABConfig
+      get_ynab_config?(participant_id, db) || raise NotFound.new
     end
 
     # Enabled connections with a token of non-archived people; whether they
     # are fully set up tells ready?.
     def list_ynab_configs : Array(YNABConfig)
-      out = [] of YNABConfig
-      @db.query("SELECT #{YNAB_CONFIG_COLS} FROM ynab_config WHERE token != '' AND enabled = 1 " \
-                "AND participant_id IN (SELECT id FROM participants WHERE archived_at IS NULL) ORDER BY participant_id") do |rs|
-        rs.each { out << Store.read_ynab_config(rs) }
-      end
-      out
+      @db.query_all("SELECT #{YNAB_CONFIG_COLS} FROM ynab_config WHERE token != '' AND enabled = 1 " \
+                    "AND participant_id IN (SELECT id FROM participants WHERE archived_at IS NULL) ORDER BY participant_id",
+        as: YNABConfig)
     end
 
     # Sets or replaces the token; "" disconnects (plan, account, mapping and
@@ -66,11 +70,7 @@ module Zipfelkasse
     # reachable runs inside the write transaction.
     def set_ynab_token(participant_id : Int64, token : String, reachable : (String -> Bool)? = nil) : Bool
       transaction do |tx|
-        old = begin
-          Store.get_ynab_config(tx, participant_id)
-        rescue NotFound
-          nil
-        end
+        old = get_ynab_config?(participant_id, tx)
         tx.exec("INSERT INTO ynab_config (participant_id, token, enabled, updated_at) VALUES (?, ?, ?, ?) " \
                 "ON CONFLICT (participant_id) DO UPDATE SET " \
                 "token = excluded.token, enabled = excluded.enabled, updated_at = excluded.updated_at, " \
@@ -109,10 +109,10 @@ module Zipfelkasse
         old = set_ynab_target(tx, participant_id, t.plan_id, t.account_id, t.start)
         if t.plan_id != old.plan_id || t.account_id != old.account_id
           log_settings(tx, participant_id, "YNAB: Konto „#{t.account_name.presence || t.account_id}“ im Plan " \
-                                           "„#{t.plan_name.presence || t.plan_id}“ gewählt, Startdatum #{Domain.format_date(t.start)}")
-        elsif Store.optional_date(t.start) != Store.optional_date(old.start_date)
-          log_settings(tx, participant_id, "YNAB: Startdatum #{Domain.format_date(old.start_date).presence || "–"} → " \
-                                           "#{Domain.format_date(t.start)}")
+                                           "„#{t.plan_name.presence || t.plan_id}“ gewählt, Startdatum #{t.start.try { |d| Domain.format_date(d) }}")
+        elsif t.start != old.start_date
+          log_settings(tx, participant_id, "YNAB: Startdatum #{old.start_date.try { |d| Domain.format_date(d) } || "–"} → " \
+                                           "#{t.start.try { |d| Domain.format_date(d) }}")
         end
       end
     end
@@ -120,7 +120,7 @@ module Zipfelkasse
     # Returns the connection as it was before.
     private def set_ynab_target(tx : DB::Connection, participant_id : Int64, plan_id : String, account_id : String,
                                 start : Time?) : YNABConfig
-      old = Store.get_ynab_config(tx, participant_id)
+      old = get_ynab_config(participant_id, tx)
       connected = nil.as(String?) # nil keeps connected_at
       if old.plan_id != plan_id || old.account_id != account_id
         tx.exec("UPDATE ynab_sync SET ynab_txn_id = '', synced_hash = ?, synced_at = NULL, last_error = '' " \
@@ -129,12 +129,8 @@ module Zipfelkasse
       end
       tx.exec("UPDATE ynab_config SET budget_id = ?, account_id = ?, start_date = ?, updated_at = ?, " \
               "connected_at = coalesce(?, connected_at) WHERE participant_id = ?",
-        plan_id, account_id, Store.optional_date(start), now_string, connected, participant_id)
+        plan_id, account_id, start.try { |d| Store.format_date(d) }, now_string, connected, participant_id)
       old
-    end
-
-    protected def self.optional_date(t : Time?) : String?
-      t.try { |d| format_date(d) }
     end
 
     # Sets connected_at to now if it is still missing (connections from before
@@ -145,18 +141,30 @@ module Zipfelkasse
                      "RETURNING connected_at", now_string, participant_id, as: String?)
       end
       raise NotFound.new if values.empty?
-      Store.parse_time(values.first)
+      values.first.try { |s| Time.parse_rfc3339(s) }
+    end
+
+    module SecondsSpan
+      def self.from_rs(rs : DB::ResultSet) : Time::Span
+        rs.read(Int64).seconds
+      end
     end
 
     # The meaning of the fields (and the language of summary and error) is
     # defined by the YNAB sync.
     struct YNABStatus
-      property last_run : Time?  # last attempt
+      include DB::Serializable
+
+      @[DB::Field(converter: Zipfelkasse::Store::TimeText)]
+      property last_run : Time? # last attempt
+      @[DB::Field(converter: Zipfelkasse::Store::TimeText)]
       property last_sync : Time? # last complete sync
       property summary : String
       property error : String # of the last attempt, without token
       property? token_invalid : Bool
-      property retry_at : Time?     # no requests before this
+      @[DB::Field(converter: Zipfelkasse::Store::TimeText)]
+      property retry_at : Time? # no requests before this
+      @[DB::Field(key: "backoff_seconds", converter: Zipfelkasse::Store::SecondsSpan)]
       property backoff : Time::Span # last delay after 429, whole seconds
 
       def initialize(*, @last_run = nil, @last_sync = nil, @summary = "", @error = "", @token_invalid = false,
@@ -166,16 +174,8 @@ module Zipfelkasse
 
     # Raises NotFound without a connection.
     def get_ynab_status(participant_id : Int64) : YNABStatus
-      @db.query("SELECT last_run, last_sync, summary, error, token_invalid, retry_at, backoff_seconds " \
-                "FROM ynab_config WHERE participant_id = ?", participant_id) do |rs|
-        rs.each do
-          return YNABStatus.new(
-            last_run: Store.parse_time(rs.read(String?)), last_sync: Store.parse_time(rs.read(String?)),
-            summary: rs.read(String), error: rs.read(String), token_invalid: rs.read(Bool),
-            retry_at: Store.parse_time(rs.read(String?)), backoff: rs.read(Int64).seconds)
-        end
-      end
-      raise NotFound.new
+      @db.query_one?("SELECT last_run, last_sync, summary, error, token_invalid, retry_at, backoff_seconds " \
+                     "FROM ynab_config WHERE participant_id = ?", participant_id, as: YNABStatus) || raise NotFound.new
     end
 
     # Raises NotFound without a connection.
@@ -199,16 +199,9 @@ module Zipfelkasse
     end
 
     # App category ID → YNAB category ID.
-    def ynab_category_map(participant_id : Int64) : Hash(Int64, String)
-      Store.ynab_category_map(@db, participant_id)
-    end
-
-    def self.ynab_category_map(db : DB::QueryMethods, participant_id : Int64) : Hash(Int64, String)
-      m = {} of Int64 => String
-      db.query("SELECT category_id, ynab_category_id FROM ynab_category_map WHERE participant_id = ?", participant_id) do |rs|
-        rs.each { m[rs.read(Int64)] = rs.read(String) }
-      end
-      m
+    def ynab_category_map(participant_id : Int64, db : DB::QueryMethods = @db) : Hash(Int64, String)
+      db.query_all("SELECT category_id, ynab_category_id FROM ynab_category_map WHERE participant_id = ?",
+        participant_id, as: {Int64, String}).to_h
     end
 
     # Replaces the person's complete mapping; empty values mean
@@ -217,38 +210,33 @@ module Zipfelkasse
     def set_ynab_category_map(participant_id : Int64, m : Hash(Int64, String),
                               ynab_names : Hash(String, String) = {} of String => String) : Nil
       transaction do |tx|
-        old = Store.ynab_category_map(tx, participant_id)
+        old = ynab_category_map(participant_id, tx)
         tx.exec("DELETE FROM ynab_category_map WHERE participant_id = ?", participant_id)
         m.each do |category_id, ynab_id|
           next if ynab_id.empty?
-          if tx.scalar("SELECT count(*) FROM categories WHERE id = ?", category_id).as(Int64) == 0
-            raise Domain::ValidationError.new("Unbekannte Kategorie.")
-          end
+          raise Domain::ValidationError.new("Unbekannte Kategorie.") unless get_category?(category_id, tx)
           tx.exec("INSERT INTO ynab_category_map (participant_id, category_id, ynab_category_id) VALUES (?, ?, ?)",
             participant_id, category_id, ynab_id)
         end
-        text = Store.mapping_changes(tx, old, m, ynab_names)
+        text = mapping_changes(tx, old, m, ynab_names)
         log_settings(tx, participant_id, "YNAB: Kategorie-Zuordnung geändert (#{text})") unless text.empty?
       end
     end
 
     # "Lebensmittel → Lebensmittel & Drogerie, Kino → unkategorisiert (vorher
     # Freizeit)", in the order of the app categories (archived ones included).
-    protected def self.mapping_changes(tx : DB::Connection, old : Hash(Int64, String), now : Hash(Int64, String),
-                                       ynab_names : Hash(String, String)) : String
+    private def mapping_changes(tx : DB::Connection, old : Hash(Int64, String), now : Hash(Int64, String),
+                                ynab_names : Hash(String, String)) : String
       ynab_name = ->(id : String) do
         id.empty? ? "unkategorisiert" : (ynab_names[id]?.presence || "(nicht mehr vorhanden)")
       end
       parts = [] of String
-      tx.query("SELECT id, name FROM categories ORDER BY position, name COLLATE NOCASE, id") do |rs|
-        rs.each do
-          id, name = rs.read(Int64), rs.read(String)
-          o, n = old[id]? || "", now[id]? || ""
-          next if o == n
-          part = "#{name} → #{ynab_name.call(n)}"
-          part += " (vorher #{ynab_name.call(o)})" unless o.empty?
-          parts << part
-        end
+      list_categories(true, tx).each do |category|
+        o, n = old[category.id]? || "", now[category.id]? || ""
+        next if o == n
+        part = "#{category.name} → #{ynab_name.call(n)}"
+        part += " (vorher #{ynab_name.call(o)})" unless o.empty?
+        parts << part
       end
       parts.join(", ")
     end
@@ -258,10 +246,14 @@ module Zipfelkasse
     # last transferred state; its meaning is defined by the YNAB sync (except
     # YNAB_HASH_RETARGET).
     struct YNABSync
+      include DB::Serializable
+
       property expense_id : Int64
       property participant_id : Int64
+      @[DB::Field(key: "ynab_txn_id")]
       property txn_id : String
       property synced_hash : String
+      @[DB::Field(converter: Zipfelkasse::Store::TimeText)]
       property synced_at : Time? # nil = never succeeded
       property last_error : String
 
@@ -273,15 +265,8 @@ module Zipfelkasse
     YNAB_HASH_RETARGET = "retarget"
 
     def list_ynab_sync(participant_id : Int64) : Array(YNABSync)
-      out = [] of YNABSync
-      @db.query("SELECT expense_id, participant_id, ynab_txn_id, synced_hash, synced_at, last_error " \
-                "FROM ynab_sync WHERE participant_id = ? ORDER BY expense_id", participant_id) do |rs|
-        rs.each do
-          out << YNABSync.new(rs.read(Int64), rs.read(Int64), rs.read(String), rs.read(String),
-            Store.parse_time(rs.read(String?)), rs.read(String))
-        end
-      end
-      out
+      @db.query_all("SELECT expense_id, participant_id, ynab_txn_id, synced_hash, synced_at, last_error " \
+                    "FROM ynab_sync WHERE participant_id = ? ORDER BY expense_id", participant_id, as: YNABSync)
     end
 
     def put_ynab_sync(*rows : YNABSync) : Nil
@@ -296,7 +281,7 @@ module Zipfelkasse
                   "VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT (expense_id, participant_id) DO UPDATE SET " \
                   "ynab_txn_id = excluded.ynab_txn_id, synced_hash = excluded.synced_hash, " \
                   "synced_at = excluded.synced_at, last_error = excluded.last_error",
-            r.expense_id, r.participant_id, r.txn_id, r.synced_hash, r.synced_at.try(&.to_utc.to_s(TIME_FORMAT)), r.last_error)
+            r.expense_id, r.participant_id, r.txn_id, r.synced_hash, r.synced_at.try { |t| Store.format_time(t) }, r.last_error)
         end
       end
     end
@@ -314,20 +299,21 @@ module Zipfelkasse
       end
     end
 
-    record YNABSyncProblem, expense_id : Int64, title : String, date : Time, error : String
+    record YNABSyncProblem, expense_id : Int64, title : String, date : Time, error : String do
+      include DB::Serializable
+
+      @[DB::Field(converter: Zipfelkasse::Store::DateText)]
+      @date : Time
+    end
 
     # The number of the person's transactions present in YNAB and the
     # expenses whose last sync failed (newest first, deleted ones included).
     def ynab_sync_summary(participant_id : Int64) : {Int32, Array(YNABSyncProblem)}
       synced = @db.scalar("SELECT count(*) FROM ynab_sync WHERE participant_id = ? AND ynab_txn_id != ''",
         participant_id).as(Int64).to_i32
-      problems = [] of YNABSyncProblem
-      @db.query("SELECT y.expense_id, e.title, e.date, y.last_error FROM ynab_sync y JOIN expenses e ON e.id = y.expense_id " \
-                "WHERE y.participant_id = ? AND y.last_error != '' ORDER BY e.date DESC, e.id DESC", participant_id) do |rs|
-        rs.each do
-          problems << YNABSyncProblem.new(rs.read(Int64), rs.read(String), Store.parse_date(rs.read(String)), rs.read(String))
-        end
-      end
+      problems = @db.query_all("SELECT y.expense_id, e.title, e.date, y.last_error AS error FROM ynab_sync y " \
+                               "JOIN expenses e ON e.id = y.expense_id WHERE y.participant_id = ? AND y.last_error != '' " \
+                               "ORDER BY e.date DESC, e.id DESC", participant_id, as: YNABSyncProblem)
       {synced, problems}
     end
   end

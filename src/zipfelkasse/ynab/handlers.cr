@@ -19,7 +19,7 @@ module Zipfelkasse::YNAB
     property account_name = ""
     property currency = "" # of the selected plan, if not EUR
     property? has_target = false
-    property start_date : Time = Domain::UNSET_TIME
+    property start_date : Time? = nil
     property categories = [] of CategoryRow
     property groups = [] of GroupOption
     property? ready = false
@@ -85,9 +85,7 @@ module Zipfelkasse::YNAB
     end
 
     private def config_of(participant_id : Int64) : Store::YNABConfig?
-      @d.store.get_ynab_config(participant_id)
-    rescue Store::NotFound
-      nil
+      @d.store.get_ynab_config?(participant_id)
     end
 
     # refresh reloads plans and categories from YNAB instead of the cache.

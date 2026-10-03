@@ -8,6 +8,8 @@ class HTTP::Server::Context
 end
 
 module Zipfelkasse::Web
+  Log = ::Log.for(self)
+
   # Values for Page#nav: which tab of the main navigation is active.
   NAV_EXPENSES = "ausgaben"
   NAV_BALANCES = "salden"
@@ -29,11 +31,10 @@ module Zipfelkasse::Web
     getter config : Config
     getter store : Store
     getter render : Renderer
-    getter log : Logger
     # nil until the fx feature is wired.
     property fx : FXRater? = nil
 
-    def initialize(@config, @store, @render, @log)
+    def initialize(@config, @store, @render)
     end
 
     def today : Time
@@ -125,7 +126,7 @@ module Zipfelkasse::Web
     end
 
     def server_error(ex : Exception) : Nil
-      @d.log.error("request", method: method, path: Web.log_path(path), err: ex)
+      Log.error(exception: ex, &.emit("request", method: method, path: Web.log_path(path)))
       error(500, "Da ist etwas schiefgegangen.")
     end
 
@@ -175,8 +176,16 @@ module Zipfelkasse::Web
 
   # Invalid or <= 0 gives 0.
   def self.form_id(v : String, trim = true) : Int64
-    id = (trim ? v.strip : v).to_i64?(whitespace: false) || 0_i64
-    id > 0 ? id : 0_i64
+    form_id?(v, trim) || 0_i64
+  end
+
+  def self.nil_if_zero(id : Int64) : Int64?
+    id unless id == 0
+  end
+
+  def self.form_id?(v : String, trim = true) : Int64?
+    id = (trim ? v.strip : v).to_i64?(whitespace: false)
+    id if id && id > 0
   end
 
   # The request path for the log: the MCP secret in /mcp/<secret> is masked.

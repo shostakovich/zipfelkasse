@@ -56,7 +56,7 @@ describe Zipfelkasse::Web do
       ps.map(&.name).should eq ["Jörg"]
       who.value.should eq ps[0].id.to_s
       act = srv.store.list_activity(Store::ActivityFilter.new(limit: 1)).first
-      act.action.should eq Store::ACTION_SETTINGS_UPDATED
+      act.action.should eq Store::Action::SettingsUpdated
       act.actor_id.should eq ps[0].id
       act.details.text.should eq "Person „Jörg“ hinzugefügt"
 
@@ -85,7 +85,7 @@ describe Zipfelkasse::Web do
       srv.post_form("/wer", {"id" => " #{id}"}).status_code.should eq 422
       srv.get("/", who_cookie(id)).status_code.should eq 200
       srv.request("GET", "/", headers: HTTP::Headers{"Cookie" => %(wer=" #{id}")}).status_code.should eq 303
-      srv.store.set_participant_archived(0_i64, id, true)
+      srv.store.set_participant_archived(nil, id, true)
       srv.get("/", who_cookie(id)).status_code.should eq 303
     end
   end

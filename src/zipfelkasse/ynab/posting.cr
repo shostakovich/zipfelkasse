@@ -10,7 +10,7 @@ module Zipfelkasse::YNAB
     amount_cents : Int64, # positive = outflow
     payee : String,
     memo : String,
-    category_id : Int64 # app category, 0 = none
+    category_id : Int64? # app category
 
   # Nil for deleted expenses, reimbursements (those go through the bank as
   # transfers in YNAB) and expenses without an own share.
@@ -55,11 +55,7 @@ module Zipfelkasse::YNAB
 
     # Without a connection: all past expenses.
     def self.for_participant(store : Store, participant_id : Int64, today : Time) : Selection
-      cfg = begin
-        store.get_ynab_config(participant_id)
-      rescue Store::NotFound
-        return new(today)
-      end
+      cfg = store.get_ynab_config?(participant_id) || return new(today)
       for_config(store, cfg, today)
     end
 

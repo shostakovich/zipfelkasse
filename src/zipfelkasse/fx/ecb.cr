@@ -69,7 +69,7 @@ module Zipfelkasse::FX
         d = parse_day(time) || raise "xml: date #{time.inspect}"
         cubes(day).each do |c|
           rate, currency = parse_ecb_rate(c["rate"]? || ""), c["currency"]? || ""
-          rates << Domain::FXRate.new(currency, d, rate, Domain::FX_SOURCE_ECB) if rate && Domain.valid_currency_code?(currency)
+          rates << Domain::FXRate.new(currency, d, rate, Domain::FXSource::Ecb) if rate && Domain.valid_currency_code?(currency)
         end
       end
     end
@@ -105,7 +105,7 @@ module Zipfelkasse::FX
       d = parse_day(row[0].strip) || raise "csv: date #{row[0].inspect}"
       (1...Math.min(row.size, currencies.size)).each do |i|
         rate = parse_ecb_rate(row[i])
-        rates << Domain::FXRate.new(currencies[i], d, rate, Domain::FX_SOURCE_ECB) if rate && Domain.valid_currency_code?(currencies[i])
+        rates << Domain::FXRate.new(currencies[i], d, rate, Domain::FXSource::Ecb) if rate && Domain.valid_currency_code?(currencies[i])
       end
     end
     rates
@@ -176,12 +176,12 @@ module Zipfelkasse::FX
         result, error = begin
           {download(file), nil}
         rescue ex
-          @d.log.warn("loading ECB rates failed", file: file, err: ex)
+          Log.warn(exception: ex, &.emit("loading ECB rates failed", file: file))
           {nil, FetchError.new(file, ex.message || ex.class.name)}
         end
         if result
-          @d.log.info("ECB rates loaded", file: file, rates: result.count,
-            from: Store.format_date(result.from), to: Store.format_date(result.to))
+          Log.info(&.emit("ECB rates loaded", file: file, rates: result.count,
+            from: Store.format_date(result.from), to: Store.format_date(result.to)))
         end
         @mutex.synchronize { load.finish(result, error, @clock.call) }
       end

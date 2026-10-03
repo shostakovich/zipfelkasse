@@ -55,7 +55,7 @@
         <a class="expense<% if row.reimbursement? %> reimbursement<% end %>" id="ausgabe-<%= row.id %>" href="/ausgaben/<%= row.id %>">
           <span class="expense-icon"><% if row.reimbursement? %><%= icon "banknote" %><% else %><%= icon category_icon(row.category_name) %><% end %></span>
           <span class="expense-main">
-            <span class="expense-title"><%= row.title %><% if row.recurring_id != 0 %> <span class="badge badge-muted" title="Wiederkehrend"><%= icon "repeat" %></span><% end %></span>
+            <span class="expense-title"><%= row.title %><% if row.recurring_id %> <span class="badge badge-muted" title="Wiederkehrend"><%= icon "repeat" %></span><% end %></span>
             <span class="expense-meta">
               <%- if row.reimbursement? -%>
               <strong><%= row.paid_by_name %></strong> an <strong><%= row.for_names[0] %></strong>

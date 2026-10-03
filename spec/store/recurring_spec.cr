@@ -10,38 +10,35 @@ describe "Store recurring expenses" do
       input = f.equal("Miete", 100000, "2026-01-31", f.anna, f.anna, f.ben)
       input.notes = "Januar"
       eid = s.create_expense(f.anna, input)
-      store_validation_error do
-        s.create_recurring_from_expense(f.anna, eid, Domain::Frequency.new("daily"))
-      end.should eq "Bitte eine Häufigkeit wählen."
-      expect_raises(Store::NotFound) { s.create_recurring_from_expense(f.anna, 999_i64, Domain::FREQ_MONTHLY) }
-      rid = s.create_recurring_from_expense(f.anna, eid, Domain::FREQ_MONTHLY)
+      expect_raises(Store::NotFound) { s.create_recurring_from_expense(f.anna, 999_i64, Domain::Frequency::Monthly) }
+      rid = s.create_recurring_from_expense(f.anna, eid, Domain::Frequency::Monthly)
 
       r = s.get_recurring(rid)
       r.start_date.should eq date("2026-01-31")
       r.next_date.should eq date("2026-02-28")
       r.active?.should be_true
       r.created_by.should eq f.anna
-      r.frequency.should eq Domain::FREQ_MONTHLY
+      r.frequency.should eq Domain::Frequency::Monthly
       t = r.template
       {t.title, t.amount_cents, t.notes, t.parts.size, t.date, t.recurring_id, t.original_currency}
-        .should eq({"Miete", 100000, "Januar", 2, nil, 0, "EUR"})
+        .should eq({"Miete", 100000, "Januar", 2, nil, nil, "EUR"})
       template_json = s.db.scalar("SELECT template_json FROM recurring WHERE id = ?", rid).as(String)
-      JSON.parse(template_json)["date"].should eq "0001-01-01T00:00:00Z"
+      JSON.parse(template_json).as_h.keys.should_not contain("date")
 
       s.get_expense(eid).recurring_id.should eq rid
       store_validation_error do
-        s.create_recurring_from_expense(f.anna, eid, Domain::FREQ_WEEKLY)
+        s.create_recurring_from_expense(f.anna, eid, Domain::Frequency::Weekly)
       end.should eq "Diese Ausgabe gehört schon zu einer wiederkehrenden Ausgabe."
       acts = s.list_activity(Store::ActivityFilter.new(expense_id: eid))
       acts.size.should eq 2
-      acts[0].action.should eq Store::ACTION_RECURRING_CREATED
+      acts[0].action.should eq Store::Action::RecurringCreated
       acts[0].actor_id.should eq f.anna
       acts[0].details.should eq Store::ActivityDetails.new(title: "Miete", amount_cents: 100000_i64,
         text: "„Miete“ wiederholt sich jetzt monatlich.")
 
       # The original expense at the anchor counts as the first instance.
       input.recurring_id = rid
-      expect_raises(Store::RecurringExists) { s.create_expense(0_i64, input) }
+      expect_raises(Store::RecurringExists) { s.create_expense(nil, input) }
 
       s.due_recurring(date("2026-02-27")).should be_empty
       s.due_recurring(date("2026-02-28")).size.should eq 1
@@ -52,19 +49,19 @@ describe "Store recurring expenses" do
     with_expense_fixture do |f|
       s = f.s
       eid = s.create_expense(f.anna, f.equal("Kino", 2000, "2026-01-05", f.anna, f.anna, f.ben))
-      rid = s.create_recurring_from_expense(f.anna, eid, Domain::FREQ_WEEKLY)
-      s.set_recurring_active(0_i64, rid, false, date("2026-01-10"))
+      rid = s.create_recurring_from_expense(f.anna, eid, Domain::Frequency::Weekly)
+      s.set_recurring_active(nil, rid, false, date("2026-01-10"))
       s.due_recurring(date("2026-03-01")).should be_empty
       # Resuming on Wednesday, Mar 4: next occurrence Monday, Mar 9 (no catch-up).
-      s.set_recurring_active(0_i64, rid, true, date("2026-03-04"))
+      s.set_recurring_active(nil, rid, true, date("2026-03-04"))
       r = s.get_recurring(rid)
       r.active?.should be_true
       r.next_date.should eq date("2026-03-09")
       # Resuming exactly on an occurrence: the occurrence itself counts.
-      s.set_recurring_active(0_i64, rid, false, date("2026-03-05"))
-      s.set_recurring_active(0_i64, rid, true, date("2026-03-16"))
+      s.set_recurring_active(nil, rid, false, date("2026-03-05"))
+      s.set_recurring_active(nil, rid, true, date("2026-03-16"))
       s.get_recurring(rid).next_date.should eq date("2026-03-16")
-      expect_raises(Store::NotFound) { s.set_recurring_active(0_i64, 999_i64, true, date("2026-03-16")) }
+      expect_raises(Store::NotFound) { s.set_recurring_active(nil, 999_i64, true, date("2026-03-16")) }
       s.list_activity.first(2).map(&.details.text).should eq [
         "Wiederholung „Kino“ (wöchentlich) fortgesetzt",
         "Wiederholung „Kino“ (wöchentlich) pausiert",
@@ -80,29 +77,29 @@ describe "Store recurring expenses" do
       list[0].next_date.should eq date("2026-03-23")
 
       # A paused rule neither advances nor gets instances.
-      s.set_recurring_active(0_i64, rid, false, date("2026-03-23"))
+      s.set_recurring_active(nil, rid, false, date("2026-03-23"))
       expect_raises(Store::RecurringChanged) do
         s.set_recurring_next_date(rid, date("2026-03-23"), date("2026-03-30"))
       end
       input = f.equal("Kino", 2000, "2026-03-23", f.anna, f.anna, f.ben)
       input.recurring_id = rid
-      expect_raises(Store::RecurringChanged) { s.create_expense(0_i64, input) }
-      s.set_recurring_active(0_i64, rid, true, date("2026-03-23"))
+      expect_raises(Store::RecurringChanged) { s.create_expense(nil, input) }
+      s.set_recurring_active(nil, rid, true, date("2026-03-23"))
 
       s.delete_recurring(f.ben, rid)
       deleted = s.list_activity.first
-      {deleted.action, deleted.actor_id, deleted.expense_id}.should eq({Store::ACTION_RECURRING_DELETED, f.ben, 0})
+      {deleted.action, deleted.actor_id, deleted.expense_id}.should eq({Store::Action::RecurringDeleted, f.ben, nil})
       deleted.details.should eq Store::ActivityDetails.new(title: "Kino", amount_cents: 2000_i64,
         text: "Wiederholung von „Kino“ beendet.")
       # A deleted rule: no foreign key error, but RecurringChanged.
-      expect_raises(Store::RecurringChanged) { s.create_expense(0_i64, input) }
+      expect_raises(Store::RecurringChanged) { s.create_expense(nil, input) }
       expect_raises(Store::RecurringChanged) do
         s.set_recurring_next_date(rid, date("2026-03-23"), date("2026-03-30"))
       end
       expect_raises(Store::NotFound) { s.get_recurring(rid) }
       e = s.get_expense(eid)
       e.deleted?.should be_false
-      e.recurring_id.should eq 0
+      e.recurring_id.should be_nil
       expect_raises(Store::NotFound) { s.delete_recurring(f.ben, rid) }
     end
   end
@@ -111,19 +108,19 @@ describe "Store recurring expenses" do
     with_expense_fixture do |f|
       s = f.s
       eid = s.create_expense(f.anna, f.equal("Strom", 5000, "2026-01-15", f.anna, f.anna, f.ben))
-      rid = s.create_recurring_from_expense(f.anna, eid, Domain::FREQ_MONTHLY)
+      rid = s.create_recurring_from_expense(f.anna, eid, Domain::Frequency::Monthly)
       input = f.equal("Strom", 6000, "2026-02-15", f.anna, f.anna, f.ben, f.cleo)
       input.recurring_id = rid
-      id2 = s.create_expense(0_i64, input)
-      s.update_recurring_template_from_latest(0_i64, rid)
+      id2 = s.create_expense(nil, input)
+      s.update_recurring_template_from_latest(nil, rid)
       t = s.get_recurring(rid).template
       {t.amount_cents, t.parts.size, t.date}.should eq({6000, 3, nil})
       s.list_activity.first.details.text.should eq "Wiederholung „Strom“ (monatlich): Vorlage aus der letzten Ausgabe übernommen"
       # Deleted instances do not count.
       s.delete_expense(f.anna, id2)
       s.delete_expense(f.anna, eid)
-      expect_raises(Store::NoInstance) { s.update_recurring_template_from_latest(0_i64, rid) }
-      expect_raises(Store::NotFound) { s.update_recurring_template_from_latest(0_i64, rid + 1000) }
+      expect_raises(Store::NoInstance) { s.update_recurring_template_from_latest(nil, rid) }
+      expect_raises(Store::NotFound) { s.update_recurring_template_from_latest(nil, rid + 1000) }
     end
   end
 
@@ -136,11 +133,10 @@ describe "Store recurring expenses" do
                %q("fx_rate":1.0823,"fx_source":"ezb","recurring_id":0})
       {stored, "{}", %({"parts":null,"fx_rate":1})}.each do |json|
         s.db.exec("INSERT INTO recurring (template_json, frequency, start_date, next_date, created_at, updated_at) " \
-                  "VALUES (?, 'monthly', '2026-01-31', '2026-02-28', 'x', '')", json)
+                  "VALUES (?, 'monthly', '2026-01-31', '2026-02-28', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')", json)
       end
       list = s.list_recurring
-      list.map(&.created_by).should eq [0, 0, 0]
-      list.map(&.created_at).should eq [nil, nil, nil]
+      list.map(&.created_by).should eq [nil, nil, nil]
       t = list[0].template
       {t.title, t.date, t.parts.size, t.original_currency, t.fx_rate, t.amount_cents}
         .should eq({"Pizza & <Wein>", nil, 2, "USD", 1.0823, 2310})

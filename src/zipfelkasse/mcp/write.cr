@@ -103,7 +103,7 @@ module Zipfelkasse::MCP
       raise invalid("#{p.name} appears twice in the split.") unless seen.add?(p.id)
       parts << Domain::Part.new(p.id, weight)
     end
-    if mode == Domain::SPLIT_EQUAL
+    if mode.equal?
       unless weights.empty?
         raise invalid("weights are only for split=shares, percent or amount; use participants for an equal split.")
       end
@@ -111,8 +111,8 @@ module Zipfelkasse::MCP
       participants.each { |name| add.call(name, 0_i64) }
       return parts
     end
-    raise invalid("With split=#{mode}, weights name the participants; leave participants out.") unless participants.empty?
-    raise invalid("split=#{mode} needs weights (person name → value).") if weights.empty?
+    raise invalid("With split=#{mode.key}, weights name the participants; leave participants out.") unless participants.empty?
+    raise invalid("split=#{mode.key} needs weights (person name → value).") if weights.empty?
     weights.keys.sort!.each do |name|
       w = begin
         parse_decimal(weights[name], Domain.weight_decimals(mode, currency))
@@ -147,7 +147,7 @@ module Zipfelkasse::MCP
           "date"     => Server.date_prop("Date of the expense. Default today."),
           "paid_by"  => {"type" => "string", "description" => "Name of the person who paid."},
           "category" => {"type" => "string", "description" => "Category name (case-insensitive). Empty = no category."},
-          "split"    => {"type" => "string", "enum" => Domain::SPLIT_MODES.map(&.value),
+          "split"    => {"type" => "string", "enum" => Domain::SplitMode.values.map(&.key),
                       "description" => "equal (default): evenly among participants. shares, percent, amount: by the values in weights."},
           "participants" => {"type" => "array", "items" => {"type" => "string"},
                              "description" => "Only for split=equal: names of the people the expense is for. Default: all active people."},
@@ -176,9 +176,10 @@ module Zipfelkasse::MCP
     private def create_expense(raw : String?) : String
       a = MCP.args(ExpenseArgs, raw)
       title = a.title.strip
-      mode = Domain::SplitMode.new(MCP.trim_or(a.split, Domain::SPLIT_EQUAL.value))
+      split = MCP.trim_or(a.split, Domain::SplitMode::Equal.key)
+      mode = Domain::SplitMode.from_key?(split)
       raise MCP.invalid("Parameter title is missing.") if title.empty?
-      raise MCP.invalid("split must be one of equal, shares, percent, amount.") unless mode.valid?
+      raise MCP.invalid("split must be one of equal, shares, percent, amount.") unless mode
       date = date_or_today(a.date)
       input = set_money(Store::ExpenseInput.new(title: title, notes: a.notes, split_mode: mode, date: date), a, date)
       ps = participants
@@ -237,7 +238,7 @@ module Zipfelkasse::MCP
       input.original_amount_minor, input.original_currency = minor, cur
       if rate
         raise MCP.invalid("fx_rate must be greater than 0.") if rate <= 0
-        input.fx_rate, input.fx_source = rate, Domain::FX_SOURCE_MANUAL
+        input.fx_rate, input.fx_source = rate, Domain::FXSource::Manual
         return input
       end
       no_rate = MCP.invalid("There is no exchange rate for #{cur} on #{MCP.ymd(date)}. Ask the user for the rate and pass it as fx_rate.")
@@ -245,11 +246,11 @@ module Zipfelkasse::MCP
       r = begin
         fx.rate(cur, date)
       rescue ex
-        @log.info("mcp: rate not available", currency: cur, date: MCP.ymd(date), err: ex)
+        Log.info(exception: ex, &.emit("mcp: rate not available", currency: cur, date: MCP.ymd(date)))
         raise no_rate
       end
       raise no_rate unless r.rate > 0
-      input.fx_rate, input.fx_source = r.rate, r.source.presence || Domain::FX_SOURCE_ECB
+      input.fx_rate, input.fx_source = r.rate, r.source
       input
     end
 
@@ -257,12 +258,20 @@ module Zipfelkasse::MCP
     # (same date, payer, amount in euros, kind and title or recipient).
     private def create(input : Store::ExpenseInput, date : Time, payer : Store::Participant, ps : Array(Store::Participant),
                        allow_duplicate : Bool) : String
-      cents = input.original_currency.empty? ? input.amount_cents : Domain.to_eur_cents(input.original_amount_minor, input.original_currency, input.fx_rate)
+      cents = if Domain.eur?(input.original_currency)
+                input.amount_cents
+              else
+                begin
+                  Domain.to_eur_cents(input.original_amount_minor, input.original_currency, input.fx_rate.not_nil!)
+                rescue Domain::ValidationError
+                  0_i64
+                end
+              end
       if !allow_duplicate && cents > 0
         same = @d.store.list_expenses(Store::ExpenseFilter.new(from: date, to: date, paid_by: input.paid_by, min_cents: cents, max_cents: cents))
         same.each do |e|
           next if e.reimbursement? != input.reimbursement?
-          duplicate = input.reimbursement? ? e.share_of(input.parts[0].participant_id) != 0 : Store.fold(e.title) == Store.fold(input.title)
+          duplicate = input.reimbursement? ? e.share_of(input.parts[0].participant_id) != 0 : e.title.downcase(:fold) == input.title.downcase(:fold)
           next unless duplicate
           raise MCP.invalid("This looks like a duplicate of entry #{e.id} (#{MCP.ymd(e.date)}, #{e.title}, #{MCP.eur(e.amount_cents)} EUR, paid by #{e.paid_by_name}). " \
                             "Ask the user; if it really is a second one, call again with allow_duplicate=true.")
@@ -274,7 +283,7 @@ module Zipfelkasse::MCP
         # The app's own rules (e.g. sum of the split) answer in German.
         raise MCP.invalid("The app refused the entry (message in German): #{ex.message}")
       end
-      @log.info("mcp: entry created", id: id, reimbursement: input.reimbursement?)
+      Log.info(&.emit("mcp: entry created", id: id, reimbursement: input.reimbursement?))
       e = @d.store.get_expense(id)
       names = ps.to_h { |p| {p.id, p.name} }
       JSON.build do |j|

@@ -58,7 +58,6 @@ module E2E
         "ZIPFELKASSE_TEST_NOW"           => @now,
         "ZIPFELKASSE_TEST_ECB_URL"       => @ecb.base_url,
         "ZIPFELKASSE_TEST_YNAB_URL"      => @ynab.base_url,
-        "ZIPFELKASSE_TEST_YNAB_DELAY"    => "#{YNAB_DELAY_MS}ms",
         "ZIPFELKASSE_TEST_YNAB_DELAY_MS" => YNAB_DELAY_MS.to_s,
       }.merge(@extra_env)
     end

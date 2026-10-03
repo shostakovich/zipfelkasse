@@ -17,27 +17,27 @@ module Zipfelkasse::MCP
     TEXT
 
   # The category value for expenses without a category.
-  NO_CATEGORY_ARG = "none"
-  CATEGORY_HINT   = %(Use "#{NO_CATEGORY_ARG}" for expenses without a category (statistics labels them "#{Store::NO_CATEGORY}").)
+  NO_CATEGORY_ARG   = "none"
+  NO_CATEGORY_LABEL = "No category"
+  CATEGORY_HINT     = %(Use "#{NO_CATEGORY_ARG}" for expenses without a category (statistics labels them "#{NO_CATEGORY_LABEL}").)
 
   REIMBURSEMENTS_EXCLUDE = "exclude"
   REIMBURSEMENTS_INCLUDE = "include"
   REIMBURSEMENTS_ONLY    = "only"
   REIMBURSEMENT_MODES    = [REIMBURSEMENTS_EXCLUDE, REIMBURSEMENTS_INCLUDE, REIMBURSEMENTS_ONLY]
 
-  SORT_ORDERS = [Store::SORT_DATE_DESC, Store::SORT_DATE_ASC, Store::SORT_AMOUNT_DESC, Store::SORT_AMOUNT_ASC]
+  SORT_ORDERS = Store::ExpenseSort.values.map(&.key)
 
   DETAIL_COMPACT = "compact"
   DETAIL_FULL    = "full"
   DETAIL_LEVELS  = [DETAIL_COMPACT, DETAIL_FULL]
 
-  GROUPINGS = [Store::STATS_BY_CATEGORY, Store::STATS_BY_TITLE, Store::STATS_BY_YEAR, Store::STATS_BY_MONTH,
-               Store::STATS_BY_WEEK, Store::STATS_BY_PERSON, Store::STATS_BY_CATEGORY_MONTH]
-  HISTORY_INTERVALS     = [Store::STATS_BY_MONTH, Store::STATS_BY_WEEK, Store::STATS_BY_YEAR]
+  GROUPINGS             = Store::StatsGroup.values.map(&.key)
+  HISTORY_INTERVALS     = [Store::StatsGroup::Month, Store::StatsGroup::Week, Store::StatsGroup::Year].map(&.key)
   COMPARE_PREVIOUS_YEAR = "previous_year"
 
   # The semaphore wait of sql_query; the query itself stops after
-  # Store::SQL_TIMEOUT.
+  # SQLSandbox::TIMEOUT.
   TOOL_TIMEOUT = 20.seconds
 
   READ_ONLY = {"readOnlyHint" => true, "destructiveHint" => false, "idempotentHint" => true, "openWorldHint" => false}
@@ -266,14 +266,15 @@ module Zipfelkasse::MCP
     def initialize
     end
 
-    def initialize(r : Store::StatRow, group_by : String)
-      @category, @title, @person, @count, @amount_cents = r.category, r.title, r.person, r.count, r.amount_cents
-      case group_by
-      when Store::STATS_BY_YEAR then @year = r.period
-      when Store::STATS_BY_WEEK then @week = r.period
-      else                           @month = r.period
+    def initialize(r : Store::StatRow, group : Store::StatsGroup)
+      @category = r.category || NO_CATEGORY_LABEL if group.category? || group.category_month?
+      @title, @person, @count, @amount_cents = r.title || "", r.person || "", r.count, r.amount_cents
+      case group
+      when .year? then @year = r.period.to_s
+      when .week? then @week = r.period.to_s
+      else             @month = r.period.to_s
       end
-      @paid_cents = r.paid_cents if group_by == Store::STATS_BY_PERSON
+      @paid_cents = r.paid_cents if group.person?
     end
 
     def set_previous(p : Int64) : Nil
@@ -305,10 +306,8 @@ module Zipfelkasse::MCP
     @tools = {} of String => Tool
     @order = [] of String # tools/list order
     @sql_sem = Channel(Nil).new(2)
-    @log : Logger
 
     def initialize(@d : Web::Deps)
-      @log = @d.log
       register_read_tools
       register_write_tools
     end
@@ -332,9 +331,9 @@ module Zipfelkasse::MCP
     def instructions : String
       text = INSTRUCTIONS_TEXT + "\n" + today_line
       begin
-        text + "\n" + MCP.overview_text(@d.store.mcp_overview)
+        text + "\n" + MCP.overview_text(@d.store.overview)
       rescue ex
-        @log.error("mcp: data overview", err: ex)
+        Log.error(exception: ex) { "mcp: data overview" }
         text
       end
     end
@@ -365,7 +364,7 @@ module Zipfelkasse::MCP
     end
 
     def self.limit_prop(description : String)
-      {"type" => "integer", "minimum" => 1, "maximum" => Store::SQL_MAX_ROWS, "description" => description}
+      {"type" => "integer", "minimum" => 1, "maximum" => SQLSandbox::MAX_ROWS, "description" => description}
     end
 
     private def register_read_tools : Nil
@@ -430,7 +429,7 @@ module Zipfelkasse::MCP
           "compare"  => {"type" => "string", "enum" => [COMPARE_PREVIOUS_YEAR],
                         "description" => "previous_year: compare each row with the same group one year earlier (month 2026-03 with 2025-03, category in from…to with from…to minus one year). " \
                                          "For category, title and person, from is required."},
-          "limit" => Server.limit_prop("Maximum number of rows, default #{Store::SQL_MAX_ROWS}. total always covers all rows."),
+          "limit" => Server.limit_prop("Maximum number of rows, default #{SQLSandbox::MAX_ROWS}. total always covers all rows."),
         }, ["group_by"])) { |raw| statistics(raw) }
 
       add("activity", "Activity log",
@@ -455,7 +454,7 @@ module Zipfelkasse::MCP
         "Runs exactly one read-only SQL query (SQLite dialect, only SELECT or WITH … SELECT) on a read-only copy of the data. " \
         "Call schema first. Important: amounts are cents (divide by 100.0 for euros), exclude deleted expenses with deleted_at IS NULL, " \
         "reimbursements (is_reimbursement = 1) are not expenses, a person's share is expense_shares.amount_cents. " \
-        "At most #{Store::SQL_MAX_ROWS} rows, aborted after #{Store::SQL_TIMEOUT.total_seconds.to_i} seconds, texts longer than 2000 characters are truncated. " \
+        "At most #{SQLSandbox::MAX_ROWS} rows, aborted after #{SQLSandbox::TIMEOUT.total_seconds.to_i} seconds, texts longer than 2000 characters are truncated. " \
         "For standard questions, balances, search_expenses and statistics are simpler.",
         Server.object_schema({
           "query" => {"type" => "string", "description" => "The SQL query, e.g. SELECT name FROM participants WHERE archived_at IS NULL"},
@@ -485,13 +484,13 @@ module Zipfelkasse::MCP
     # A category name, or "none" / "No category" (the statistics label) for
     # expenses without a category; a real category of that name wins.
     # Returns {category_id, without_category}.
-    private def category_arg(name : String) : {Int64, Bool}
-      return {0_i64, false} if name.blank?
+    private def category_arg(name : String) : {Int64?, Bool}
+      return {nil, false} if name.blank?
       {find_category(name).id, false}
     rescue ex : Domain::ValidationError
       n = name.strip
-      raise ex unless {NO_CATEGORY_ARG, Store::NO_CATEGORY}.any? { |v| n.compare(v, case_insensitive: true).zero? }
-      {0_i64, true}
+      raise ex unless {NO_CATEGORY_ARG, NO_CATEGORY_LABEL}.any? { |v| n.compare(v, case_insensitive: true).zero? }
+      {nil, true}
     end
 
     def self.balance_out(j : JSON::Builder, person : String, cents : Int64, status : String) : Nil
@@ -538,25 +537,26 @@ module Zipfelkasse::MCP
 
     private def balance_history(raw : String?) : String
       a = MCP.args(HistoryArgs, raw)
-      interval = MCP.trim_or(a.interval, Store::STATS_BY_MONTH)
+      interval = MCP.trim_or(a.interval, Store::StatsGroup::Month.key)
       unless HISTORY_INTERVALS.includes?(interval)
         raise MCP.invalid("interval must be one of #{HISTORY_INTERVALS.join(", ")}.")
       end
+      unit = Domain::PeriodUnit.parse(interval)
       from, to = MCP.parse_range(a.from, a.to)
       person = person_arg(a.person)
       today = self.today
       too_many = ->(periods : Array(String)) do
-        if periods.size > Store::SQL_MAX_ROWS
-          raise MCP.invalid("That is #{periods.size} periods, at most #{Store::SQL_MAX_ROWS} are possible. " \
+        if periods.size > SQLSandbox::MAX_ROWS
+          raise MCP.invalid("That is #{periods.size} periods, at most #{SQLSandbox::MAX_ROWS} are possible. " \
                             "Please narrow down from/to or choose a longer interval.")
         end
       end
       # The obvious case before loading anything.
-      too_many.call(Store.periods(interval, from, MCP.min_time(to, today))) if from
+      too_many.call(Domain::Period.labels(unit, from, MCP.min_time(to, today))) if from
 
       # Up to the end of the last period: each row is the balance after all
       # expenses dated in or before its period.
-      es = @d.store.dated_balance_entries(to.try { |t| Store.period_end(interval, t) })
+      es = @d.store.dated_balance_entries(to.try { |t| Domain::Period.last_day(unit, t) })
       ps = participants
       if to.nil?
         # Until today, or the last expense if one is dated later: the last row
@@ -568,7 +568,7 @@ module Zipfelkasse::MCP
       end
       from = es.first?.try(&.date) if from.nil?
       from = to unless from && from <= to
-      periods = Store.periods(interval, from, to)
+      periods = Domain::Period.labels(unit, from, to)
       too_many.call(periods)
 
       # Expenses before the first period are the opening balance.
@@ -577,7 +577,7 @@ module Zipfelkasse::MCP
       i = 0
       snapshots = periods.map do |p|
         entries = [] of Domain::Entry
-        while i < es.size && Store.period_of(interval, es[i].date) <= p
+        while i < es.size && Domain::Period.label(unit, es[i].date) <= p
           entries << es[i].entry
           i += 1
         end
@@ -615,25 +615,24 @@ module Zipfelkasse::MCP
 
     private def search_expenses(raw : String?) : String
       a = MCP.args(SearchArgs, raw)
-      f = Store::ExpenseFilter.new(any_text: a.text)
-      f.from, f.to = MCP.parse_range(a.from, a.to)
-      f.category_id, f.without_category = category_arg(a.category)
+      from, to = MCP.parse_range(a.from, a.to)
+      category_id, without_category = category_arg(a.category)
       person, payer, involved = person_arg(a.person), person_arg(a.paid_by), person_arg(a.involved)
-      f.participant_id = person.try(&.id) || 0_i64
-      f.paid_by = payer.try(&.id) || 0_i64
-      f.involved_id = involved.try(&.id) || 0_i64
-      f.min_cents = Server.amount_arg("min_amount", a.min_amount)
-      f.max_cents = Server.amount_arg("max_amount", a.max_amount)
-      raise MCP.invalid("max_amount must be greater than 0.") if a.max_amount && f.max_cents == 0
-      if f.max_cents != 0 && f.min_cents > f.max_cents
-        raise MCP.invalid("min_amount (#{MCP.eur(f.min_cents)}) is greater than max_amount (#{MCP.eur(f.max_cents)}).")
+      min_cents = Server.amount_arg("min_amount", a.min_amount)
+      max_cents = Server.amount_arg("max_amount", a.max_amount)
+      raise MCP.invalid("max_amount must be greater than 0.") if max_cents == 0
+      if max_cents && (min_cents || 0) > max_cents
+        raise MCP.invalid("min_amount (#{MCP.eur(min_cents.not_nil!)}) is greater than max_amount (#{MCP.eur(max_cents)}).")
       end
       mode = MCP.trim_or(a.reimbursements, REIMBURSEMENTS_EXCLUDE)
       raise MCP.invalid(%(reimbursements must be "exclude", "include" or "only".)) unless REIMBURSEMENT_MODES.includes?(mode)
-      f.sort = MCP.trim_or(a.sort, Store::SORT_DATE_DESC)
-      raise MCP.invalid("sort must be one of #{SORT_ORDERS.join(", ")}.") unless SORT_ORDERS.includes?(f.sort)
+      sort = MCP.trim_or(a.sort, Store::ExpenseSort::DateDesc.key)
+      raise MCP.invalid("sort must be one of #{SORT_ORDERS.join(", ")}.") unless SORT_ORDERS.includes?(sort)
       detail = MCP.trim_or(a.detail, DETAIL_COMPACT)
       raise MCP.invalid(%(detail must be "compact" or "full".)) unless DETAIL_LEVELS.includes?(detail)
+      f = Store::ExpenseFilter.new(any_text: a.text, from: from, to: to, category_id: category_id,
+        without_category: without_category, participant_id: person.try(&.id), paid_by: payer.try(&.id),
+        involved_id: involved.try(&.id), min_cents: min_cents, max_cents: max_cents, sort: Store::ExpenseSort.parse(sort))
       sharer = person || involved # whose shares are summed up
       limit = Server.limit(a.limit, 50)
 
@@ -665,16 +664,16 @@ module Zipfelkasse::MCP
       end
     end
 
-    # 0 = the default, otherwise 1 to Store::SQL_MAX_ROWS.
+    # 0 = the default, otherwise 1 to SQLSandbox::MAX_ROWS.
     def self.limit(v : Int64, default : Int32) : Int32
       return default if v == 0
-      raise MCP.invalid("limit must be between 1 and #{Store::SQL_MAX_ROWS}.") unless 1 <= v <= Store::SQL_MAX_ROWS
+      raise MCP.invalid("limit must be between 1 and #{SQLSandbox::MAX_ROWS}.") unless 1 <= v <= SQLSandbox::MAX_ROWS
       v.to_i
     end
 
-    # Euros to cents; nil = 0.
-    def self.amount_arg(name : String, v : Float64?) : Int64
-      return 0_i64 unless v
+    # Euros to cents.
+    def self.amount_arg(name : String, v : Float64?) : Int64?
+      return unless v
       raise MCP.invalid("#{name} must be an amount in euros of at least 0.") if v < 0 || v.nan? || v > 1e12
       (v * 100).round(:ties_away).to_i64
     end
@@ -686,7 +685,7 @@ module Zipfelkasse::MCP
         j.field "id", e.id
         j.field "date", MCP.ymd(e.date)
         j.field "title", e.title
-        j.field "category", e.category_name unless e.category_name.empty?
+        e.category_name.try { |category| j.field "category", category }
         j.field "paid_by", e.paid_by_name
         j.field "amount", MCP.eur(e.amount_cents)
         j.field "amount_cents", e.amount_cents
@@ -699,11 +698,11 @@ module Zipfelkasse::MCP
         if e.foreign?
           j.field "original", MCP.money(e.original_amount_minor, e.original_currency)
           j.field("fx_rate") { MCP.float(j, e.fx_rate) } unless e.fx_rate == 0
-          j.field "fx_source", e.fx_source unless e.fx_source.empty?
+          e.fx_source.try { |source| j.field "fx_source", source.key }
         end
         j.field "notes", e.notes unless e.notes.empty?
         next if e.reimbursement?
-        j.field "split", e.split_mode.value unless e.split_mode.value.empty?
+        j.field "split", e.split_mode.key
         next if e.shares.empty?
         j.field "shares" do
           j.array do
@@ -721,55 +720,57 @@ module Zipfelkasse::MCP
 
     private def statistics(raw : String?) : String
       a = MCP.args(StatisticsArgs, raw)
-      f = Store::StatsFilter.new(group_by: a.group_by.strip, any_text: a.text)
-      raise MCP.invalid("group_by must be one of #{GROUPINGS.join(", ")}.") unless GROUPINGS.includes?(f.group_by)
-      f.from, f.to = MCP.parse_range(a.from, a.to)
-      f.category_id, f.without_category = category_arg(a.category)
+      group_name = a.group_by.strip
+      raise MCP.invalid("group_by must be one of #{GROUPINGS.join(", ")}.") unless GROUPINGS.includes?(group_name)
+      group = Store::StatsGroup.parse(group_name)
+      from, to = MCP.parse_range(a.from, a.to)
+      category_id, without_category = category_arg(a.category)
       perspective = "total amounts of the expenses"
+      participant_id = nil
       if p = person_arg(a.share_of)
-        f.participant_id = p.id
+        participant_id = p.id
         perspective = "only the share of #{p.name}"
       end
-      limit = Server.limit(a.limit, Store::SQL_MAX_ROWS)
+      limit = Server.limit(a.limit, SQLSandbox::MAX_ROWS)
       today = self.today
       compare = a.compare.strip
-      time_keyed = Store.time_grouping?(f.group_by) || f.group_by == Store::STATS_BY_CATEGORY_MONTH
+      time_keyed = group.time? || group.category_month?
       unless compare.empty?
         raise MCP.invalid(%(compare must be "#{COMPARE_PREVIOUS_YEAR}".)) if compare != COMPARE_PREVIOUS_YEAR
         unless time_keyed
-          from = f.from || raise MCP.invalid("compare=previous_year with group_by=#{f.group_by} needs from (and optionally to): the period to compare.")
-          if f.to.nil?
-            if today < from
-              raise MCP.invalid("from (#{MCP.ymd(from)}) is in the future; compare=previous_year needs a period up to today or an explicit to.")
+          range_start = from || raise MCP.invalid("compare=previous_year with group_by=#{group.key} needs from (and optionally to): the period to compare.")
+          if to.nil?
+            if today < range_start
+              raise MCP.invalid("from (#{MCP.ymd(range_start)}) is in the future; compare=previous_year needs a period up to today or an explicit to.")
             end
-            f.to = today
+            to = today
           end
         end
       end
+      f = Store::StatsFilter.new(group_by: group, from: from, to: to, participant_id: participant_id,
+        category_id: category_id, without_category: without_category, any_text: a.text)
 
       stat_rows = @d.store.stats(f)
-      rows = Store.time_grouping?(f.group_by) ? Server.fill_gaps(stat_rows, f, today) : stat_rows
+      rows = group.time? ? Server.fill_gaps(stat_rows, f, today) : stat_rows
       total = rows.sum(0_i64, &.amount_cents)
-      items = rows.map { |r| StatOut.new(r, f.group_by) }
+      items = rows.map { |r| StatOut.new(r, group) }
       previous_period = ""
       unless compare.empty?
-        prev = f
-        prev.from = f.from.try { |t| Store.shift_date_year(t, -1) }
-        prev.to = f.to.try { |t| Store.shift_date_year(t, -1) }
+        prev = f.copy_with(from: f.from.try(&.shift(years: -1)), to: f.to.try(&.shift(years: -1)))
         # Without from and to, the previous year's rows are the same rows.
         prev_rows = prev.from || prev.to ? @d.store.stats(prev) : stat_rows
         window = time_keyed ? Server.period_window(f, stat_rows, today) : nil
-        items = Server.compare_previous(items, prev_rows, f.group_by, window)
-        previous_period = time_keyed ? "each #{f.group_by.lchop("category_")} one year earlier" : MCP.describe_range(prev.from, prev.to)
+        items = Server.compare_previous(items, prev_rows, group, window)
+        previous_period = time_keyed ? "each #{group.key.lchop("category_")} one year earlier" : MCP.describe_range(prev.from, prev.to)
       end
       note = "Reimbursements and deleted expenses are not included. count = number of expenses."
-      note += " amount = the person's share (consumption), paid = what they paid for the group." if f.group_by == Store::STATS_BY_PERSON
+      note += " amount = the person's share (consumption), paid = what they paid for the group." if group.person?
       unless compare.empty?
         note += " previous = same group one year earlier, change = amount − previous, change_percent relative to previous (missing if previous is 0)."
       end
       JSON.build do |j|
         j.object do
-          j.field "group_by", f.group_by
+          j.field "group_by", group.key
           j.field "note", note
           j.field "period", MCP.describe_range(f.from, f.to)
           j.field "perspective", perspective
@@ -791,7 +792,8 @@ module Zipfelkasse::MCP
     # Lists the periods without expenses of a time grouping with 0: from from
     # (or the first row) to to (or today), never beyond today.
     def self.fill_gaps(rows : Array(Store::StatRow), f : Store::StatsFilter, today : Time) : Array(Store::StatRow)
-      first = f.from || rows.first?.try { |r| Store.period_start(f.group_by, r.period) }
+      unit = f.group_by.period_unit.not_nil!
+      first = f.from || rows.first?.try { |r| Domain::Period.first_day(unit, r.period.to_s) }
       return rows unless first
       Store.fill_periods(rows, f.group_by, first, MCP.min_time(f.to, today))
     end
@@ -800,9 +802,10 @@ module Zipfelkasse::MCP
     # grouping: from from (or the first row) to to (or today), never beyond
     # today.
     def self.period_window(f : Store::StatsFilter, rows : Array(Store::StatRow), today : Time) : Proc(String, Bool)
-      lo = f.from.try { |t| Store.period_of(f.group_by, t) } || rows.min_of?(&.period)
+      unit = f.group_by.period_unit.not_nil!
+      lo = f.from.try { |t| Domain::Period.label(unit, t) } || rows.compact_map(&.period).min?
       return ->(p : String) { false } unless lo
-      hi = Store.period_of(f.group_by, MCP.min_time(f.to, today))
+      hi = Domain::Period.label(unit, MCP.min_time(f.to, today))
       ->(p : String) { lo <= p <= hi }
     end
 
@@ -810,12 +813,12 @@ module Zipfelkasse::MCP
     # one year earlier; their periods are shifted by one year to match. Groups
     # that only exist in prev are appended with 0 – for time-keyed groupings
     # (window given) only if their period lies within window.
-    def self.compare_previous(items : Array(StatOut), prev : Array(Store::StatRow), group_by : String,
+    def self.compare_previous(items : Array(StatOut), prev : Array(Store::StatRow), group : Store::StatsGroup,
                               window : Proc(String, Bool)?) : Array(StatOut)
-      key = ->(o : StatOut) { {o.category, Store.fold(o.title), o.person, o.year, o.month, o.week} }
+      key = ->(o : StatOut) { {o.category, o.title.downcase(:fold), o.person, o.year, o.month, o.week} }
       prev_by = {} of {String, String, String, String, String, String} => StatOut
       prev.each do |r|
-        o = StatOut.new(r.copy_with(period: Store.shift_period_year(r.period, 1)), group_by)
+        o = StatOut.new(r.copy_with(period: Domain::Period.shift_label(r.period.to_s, 1)), group)
         if have = prev_by[key.call(o)]?
           have.amount_cents += o.amount_cents # week 53 merged into week 52 of a year without week 53
         else
@@ -828,7 +831,7 @@ module Zipfelkasse::MCP
         next if window && !window.call(p.period)
         o = StatOut.new
         o.category, o.title, o.year, o.month, o.week, o.person = p.category, p.title, p.year, p.month, p.week, p.person
-        o.paid_cents = 0_i64 if group_by == Store::STATS_BY_PERSON
+        o.paid_cents = 0_i64 if group.person?
         o.set_previous(p.amount_cents)
         items << o
         appended = true
@@ -846,13 +849,17 @@ module Zipfelkasse::MCP
       loc = location
       since = from.try { |t| Time.local(t.year, t.month, t.day, location: loc) }
       until_ = to.try { |t| Time.local(t.year, t.month, t.day, location: loc).shift(days: 1) }
-      actor = person_arg(a.person).try(&.id) || 0_i64
+      actor = person_arg(a.person).try(&.id)
       expense_id, before_id = a.expense_id, a.before_id
       raise MCP.invalid("expense_id and before_id must be positive.") if expense_id < 0 || before_id < 0
+      action = a.action.strip.presence.try do |name|
+        Store::Action.from_key?(name) ||
+          raise MCP.invalid("action must be one of #{Store::Action.values.join(", ", &.key)}.")
+      end
       limit = Server.limit(a.limit, 50)
       acts = @d.store.list_activity(Store::ActivityFilter.new(
-        expense_id: expense_id, actor_id: actor, action: a.action.strip, since: since, until: until_,
-        before_id: before_id, limit: limit + 1))
+        expense_id: Web.nil_if_zero(expense_id), actor_id: actor, action: action, since: since, until: until_,
+        before_id: Web.nil_if_zero(before_id), limit: limit + 1))
       more = acts.size > limit
       acts = acts.first(limit)
       JSON.build do |j|
@@ -862,15 +869,15 @@ module Zipfelkasse::MCP
               acts.each do |act|
                 j.object do
                   j.field "id", act.id
-                  j.field "at", MCP.rfc3339((act.at || Domain::UNSET_TIME).in(loc))
+                  j.field "at", MCP.rfc3339(act.at.in(loc))
                   j.field "actor", act.actor_name.presence || "system"
-                  j.field "action", act.action
-                  j.field "expense_id", act.expense_id unless act.expense_id == 0
+                  j.field "action", act.action.key
+                  act.expense_id.try { |id| j.field "expense_id", id }
                   d = act.details
-                  j.field "title", d.title unless d.title.empty?
-                  unless d.amount_cents == 0
-                    j.field "amount", MCP.eur(d.amount_cents)
-                    j.field "amount_cents", d.amount_cents
+                  d.title.try { |title| j.field "title", title }
+                  d.amount_cents.try do |cents|
+                    j.field "amount", MCP.eur(cents)
+                    j.field "amount_cents", cents
                   end
                   unless d.changes.empty?
                     j.field "changes" do
@@ -885,7 +892,7 @@ module Zipfelkasse::MCP
                       end
                     end
                   end
-                  j.field "text", d.text unless d.text.empty?
+                  d.text.try { |text| j.field "text", text }
                 end
               end
             end
@@ -920,14 +927,14 @@ module Zipfelkasse::MCP
       - activity: change log (at, actor_id NULL = system, action expense_created|expense_updated|expense_deleted, expense_id, details_json).
       - fx_rates: exchange rates per currency, source ('ezb' or 'manuell') and date (foreign currency per 1 EUR).
         A day can have both an ECB and a manual rate; the most recent manual rate on or before a date takes precedence over the ECB rate.
-      - settings: settings (key/value, e.g. group_name, default_currency).
+      - settings: settings (key/value, e.g. group_name).
       YNAB tables (credentials) are not visible via MCP.
 
       Balance of a person = sum of amount_cents of the expenses they paid − sum of their shares in expense_shares
       (only deleted_at IS NULL, reimbursements included). Positive = is owed money.
 
       Example – Anna's share per category in 2026:
-      SELECT coalesce(c.name, '#{Store::NO_CATEGORY}') AS category, sum(x.amount_cents) / 100.0 AS euros
+      SELECT coalesce(c.name, '#{NO_CATEGORY_LABEL}') AS category, sum(x.amount_cents) / 100.0 AS euros
       FROM expenses e
       JOIN expense_shares x ON x.expense_id = e.id
       JOIN participants p ON p.id = x.participant_id AND p.name = 'Anna'
@@ -938,7 +945,7 @@ module Zipfelkasse::MCP
 
     private def schema(raw : String?) : String
       MCP.args(NoArgs, raw)
-      objects = @d.store.mcp_schema
+      objects = @d.store.schema
       ps = participants
       cs = @d.store.list_categories(include_archived: true)
       String.build do |b|
@@ -962,7 +969,7 @@ module Zipfelkasse::MCP
         raise MCP.invalid("Too many concurrent queries, please try again.")
       end
       res = begin
-        @d.store.read_only_query(query)
+        SQLSandbox.new(@d.store.path).query(query)
       ensure
         @sql_sem.receive
       end
@@ -970,7 +977,7 @@ module Zipfelkasse::MCP
         j.object do
           j.field "columns", res.columns
           if res.truncated?
-            j.field "note", "There are more than #{Store::SQL_MAX_ROWS} rows; only the first #{Store::SQL_MAX_ROWS} are included. " \
+            j.field "note", "There are more than #{SQLSandbox::MAX_ROWS} rows; only the first #{SQLSandbox::MAX_ROWS} are included. " \
                             "Please aggregate or narrow down with WHERE/LIMIT."
           end
           j.field "row_count", res.rows.size

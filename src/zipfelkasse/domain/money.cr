@@ -1,8 +1,5 @@
-# Pure business logic: no IO, no dependencies.
 module Zipfelkasse::Domain
   extend self
-
-  # Amounts are Int64 in the smallest unit everywhere (cents for EUR).
 
   # Caps amounts so that multiplications during splitting cannot overflow
   # (10 billion €).
@@ -176,19 +173,10 @@ module Zipfelkasse::Domain
   end
 
   private def format_sep(v : Int64, decimals : Int32, sep : Char, group : Bool) : String
-    neg = v < 0
-    u = neg ? 0_u64 &- v.to_u64! : v.to_u64 # Int64::MIN-safe
-    s = u.to_s
-    s = "0" * (decimals - s.size + 1) + s if s.size <= decimals
-    int_part, frac = s[0, s.size - decimals], s[s.size - decimals..]
-    if group && int_part.size > 3
-      first = int_part.size % 3
-      groups = first > 0 ? [int_part[0, first]] : [] of String
-      first.step(to: int_part.size - 1, by: 3) { |i| groups << int_part[i, 3] }
-      int_part = groups.join('.')
-    end
-    str = decimals > 0 ? "#{int_part}#{sep}#{frac}" : int_part
-    neg ? "-" + str : str
+    whole, fraction = v.abs.divmod(10_i64 ** decimals)
+    digits = group ? whole.format(delimiter: '.') : whole.to_s
+    text = decimals > 0 ? "#{digits}#{sep}#{fraction.to_s.rjust(decimals, '0')}" : digits
+    v < 0 ? "-" + text : text
   end
 
   # Format only; whether the currency exists is not checked.
@@ -213,9 +201,10 @@ module Zipfelkasse::Domain
 
   # rate is in ECB format: units of foreign currency per 1 EUR.
   def to_eur_cents(minor : Int64, currency : String, rate : Float64) : Int64
-    return 0_i64 if rate <= 0 || rate.nan? || rate.infinite?
+    raise ValidationError.new("Der Wechselkurs muss größer als 0 sein.") if rate <= 0 || rate.nan? || rate.infinite?
     scale = 10.0 ** currency_decimals(currency)
     eur = (minor.to_f / scale / rate * 100).round(:ties_away)
-    -9.223372036854775808e18 <= eur < 9.223372036854775808e18 ? eur.to_i64 : Int64::MIN
+    raise ValidationError.new("Der Betrag ist zu groß.") unless -9.223372036854775808e18 <= eur < 9.223372036854775808e18
+    eur.to_i64
   end
 end

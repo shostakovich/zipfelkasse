@@ -48,7 +48,7 @@ describe "Store activity" do
                    else            f.anna
                    end
         {name, acts.map { |a| {a.action, a.details.text, a.actor_id, a.expense_id} }}
-          .should eq({name, [{Store::ACTION_SETTINGS_UPDATED, want, actor_id, 0_i64}]})
+          .should eq({name, [{Store::Action::SettingsUpdated, want, actor_id, nil}]})
       end
     end
   end
@@ -66,21 +66,21 @@ describe "Store activity" do
     end
   end
 
-  it "writes details_json without empty fields and reads it leniently" do
+  it "writes details_json without unset fields and reads it leniently" do
     with_expense_fixture do |f|
       id = f.must_create(f.equal("Kino", 1000, "2026-09-01", f.anna, f.anna))
-      input = f.s.get_expense(id).input
+      input = f.s.get_expense(id).to_input
       input.title = "Theater"
       f.s.update_expense(f.anna, id, input)
       JSON.parse(f.s.db.scalar("SELECT details_json FROM activity ORDER BY id DESC LIMIT 1").as(String)).should eq JSON.parse(
         %({"title":"Theater","amount_cents":1000,"changes":[{"field":"Titel","old":"Kino","new":"Theater"}]}))
       f.s.db.scalar("SELECT details_json FROM activity WHERE action = 'expense_created'").should eq %({"title":"Kino","amount_cents":1000})
 
-      f.s.db.exec(%(UPDATE activity SET details_json = '{"Title":"x","amount_cents":"1","changes":[{"field":"a","new":2}]}' WHERE action = 'expense_created'))
+      f.s.db.exec(%(UPDATE activity SET details_json = '{"title":"x","extra":true,"changes":[{"field":"a","old":"b","new":"c"}]}' WHERE action = 'expense_created'))
       f.s.db.exec(%(UPDATE activity SET details_json = 'kaputt' WHERE action = 'expense_updated'))
       updated, created = f.s.list_activity(Store::ActivityFilter.new(expense_id: id))
       updated.details.should eq Store::ActivityDetails.new
-      created.details.should eq Store::ActivityDetails.new(title: "x", changes: [Store::FieldChange.new("a", "", "")])
+      created.details.should eq Store::ActivityDetails.new(title: "x", changes: [Store::FieldChange.new("a", "b", "c")])
     end
   end
 

@@ -13,14 +13,14 @@ module Zipfelkasse::Export
         e.id.to_s,
         Domain.format_date(e.date),
         cell(e.title),
-        cell(e.category_name),
+        cell(e.category_name || ""),
         cell(e.paid_by_name),
         Domain.format_decimal(e.amount_cents, 2, ','),
         Domain.format_decimal(e.original_amount_minor, Domain.currency_decimals(e.original_currency), ','),
         e.original_currency,
         e.foreign? ? Domain.format_rate(e.fx_rate) : "",
         e.reimbursement? ? "Rückzahlung" : "Ausgabe",
-        e.split_mode.label,
+        Web.split_mode_label(e.split_mode),
         cell(e.notes),
       ]
       people.each do |p|
@@ -110,20 +110,20 @@ module Zipfelkasse::Export
       j.field "id", e.id
       j.field "date", Store.format_date(e.date)
       j.field "title", e.title
-      j.field "category_id", e.category_id == 0 ? nil : e.category_id
-      j.field "category", e.category_name
+      j.field "category_id", e.category_id
+      j.field "category", e.category_name || ""
       j.field "paid_by", e.paid_by
       j.field "paid_by_name", e.paid_by_name
       j.field "amount_cents", e.amount_cents
       j.field "is_reimbursement", e.reimbursement?
-      j.field "split_mode", e.split_mode.value
+      j.field "split_mode", e.split_mode.key
       j.field "original_amount_minor", e.original_amount_minor
       j.field "original_currency", e.original_currency
       # 1, not 1.0, for EUR.
       j.field "fx_rate" { e.fx_rate == e.fx_rate.trunc && e.fx_rate.abs < 1e15 ? j.number(e.fx_rate.to_i64) : j.number(e.fx_rate) }
-      j.field "fx_source", e.fx_source
+      j.field "fx_source", e.fx_source.try(&.key) || ""
       j.field "notes", e.notes
-      j.field "recurring_id", e.recurring_id == 0 ? nil : e.recurring_id
+      j.field "recurring_id", e.recurring_id
       j.field "shares" do
         j.array do
           e.shares.each do |s|
@@ -141,10 +141,9 @@ module Zipfelkasse::Export
     end
   end
 
-  # RFC 3339 in UTC with as many fraction digits as needed; nil is
-  # 0001-01-01T00:00:00Z.
-  private def self.json_time(t : Time?) : String
-    t = (t || Domain::UNSET_TIME).to_utc
+  # RFC 3339 in UTC with as many fraction digits as needed.
+  private def self.json_time(t : Time) : String
+    t = t.to_utc
     s = t.to_s("%Y-%m-%dT%H:%M:%S")
     s += "." + t.nanosecond.to_s.rjust(9, '0').rstrip('0') if t.nanosecond > 0
     s + "Z"

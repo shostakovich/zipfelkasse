@@ -21,6 +21,31 @@ module Zipfelkasse::Web
     {"receipt", %w(sonstig allgemein)},
   ]
 
+  def self.split_mode_label(mode : Domain::SplitMode) : String
+    case mode
+    in .equal?   then "Gleichmäßig"
+    in .shares?  then "Nach Anteilen"
+    in .percent? then "Nach Prozent"
+    in .amount?  then "Nach Beträgen"
+    end
+  end
+
+  def self.frequency_label(frequency : Domain::Frequency) : String
+    case frequency
+    in .weekly?  then "Wöchentlich"
+    in .monthly? then "Monatlich"
+    in .yearly?  then "Jährlich"
+    end
+  end
+
+  def self.frequency_adverb(frequency : Domain::Frequency) : String
+    case frequency
+    in .weekly?  then "wöchentlich"
+    in .monthly? then "monatlich"
+    in .yearly?  then "jährlich"
+    end
+  end
+
   def self.category_icon(name : String) : String
     n = name.downcase
     CATEGORY_ICONS.each do |icon, keywords|

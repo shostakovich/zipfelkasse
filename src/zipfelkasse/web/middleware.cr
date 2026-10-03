@@ -67,7 +67,7 @@ module Zipfelkasse::Web
         req.body = IO::Memory.new(data[0, n]) unless too_large
       end
       return call_next(context) unless too_large
-      @d.log.warn("request body too large", method: req.method, path: Web.log_path(req.path), content_length: length || -1)
+      Log.warn(&.emit("request body too large", method: req.method, path: Web.log_path(req.path), content_length: length || -1))
       context.response.headers["Connection"] = "close"
       r = Request.new(context, @d)
       if req.path.starts_with?("/api/")
@@ -102,7 +102,7 @@ module Zipfelkasse::Web
     def call(context : HTTP::Server::Context)
       return call_next(context) if allowed?(context.request)
       req = context.request
-      @d.log.warn("cross-origin request rejected", method: req.method, path: Web.log_path(req.path), origin: req.headers["Origin"]? || "")
+      Log.warn(&.emit("cross-origin request rejected", method: req.method, path: Web.log_path(req.path), origin: req.headers["Origin"]? || ""))
       r = Request.new(context, @d)
       if req.path.starts_with?("/api/")
         r.json_error(403, "Anfrage von einer fremden Seite abgelehnt.")

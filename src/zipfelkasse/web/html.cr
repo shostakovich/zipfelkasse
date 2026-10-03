@@ -2,8 +2,6 @@ require "html"
 
 module Zipfelkasse::Web
   struct SafeHTML
-    getter html : String
-
     def initialize(@html : String)
     end
 
@@ -19,10 +17,6 @@ module Zipfelkasse::Web
       when Nil      then nil
       else               ::HTML.escape(value.to_s, io)
       end
-    end
-
-    def self.escape(s : String) : String
-      ::HTML.escape(s)
     end
   end
 

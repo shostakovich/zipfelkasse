@@ -56,7 +56,7 @@ module Zipfelkasse::Web
     property paid_by = 0_i64
     property notes = ""
     property? reimbursement = false
-    property split_mode : Domain::SplitMode = Domain::SPLIT_EQUAL
+    property split_mode : Domain::SplitMode = Domain::SplitMode::Equal
     property rows = [] of SplitRow
     property eur_cents = 0_i64 # converted amount for display, 0 = unknown
 
@@ -75,7 +75,7 @@ module Zipfelkasse::Web
     f.id = e.id
     f.title = e.title
     f.date = Store.format_date(e.date)
-    f.category = e.category_id
+    f.category = e.category_id || 0_i64
     f.paid_by = e.paid_by
     f.notes = e.notes
     f.reimbursement = e.reimbursement?
@@ -90,7 +90,7 @@ module Zipfelkasse::Web
     if e.foreign?
       f.amount = Domain.format_minor_input(e.original_amount_minor, cur)
       f.rate = Domain.format_rate(e.fx_rate)
-      f.rate_source = e.fx_source
+      f.rate_source = e.fx_source.try(&.key) || ""
     else
       f.amount = Domain.format_cents_input(e.amount_cents)
     end
@@ -101,10 +101,10 @@ module Zipfelkasse::Web
       value = ""
       if sh
         value = case e.split_mode
-                when Domain::SPLIT_SHARES  then sh.weight.to_s
-                when Domain::SPLIT_PERCENT then Domain.format_basis_points(sh.weight).rchop(" %")
-                when Domain::SPLIT_AMOUNT  then Domain.format_minor_input(sh.weight, cur) # original currency
-                else                            ""
+                in .equal?   then ""
+                in .shares?  then sh.weight.to_s
+                in .percent? then Domain.format_basis_points(sh.weight).rchop(" %")
+                in .amount?  then Domain.format_minor_input(sh.weight, cur) # original currency
                 end
       end
       f.rows << SplitRow.new(p.id, p.name, p.archived?, !sh.nil?, value, sh.try(&.amount_cents) || 0_i64)
@@ -155,8 +155,7 @@ module Zipfelkasse::Web
     f.paid_by = form_id(r.post_form_value("bezahlt_von"))
     f.notes = r.post_form_value("notiz")
     f.reimbursement = !r.post_form_value("rueckzahlung").empty?
-    mode = Domain::SplitMode.new(r.post_form_value("aufteilung"))
-    f.split_mode = mode.valid? ? mode : Domain::SPLIT_EQUAL
+    f.split_mode = Domain::SplitMode.from_key?(r.post_form_value("aufteilung")) || Domain::SplitMode::Equal
     checked = r.post_form_values("teil").map { |v| form_id(v) }.to_set
     in_existing = Set(Int64).new
     if existing
@@ -196,7 +195,7 @@ module Zipfelkasse::Web
   # An empty value is 1 share, otherwise 0.
   def self.split_weight(mode : Domain::SplitMode, cur : String, row : SplitRow) : Int64
     v = row.value
-    v = mode == Domain::SPLIT_SHARES ? "1" : "0" if v.empty?
+    v = mode.shares? ? "1" : "0" if v.empty?
     Domain.parse_weight(mode, cur, v)
   end
 
@@ -217,8 +216,8 @@ module Zipfelkasse::Web
       if (n = r.query("anzahl").to_i64?(whitespace: false)) && n > limit
         limit = Math.min(n, 100_000).to_i
       end
-      expenses = @d.store.list_expenses(Store::ExpenseFilter.new(text: filter.text, category_id: filter.category_id,
-        participant_id: filter.participant_id, limit: limit + 1))
+      expenses = @d.store.list_expenses(Store::ExpenseFilter.new(text: filter.text, category_id: Web.nil_if_zero(filter.category_id),
+        participant_id: Web.nil_if_zero(filter.participant_id), limit: limit + 1))
       balance = @d.store.balances[me.id]? || 0_i64
       people = @d.store.list_participants(true)
       # Filter options: active entries plus the selected one (even if archived).
@@ -313,8 +312,8 @@ module Zipfelkasse::Web
     # Validates the form and builds the store input. A missing or ECB rate
     # for a foreign currency is looked up and copied into the form.
     private def to_input(f : ExpenseForm, existing : Store::Expense?) : Store::ExpenseInput
-      input = Store::ExpenseInput.new(title: f.title, category_id: f.category, paid_by: f.paid_by, notes: f.notes,
-        reimbursement: f.reimbursement?, split_mode: f.split_mode)
+      input = Store::ExpenseInput.new(title: f.title, category_id: Web.nil_if_zero(f.category),
+        paid_by: Web.nil_if_zero(f.paid_by), notes: f.notes, reimbursement: f.reimbursement?, split_mode: f.split_mode)
       raise Domain::ValidationError.new("Bitte einen Titel angeben.") if f.title.strip.empty?
       date = Domain.parse_date(f.date)
       input.date = date
@@ -330,12 +329,13 @@ module Zipfelkasse::Web
         input.original_amount_minor = Domain.parse_minor(f.amount, Domain.currency_decimals(cur))
         raise Domain::ValidationError.new("Der Betrag muss größer als 0 sein.") if input.original_amount_minor <= 0
         input.original_currency = cur
-        input.fx_rate, input.fx_source = form_rate(f, cur, date, existing)
-        f.eur_cents = Domain.to_eur_cents(input.original_amount_minor, cur, input.fx_rate)
+        rate, input.fx_source = form_rate(f, cur, date, existing)
+        input.fx_rate = rate
+        f.eur_cents = Domain.to_eur_cents(input.original_amount_minor, cur, rate)
       end
       rows = f.checked_rows
       if f.reimbursement?
-        input.split_mode = Domain::SPLIT_EQUAL
+        input.split_mode = Domain::SplitMode::Equal
         input.parts = Web.reimbursement_parts(rows)
       else
         input.parts = Web.split_parts(input.split_mode, cur, rows)
@@ -352,13 +352,13 @@ module Zipfelkasse::Web
     #   and rate keeps the saved rate, so a later published rate does not
     #   change it;
     # - any other rate counts as entered by hand.
-    private def form_rate(f : ExpenseForm, cur : String, date : Time, existing : Store::Expense?) : {Float64, String}
+    private def form_rate(f : ExpenseForm, cur : String, date : Time, existing : Store::Expense?) : {Float64, Domain::FXSource}
       unless f.rate.empty?
         rate = Domain.parse_rate(f.rate)
-        return {rate, Domain::FX_SOURCE_MANUAL} if f.rate_source != Domain::FX_SOURCE_ECB
-        if existing && existing.fx_source == Domain::FX_SOURCE_ECB && existing.original_currency == cur &&
+        return {rate, Domain::FXSource::Manual} if f.rate_source != Domain::FXSource::Ecb.key
+        if existing && existing.fx_source.try(&.ecb?) && existing.original_currency == cur &&
            existing.date == date && existing.fx_rate == rate
-          return {rate, Domain::FX_SOURCE_ECB}
+          return {rate, Domain::FXSource::Ecb}
         end
       end
       looked = begin
@@ -369,7 +369,7 @@ module Zipfelkasse::Web
         raise ex
       end
       f.rate = Domain.format_rate(looked.rate)
-      f.rate_source = looked.source
+      f.rate_source = looked.source.key
       {looked.rate, looked.source}
     end
 
@@ -380,11 +380,11 @@ module Zipfelkasse::Web
       rate = begin
         fx.rate(cur, date)
       rescue ex
-        @d.log.info("rate not available", currency: cur, date: Store.format_date(date), err: ex)
+        Log.info(exception: ex, &.emit("rate not available", currency: cur, date: Store.format_date(date)))
         raise unavailable
       end
       raise unavailable unless rate.rate > 0
-      rate.source.empty? ? rate.copy_with(source: Domain::FX_SOURCE_ECB) : rate
+      rate
     end
 
     private def render_expense(r : Request, status : Int32, f : ExpenseForm, e : Store::Expense?, error : String) : Nil

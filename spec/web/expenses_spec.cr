@@ -62,7 +62,7 @@ describe "expense pages" do
           who.each { |n| v.add("teil", ids[n].to_s) }
           values.each { |n, val| v["wert_#{ids[n]}"] = val }
           e = g.create(v)
-          e.split_mode.value.should eq mode
+          e.split_mode.key.should eq mode
           shares_of(e).should eq want.to_h { |n, c| {ids[n], c.to_i64} }
           {e.title, e.category_id, e.paid_by, Store.format_date(e.date)}.should eq({"Einkauf", g.food, g.anna, "2026-09-30"})
         end
@@ -188,7 +188,7 @@ describe "expense pages" do
       v["betrag"] = "10,00"
       e = g.create(v)
       {e.original_currency, e.original_amount_minor, e.fx_rate, e.fx_source, e.amount_cents}
-        .should eq({"USD", 1000, 1.25, Domain::FX_SOURCE_ECB, 800})
+        .should eq({"USD", 1000, 1.25, Domain::FXSource::Ecb, 800})
 
       # A rate entered by hand is manual; "other" currency with an ISO code.
       v = g.form
@@ -197,7 +197,7 @@ describe "expense pages" do
       v["betrag"] = "100"
       v["kurs"] = "40"
       e = g.create(v)
-      {e.original_currency, e.fx_rate, e.fx_source, e.amount_cents}.should eq({"THB", 40.0, Domain::FX_SOURCE_MANUAL, 250})
+      {e.original_currency, e.fx_rate, e.fx_source, e.amount_cents}.should eq({"THB", 40.0, Domain::FXSource::Manual, 250})
 
       # An ECB rate taken over from the form stays "ezb".
       v = g.form
@@ -206,7 +206,7 @@ describe "expense pages" do
       v["kurs"] = "160"
       v["kurs_quelle"] = "ezb"
       e = g.create(v)
-      {e.original_amount_minor, e.amount_cents, e.fx_source}.should eq({1600, 1000, Domain::FX_SOURCE_ECB})
+      {e.original_amount_minor, e.amount_cents, e.fx_source}.should eq({1600, 1000, Domain::FXSource::Ecb})
 
       # No rate available: an understandable message.
       v = g.form
@@ -285,7 +285,7 @@ describe "expense pages" do
        "bezahlt_von" => g.ben.to_s, "rueckzahlung" => "1", "aufteilung" => "shares", "teil" => g.anna.to_s}.each { |k, val| v[k] = val }
       e = g.create(v)
       e.reimbursement?.should be_true
-      e.split_mode.should eq Domain::SPLIT_EQUAL
+      e.split_mode.should eq Domain::SplitMode::Equal
       e.paid_by.should eq g.ben
       shares_of(e)[g.anna].should eq 1000
       b = g.store.balances
@@ -360,7 +360,7 @@ describe "expense pages" do
 
   it "fills in defaults for a new expense" do
     with_expense_group do |g|
-      g.store.set_participant_archived(0_i64, g.cleo, true)
+      g.store.set_participant_archived(nil, g.cleo, true)
       status, body = g.get("/ausgaben/neu")
       status.should eq 200
       [
@@ -470,11 +470,11 @@ describe "expense pages" do
   it "reports a recurring collision in the form" do
     with_expense_group do |g|
       first = g.create(g.form)
-      rid = g.store.create_recurring_from_expense(g.anna, first.id, Domain::FREQ_MONTHLY)
-      input = first.input
+      rid = g.store.create_recurring_from_expense(g.anna, first.id, Domain::Frequency::Monthly)
+      input = first.to_input
       input.date = first.date.shift(months: 1)
       input.recurring_id = rid
-      second = g.store.create_expense(0_i64, input)
+      second = g.store.create_expense(nil, input)
       status, _, body = g.post("/ausgaben/#{second}", g.form) # date of the first instance
       status.should eq 422
       error_of(body).should contain "Für diesen Termin gibt es schon eine Ausgabe dieser Wiederholung."
@@ -490,27 +490,27 @@ describe "expense pages" do
       v["waehrung"] = "GBP"
       v["betrag"] = "17,00"
       v["kurs"] = "1,08"
-      v["kurs_quelle"] = Domain::FX_SOURCE_ECB
+      v["kurs_quelle"] = Domain::FXSource::Ecb.key
       e = g.create(v)
-      {e.original_currency, e.fx_rate, e.fx_source, e.amount_cents}.should eq({"GBP", 0.85, Domain::FX_SOURCE_ECB, 2000})
+      {e.original_currency, e.fx_rate, e.fx_source, e.amount_cents}.should eq({"GBP", 0.85, Domain::FXSource::Ecb, 2000})
 
       # The matching ECB rate is kept.
       v["kurs"] = "0,85"
       e = g.create(v)
-      {e.fx_rate, e.fx_source}.should eq({0.85, Domain::FX_SOURCE_ECB})
+      {e.fx_rate, e.fx_source}.should eq({0.85, Domain::FXSource::Ecb})
 
       # Without a source a rate counts as manual and is kept.
       v["kurs"] = "1,08"
       v["kurs_quelle"] = ""
       e = g.create(v)
-      {e.fx_rate, e.fx_source}.should eq({1.08, Domain::FX_SOURCE_MANUAL})
+      {e.fx_rate, e.fx_source}.should eq({1.08, Domain::FXSource::Manual})
 
       # Switched to a currency without an ECB rate: a message, and the stale
       # rate is not offered again.
       v["waehrung"] = ""
       v["waehrung_andere"] = "THB"
       v["kurs"] = "0,85"
-      v["kurs_quelle"] = Domain::FX_SOURCE_ECB
+      v["kurs_quelle"] = Domain::FXSource::Ecb.key
       status, _, body = g.post("/ausgaben/#{e.id}", v)
       status.should eq 422
       error_of(body).should contain "Kurs bitte von Hand eintragen"
@@ -530,11 +530,11 @@ describe "expense pages" do
       fx.rates["USD"] = 1.2
       v["titel"] = "Einkauf USA"
       v["kurs"] = "1,08"
-      v["kurs_quelle"] = Domain::FX_SOURCE_ECB
+      v["kurs_quelle"] = Domain::FXSource::Ecb.key
       status, _, body = g.post("/ausgaben/#{e.id}", v)
       status.should eq(303), error_of(body)
       got = g.store.get_expense(e.id)
-      {got.fx_rate, got.amount_cents, got.fx_source, got.title}.should eq({1.08, 1000, Domain::FX_SOURCE_ECB, "Einkauf USA"})
+      {got.fx_rate, got.amount_cents, got.fx_source, got.title}.should eq({1.08, 1000, Domain::FXSource::Ecb, "Einkauf USA"})
     end
   end
 end

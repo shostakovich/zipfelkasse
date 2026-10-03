@@ -35,7 +35,7 @@ private def error_of(body : String) : String
 end
 
 private def activity_texts(s : Zipfelkasse::Store) : Array(String)
-  s.list_activity.map(&.details.text)
+  s.list_activity.map(&.details.text.to_s)
 end
 
 describe "settings pages" do
@@ -133,7 +133,7 @@ describe "settings pages" do
       cats[0].id.should eq second.id
       cats[1].name.should eq "Essen & Trinken"
       act = srv.store.list_activity(Zipfelkasse::Store::ActivityFilter.new(limit: 1)).first
-      act.action.should eq Zipfelkasse::Store::ACTION_SETTINGS_UPDATED
+      act.action.should eq Zipfelkasse::Store::Action::SettingsUpdated
       act.actor_id.should eq f.anna
       act.details.text.should eq "Kategorie „#{second.name}“ nach oben verschoben"
       _, body = page(srv, "/einstellungen/kategorien", me)
@@ -155,7 +155,7 @@ describe "settings pages" do
 
   it "serves the PWA manifest, service worker and icons" do
     with_group do |srv, _, me|
-      srv.store.set_group_name(0_i64, "WG Süd")
+      srv.store.set_group_name(nil, "WG Süd")
       res = srv.get("/manifest.webmanifest")
       res.status_code.should eq 200
       res.headers["Content-Type"].should start_with "application/manifest+json"

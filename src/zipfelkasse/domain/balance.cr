@@ -15,23 +15,20 @@ module Zipfelkasse::Domain
 
   # Greedy: the largest debtor pays the largest creditor until everything is
   # settled. Ties are broken by the smaller ID, so the result is deterministic.
-  # IDs must be > 0 (0 means "none").
   def settle(balances : Hash(Int64, Int64)) : Array(Transfer)
-    b = balances.reject { |_, v| v == 0 }
+    open = balances.reject { |_, v| v == 0 }
     transfers = [] of Transfer
     loop do
-      creditor = debtor = 0_i64
-      b.each do |id, v|
-        creditor = id if v > 0 && (creditor == 0 || v > b[creditor] || (v == b[creditor] && id < creditor))
-        debtor = id if v < 0 && (debtor == 0 || v < b[debtor] || (v == b[debtor] && id < debtor))
+      creditor = open.select { |_, v| v > 0 }.min_by? { |id, v| {-v, id} }
+      debtor = open.select { |_, v| v < 0 }.min_by? { |id, v| {v, id} }
+      return transfers unless creditor && debtor
+      to, credit = creditor
+      from, debt = debtor
+      amount = Math.min(credit, -debt)
+      transfers << Transfer.new(from: from, to: to, amount_cents: amount)
+      {to => credit - amount, from => debt + amount}.each do |id, v|
+        v == 0 ? open.delete(id) : (open[id] = v)
       end
-      return transfers if creditor == 0 || debtor == 0
-      amount = Math.min(b[creditor], -b[debtor])
-      transfers << Transfer.new(from: debtor, to: creditor, amount_cents: amount)
-      b[creditor] -= amount
-      b[debtor] += amount
-      b.delete(creditor) if b[creditor] == 0
-      b.delete(debtor) if b[debtor] == 0
     end
   end
 end

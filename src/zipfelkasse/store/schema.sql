@@ -1,4 +1,4 @@
--- Migration 001: complete base schema of Zipfelkasse.
+-- Schema at user_version 5; later changes are numbered files in migrations/ from 6 on.
 -- Conventions:
 --   * Amounts in cents (INTEGER), foreign currency in its smallest unit.
 --   * Calendar dates as TEXT 'YYYY-MM-DD', timestamps as TEXT RFC 3339 UTC.
@@ -19,8 +19,8 @@ CREATE TABLE categories (
     archived_at TEXT
 );
 
--- Rule for recurring expenses. template_json is a store.ExpenseInput as JSON
--- (its date is ignored). Occurrences are always computed from start_date
+-- Rule for recurring expenses. template_json is the expense input (ExpenseInput) as
+-- JSON, without date and recurring_id. Occurrences are always computed from start_date
 -- (the anchor); next_date is the next due occurrence.
 CREATE TABLE recurring (
     id            INTEGER PRIMARY KEY,
@@ -77,7 +77,7 @@ CREATE TABLE expense_shares (
 CREATE INDEX expense_shares_participant ON expense_shares (participant_id);
 
 -- Activity log. actor_id NULL = system (e.g. recurrence).
--- details_json: see store.ActivityDetails.
+-- details_json: the ActivityDetails as JSON.
 CREATE TABLE activity (
     id           INTEGER PRIMARY KEY,
     at           TEXT    NOT NULL,
@@ -89,23 +89,22 @@ CREATE TABLE activity (
 
 CREATE INDEX activity_expense ON activity (expense_id);
 
--- Exchange rates in ECB format (foreign currency per 1 EUR).
-CREATE TABLE fx_rates (
-    date     TEXT NOT NULL,
-    currency TEXT NOT NULL,
-    rate     REAL NOT NULL CHECK (rate > 0),
-    source   TEXT NOT NULL DEFAULT 'ezb', -- 'ezb' | 'manuell'
-    PRIMARY KEY (currency, date)
-) WITHOUT ROWID;
-
 CREATE TABLE ynab_config (
-    participant_id INTEGER PRIMARY KEY REFERENCES participants (id),
-    token          TEXT    NOT NULL,
-    budget_id      TEXT    NOT NULL DEFAULT '',
-    account_id     TEXT    NOT NULL DEFAULT '',
-    start_date     TEXT,
-    enabled        INTEGER NOT NULL DEFAULT 1 CHECK (enabled IN (0, 1)),
-    updated_at     TEXT    NOT NULL
+    participant_id  INTEGER PRIMARY KEY REFERENCES participants (id),
+    token           TEXT    NOT NULL,
+    budget_id       TEXT    NOT NULL DEFAULT '',
+    account_id      TEXT    NOT NULL DEFAULT '',
+    start_date      TEXT,
+    enabled         INTEGER NOT NULL DEFAULT 1 CHECK (enabled IN (0, 1)),
+    updated_at      TEXT    NOT NULL,
+    connected_at    TEXT,
+    last_run        TEXT,
+    last_sync       TEXT,
+    summary         TEXT    NOT NULL DEFAULT '',
+    error           TEXT    NOT NULL DEFAULT '',
+    token_invalid   INTEGER NOT NULL DEFAULT 0 CHECK (token_invalid IN (0, 1)),
+    retry_at        TEXT,
+    backoff_seconds INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE TABLE ynab_category_map (
@@ -132,6 +131,16 @@ CREATE TABLE settings (
     value TEXT NOT NULL
 ) WITHOUT ROWID;
 
+-- Exchange rates in ECB format (foreign currency per 1 EUR). Manual and ECB rates of
+-- the same day sit side by side; the lookup prefers manual ones.
+CREATE TABLE fx_rates (
+    date     TEXT NOT NULL,
+    currency TEXT NOT NULL,
+    rate     REAL NOT NULL CHECK (rate > 0),
+    source   TEXT NOT NULL DEFAULT 'ezb' CHECK (source IN ('ezb', 'manuell')),
+    PRIMARY KEY (currency, source, date)
+) WITHOUT ROWID;
+
 INSERT INTO categories (name, position) VALUES
     ('Lebensmittel', 10),
     ('Restaurant', 20),
@@ -144,6 +153,4 @@ INSERT INTO categories (name, position) VALUES
     ('Geschenke', 90),
     ('Sonstiges', 1000);
 
-INSERT INTO settings (key, value) VALUES
-    ('group_name', 'Zipfelkasse'),
-    ('default_currency', 'EUR');
+INSERT INTO settings (key, value) VALUES ('group_name', 'Zipfelkasse');

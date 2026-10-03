@@ -263,7 +263,7 @@ module Zipfelkasse::YNAB
       es = @d.store.list_expenses(Store::ExpenseFilter.new(participant_id: cfg.participant_id))
       cats = @d.store.ynab_category_map(cfg.participant_id)
       sel.postings(es, cfg.participant_id).to_h do |p|
-        category = p.category_id != 0 ? cats[p.category_id]? || "" : ""
+        category = p.category_id.try { |id| cats[id]? } || ""
         {p.expense_id, Want.new(p, category)}
       end
     end
@@ -341,7 +341,7 @@ module Zipfelkasse::YNAB
     private def unmark_pending(cfg : Store::YNABConfig, ws : Array(Want)) : Nil
       mark_pending(cfg, ws, "")
     rescue ex
-      @d.log.warn("ynab: undo pending mark", person: cfg.participant_id, err: ex)
+      Log.warn(exception: ex, &.emit("ynab: undo pending mark", person: cfg.participant_id))
     end
 
     private def apply_created(cfg : Store::YNABConfig, ws : Array(Want), got : Array(APITxn), res : SyncResult) : Nil

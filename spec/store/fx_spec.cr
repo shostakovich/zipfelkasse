@@ -1,11 +1,10 @@
-require "file_utils"
 require "./expense_fixture"
 
 private alias Store = Zipfelkasse::Store
 private alias Domain = Zipfelkasse::Domain
 
 private def rate(currency : String, d : String, r : Float64) : Domain::FXRate
-  Domain::FXRate.new(currency, date(d), r, "")
+  Domain::FXRate.new(currency, date(d), r, Domain::FXSource::Ecb)
 end
 
 describe "Store exchange rates" do
@@ -18,28 +17,25 @@ describe "Store exchange rates" do
         rate("bad", "2026-09-30", 1),
         rate("JPY", "2026-09-30", 0),
       ])
-      r = s.lookup_fx_rate("USD", Domain::FX_SOURCE_ECB, date("2026-10-02"), date("2026-09-22"))
-      r.should eq Domain::FXRate.new("USD", date("2026-09-30"), 1.11, "ezb")
-      expect_raises(Store::NotFound) do
-        s.lookup_fx_rate("USD", Domain::FX_SOURCE_ECB, date("2026-10-20"), date("2026-10-10"))
-      end
-      expect_raises(Store::NotFound) do
-        s.lookup_fx_rate("JPY", Domain::FX_SOURCE_ECB, date("2026-10-02"), date("2026-09-01"))
-      end
+      s.lookup_fx_rate?("USD", Domain::FXSource::Ecb, date("2026-10-02"), date("2026-09-22"))
+        .should eq Domain::FXRate.new("USD", date("2026-09-30"), 1.11, Domain::FXSource::Ecb)
+      s.lookup_fx_rate?("USD", Domain::FXSource::Ecb, date("2026-10-20"), date("2026-10-10")).should be_nil
+      s.lookup_fx_rate?("JPY", Domain::FXSource::Ecb, date("2026-10-02"), date("2026-09-01")).should be_nil
 
       # Neither overwrites the other.
-      s.set_manual_fx_rate(0_i64, " usd ", date("2026-09-30"), 1.2)
+      s.set_manual_fx_rate(nil, " usd ", date("2026-09-30"), 1.2)
       s.save_ecb_rates([rate("USD", "2026-09-30", 1.111)])
-      r = s.lookup_fx_rate("USD", Domain::FX_SOURCE_MANUAL, date("2026-12-01"))
-      {r.rate, r.source}.should eq({1.2, "manuell"})
-      s.lookup_fx_rate("USD", Domain::FX_SOURCE_ECB, date("2026-09-30")).should eq Domain::FXRate.new("USD", date("2026-09-30"), 1.111, "ezb")
-      s.set_manual_fx_rate(0_i64, "USD", date("2026-09-30"), 1.21)
-      s.lookup_fx_rate("USD", Domain::FX_SOURCE_MANUAL, date("2026-09-30")).rate.should eq 1.21
+      r = s.lookup_fx_rate?("USD", Domain::FXSource::Manual, date("2026-12-01")).not_nil!
+      {r.rate, r.source}.should eq({1.2, Domain::FXSource::Manual})
+      s.lookup_fx_rate?("USD", Domain::FXSource::Ecb, date("2026-09-30"))
+        .should eq Domain::FXRate.new("USD", date("2026-09-30"), 1.111, Domain::FXSource::Ecb)
+      s.set_manual_fx_rate(nil, "USD", date("2026-09-30"), 1.21)
+      s.lookup_fx_rate?("USD", Domain::FXSource::Manual, date("2026-09-30")).not_nil!.rate.should eq 1.21
 
       [{"EUR", 1.0}, {"US", 1.0}, {"USD", 0.0}, {"USD", -1.0}].each do |cur, bad|
-        store_validation_error { s.set_manual_fx_rate(0_i64, cur, date("2026-09-30"), bad) }
+        store_validation_error { s.set_manual_fx_rate(nil, cur, date("2026-09-30"), bad) }
       end
-      store_validation_error { s.set_manual_fx_rate(0_i64, "USD", nil, 1.2) }.should eq "Bitte ein Datum angeben."
+      store_validation_error { s.set_manual_fx_rate(nil, "USD", nil, 1.2) }.should eq "Bitte ein Datum angeben."
 
       s.list_manual_fx_rates.map(&.currency).should eq ["USD"]
       latest = s.latest_ecb_rates
@@ -50,12 +46,12 @@ describe "Store exchange rates" do
       s.has_ecb_currency?("GBP").should be_true
       s.has_ecb_currency?("CHF").should be_false
 
-      s.delete_manual_fx_rate(0_i64, "USD", date("2026-09-30"))
-      expect_raises(Store::NotFound) { s.delete_manual_fx_rate(0_i64, "USD", date("2026-09-30")) }
+      s.delete_manual_fx_rate(nil, "USD", date("2026-09-30"))
+      expect_raises(Store::NotFound) { s.delete_manual_fx_rate(nil, "USD", date("2026-09-30")) }
       # The ECB rate of that day is still there.
-      s.lookup_fx_rate("USD", Domain::FX_SOURCE_ECB, date("2026-09-30")).rate.should eq 1.111
-      expect_raises(Store::NotFound) { s.lookup_fx_rate("USD", Domain::FX_SOURCE_MANUAL, date("2026-12-01")) }
-      expect_raises(Store::NotFound) { s.delete_manual_fx_rate(0_i64, "GBP", date("2026-09-30")) }
+      s.lookup_fx_rate?("USD", Domain::FXSource::Ecb, date("2026-09-30")).not_nil!.rate.should eq 1.111
+      s.lookup_fx_rate?("USD", Domain::FXSource::Manual, date("2026-12-01")).should be_nil
+      expect_raises(Store::NotFound) { s.delete_manual_fx_rate(nil, "GBP", date("2026-09-30")) }
 
       texts = s.list_activity.map(&.details.text)
       texts.should eq [
@@ -76,7 +72,7 @@ describe "Store exchange rates" do
   it "lists the rates of foreign-currency expenses only" do
     with_expense_fixture do |f|
       input = f.equal("Hotel", 9009, "2026-09-01", f.anna, f.anna, f.ben)
-      input.original_currency, input.original_amount_minor, input.fx_rate, input.fx_source = "USD", 10000_i64, 1.11, "ezb"
+      input.original_currency, input.original_amount_minor, input.fx_rate, input.fx_source = "USD", 10000_i64, 1.11, Domain::FXSource::Ecb
       f.must_create(input)
       f.must_create(f.equal("Brot", 300, "2026-09-02", f.anna, f.anna))
       used = f.s.recent_used_fx_rates(10)
@@ -85,44 +81,14 @@ describe "Store exchange rates" do
     end
   end
 
-  it "keeps both rates when migrating to separate sources" do
-    dir = File.tempname("zipfelkasse")
-    path = File.join(dir, "zipfelkasse.db")
-    begin
-      s = Store.open(path)
-      [
-        "DROP TABLE fx_rates",
-        "CREATE TABLE fx_rates (
-          date     TEXT NOT NULL,
-          currency TEXT NOT NULL,
-          rate     REAL NOT NULL CHECK (rate > 0),
-          source   TEXT NOT NULL DEFAULT 'ezb',
-          PRIMARY KEY (currency, date)
-        ) WITHOUT ROWID",
-        "INSERT INTO fx_rates (date, currency, rate, source) VALUES ('2026-09-29', 'USD', 1.1, 'ezb'), ('2026-09-30', 'USD', 1.2, 'manuell')",
-        "PRAGMA user_version = 2",
-      ].each { |q| s.db.exec(q) }
-      s.close
-
-      s = Store.open(path)
-      begin
-        s.schema_version.should eq latest_schema_version
-        s.lookup_fx_rate("USD", Domain::FX_SOURCE_MANUAL, date("2026-10-01")).rate.should eq 1.2
-        s.lookup_fx_rate("USD", Domain::FX_SOURCE_ECB, date("2026-10-01")).rate.should eq 1.1
-        s.save_ecb_rates([rate("USD", "2026-09-30", 1.11)])
-        s.lookup_fx_rate("USD", Domain::FX_SOURCE_ECB, date("2026-09-30")).rate.should eq 1.11
-        expect_raises(SQLite3::Exception) do
-          s.db.exec("INSERT INTO fx_rates (date, currency, rate, source) VALUES ('2026-08-01', 'USD', 1, 'foo')")
-        end
-      ensure
-        s.close
+  it "keeps a manual and an ECB rate of the same day and rejects other sources" do
+    with_store do |s|
+      s.db.exec("INSERT INTO fx_rates (date, currency, rate, source) VALUES ('2026-09-30', 'USD', 1.1, 'ezb'), ('2026-09-30', 'USD', 1.2, 'manuell')")
+      s.lookup_fx_rate?("USD", Domain::FXSource::Manual, date("2026-10-01")).not_nil!.rate.should eq 1.2
+      s.lookup_fx_rate?("USD", Domain::FXSource::Ecb, date("2026-10-01")).not_nil!.rate.should eq 1.1
+      expect_raises(SQLite3::Exception) do
+        s.db.exec("INSERT INTO fx_rates (date, currency, rate, source) VALUES ('2026-08-01', 'USD', 1, 'foo')")
       end
-    ensure
-      FileUtils.rm_rf(dir)
     end
   end
-end
-
-private def latest_schema_version : Int32
-  (Store::MIGRATION_FILES.map(&.[0]) + Store::DATA_MIGRATIONS.keys).max
 end

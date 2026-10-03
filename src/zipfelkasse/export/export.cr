@@ -68,7 +68,7 @@ module Zipfelkasse::Export
     end
 
     # Non-deleted expenses in the range, oldest first.
-    private def expenses(p : Period, participant_id : Int64) : Array(Store::Expense)
+    private def expenses(p : Period, participant_id : Int64?) : Array(Store::Expense)
       @d.store.list_expenses(Store::ExpenseFilter.new(from: p.from, to: p.to, participant_id: participant_id)).reverse!
     end
 
@@ -83,14 +83,14 @@ module Zipfelkasse::Export
 
     private def expenses_csv(r : Web::Request) : Nil
       p = period(r) || return
-      es = expenses(p, 0_i64)
+      es = expenses(p, nil)
       body = String.build { |io| Export.write_expenses_csv(io, @d.store.list_participants(true), es) }
       send(r, "text/csv; charset=utf-8", "zipfelkasse-ausgaben-#{p.suffix(@d.today)}.csv", body)
     end
 
     private def expenses_json(r : Web::Request) : Nil
       p = period(r) || return
-      es = expenses(p, 0_i64)
+      es = expenses(p, nil)
       body = String.build do |io|
         Export.write_expenses_json(io, @d.store.group_name, @d.now, p, @d.store.list_participants(true), es)
       end

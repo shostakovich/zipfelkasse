@@ -4,20 +4,28 @@ module Zipfelkasse
     BACKUP_SUFFIX = ".db"
 
     def backup(dir : String, keep : Int32) : String
+      path = File.join(dir, BACKUP_PREFIX + now.to_utc.to_s("%Y%m%d-%H%M%S") + BACKUP_SUFFIX)
       begin
         Dir.mkdir_p(dir)
+        raise Error.new("#{path} already exists") if File.exists?(path)
+        vacuum_into(path)
       rescue ex
-        raise Exception.new("create backup directory: #{ex.message}")
-      end
-      path = File.join(dir, BACKUP_PREFIX + @clock.call.to_utc.to_s("%Y%m%d-%H%M%S") + BACKUP_SUFFIX)
-      raise Exception.new("backup #{path} already exists") if File.exists?(path)
-      begin
-        @db.exec("VACUUM INTO ?", path)
-      rescue ex
-        raise Exception.new("vacuum into: #{ex.message}")
+        raise Error.new("backup #{path}", cause: ex)
       end
       Store.rotate_backups(dir, keep)
       path
+    end
+
+    # The backup holds the YNAB tokens, so it is private from the start.
+    # VACUUM INTO refuses an existing file, hence the umask; it blocks the
+    # only thread, so no other fiber creates a file meanwhile.
+    private def vacuum_into(path : String) : Nil
+      previous = LibC.umask(0o077)
+      begin
+        @db.exec("VACUUM INTO ?", path)
+      ensure
+        LibC.umask(previous)
+      end
     end
 
     def self.rotate_backups(dir : String, keep : Int32) : Nil

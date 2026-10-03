@@ -378,7 +378,7 @@ module Zipfelkasse::MCP
         error = true
         ex.message || ""
       rescue ex
-        @log.error("mcp: tool failed", tool: p.name, err: ex)
+        Log.error(exception: ex, &.emit("mcp: tool failed", tool: p.name))
         error = true
         "Internal error while running the tool (details in the server log)."
       end

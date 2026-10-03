@@ -9,26 +9,26 @@ end
 describe "Store queries for the web UI" do
   it "sets the group name" do
     with_store do |s|
-      s.set_group_name(0_i64, "  WG   Kastanienallee ")
+      s.set_group_name(nil, "  WG   Kastanienallee ")
       s.group_name.should eq "WG Kastanienallee"
-      store_validation_error { s.set_group_name(0_i64, "   ") }
+      store_validation_error { s.set_group_name(nil, "   ") }
     end
   end
 
   it "moves categories" do
     with_store do |s|
       first, second = s.list_categories
-      s.move_category(0_i64, second.id, true)
+      s.move_category(nil, second.id, true)
       category_names(s)[0, 2].should eq [second.name, first.name]
       # At the edge: nothing happens.
-      s.move_category(0_i64, second.id, true)
+      s.move_category(nil, second.id, true)
       category_names(s)[0].should eq second.name
-      s.move_category(0_i64, second.id, false)
+      s.move_category(nil, second.id, false)
       category_names(s)[0, 2].should eq [first.name, second.name]
       # Archived ones are skipped and cannot be moved.
-      s.set_category_archived(0_i64, second.id, true)
-      expect_raises(Store::NotFound) { s.move_category(0_i64, second.id, true) }
-      expect_raises(Store::NotFound) { s.move_category(0_i64, 999_i64, true) }
+      s.set_category_archived(nil, second.id, true)
+      expect_raises(Store::NotFound) { s.move_category(nil, second.id, true) }
+      expect_raises(Store::NotFound) { s.move_category(nil, 999_i64, true) }
     end
   end
 
@@ -37,19 +37,19 @@ describe "Store queries for the web UI" do
   it "creates categories before Sonstiges after moves" do
     with_store do |s|
       tail = ->(n : Int32) { category_names(s).last(n).join(",") }
-      s.move_category(0_i64, s.list_categories[0].id, false)
-      s.create_category(0_i64, "Neu")
+      s.move_category(nil, s.list_categories[0].id, false)
+      s.create_category(nil, "Neu")
       tail.call(3).should eq "Geschenke,Neu,Sonstiges"
 
       # Sonstiges moved up by one: still directly before it.
       sonstiges = s.list_categories.last.id
-      s.move_category(0_i64, sonstiges, true)
-      s.create_category(0_i64, "Noch neuer")
+      s.move_category(nil, sonstiges, true)
+      s.create_category(nil, "Noch neuer")
       tail.call(4).should eq "Geschenke,Noch neuer,Sonstiges,Neu"
 
       # Without an active Sonstiges: at the end.
-      s.set_category_archived(0_i64, sonstiges, true)
-      s.create_category(0_i64, "Zuletzt")
+      s.set_category_archived(nil, sonstiges, true)
+      s.create_category(nil, "Zuletzt")
       tail.call(3).should eq "Noch neuer,Neu,Zuletzt"
     end
   end
@@ -70,18 +70,18 @@ describe "Store queries for the web UI" do
     with_expense_fixture do |f|
       cats = f.s.list_categories
       other, archived = cats[1].id, cats[2].id
-      mk = ->(title : String, d : String, cat : Int64) do
+      mk = ->(title : String, d : String, cat : Int64?) do
         input = f.equal(title, 1000, d, f.anna, f.anna, f.ben)
         input.category_id = cat
         f.must_create(input)
       end
       mk.call("Kaufland", "2026-09-01", f.food)
       mk.call("Kino", "2026-09-10", other)
-      mk.call("Ohne", "2026-09-11", 0_i64)
+      mk.call("Ohne", "2026-09-11", nil)
       mk.call("Archiviert", "2026-09-12", archived)
       gone = mk.call("Gelöscht", "2026-09-13", f.food)
       f.s.delete_expense(f.anna, gone)
-      f.s.set_category_archived(0_i64, archived, true)
+      f.s.set_category_archived(nil, archived, true)
       back = f.equal("Rückzahlung", 500, "2026-09-14", f.ben, f.anna)
       back.reimbursement = true
       f.s.create_expense(f.ben, back)

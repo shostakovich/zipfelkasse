@@ -12,11 +12,11 @@ module Zipfelkasse::Recurring
     getter existing : Int32  # of these, skipped since an equal expense exists
     getter? checked : Bool
 
-    def initialize(*, @value = Domain::FREQ_MONTHLY, @next_date = nil, @missed = 0, @existing = 0, @checked = false)
+    def initialize(*, @value = Domain::Frequency::Monthly, @next_date = nil, @missed = 0, @existing = 0, @checked = false)
     end
 
     def label : String
-      value.label
+      Web.frequency_label(value)
     end
 
     # What happens to the missed occurrences, e.g. "3 verpasste Termine werden
@@ -97,10 +97,10 @@ module Zipfelkasse::Recurring
     private def materialize_logged(id : Int64) : Int32
       materialize_rule(id, today)
     rescue ex : Error
-      log.error("recurring expenses", err: ex)
+      Log.error(exception: ex) { "recurring expenses" }
       ex.created
     rescue ex
-      log.error("recurring expenses", err: ex)
+      Log.error(exception: ex) { "recurring expenses" }
       0
     end
 
@@ -130,13 +130,13 @@ module Zipfelkasse::Recurring
 
     # The preview of each frequency: next occurrence and how many missed
     # occurrences would be created or skipped.
-    def options(e : Store::Expense, selected : Domain::Frequency) : Array(FreqOption)
+    def options(e : Store::Expense, selected : Domain::Frequency?) : Array(FreqOption)
       today = self.today
       existing = Set(Time).new
       if e.date < today
-        existing = @d.store.expense_dates_like(e.input, e.date.shift(days: 1), today)
+        existing = @d.store.expense_dates_like(e.to_input, e.date.shift(days: 1), today)
       end
-      Domain::FREQUENCIES.map do |f|
+      Domain::Frequency.values.map do |f|
         first = Domain.next_date(f, e.date, e.date)
         missed = skipped = 0
         d = first
@@ -151,7 +151,7 @@ module Zipfelkasse::Recurring
 
     private def render_new(r : Web::Request, status : Int32, expense : Store::Expense?,
                            options = [] of FreqOption, error = "") : Nil
-      existing = expense.try(&.recurring_id) || 0_i64
+      existing = expense.try(&.recurring_id)
       r.page(status, Web::Page.new(title: "Wiederkehrende Ausgabe anlegen", nav: Web::NAV_SETTINGS, error: error)) do |__io__|
         Web.template __io__, "recurring/wiederkehrend_neu.ecr"
       end
@@ -174,20 +174,20 @@ module Zipfelkasse::Recurring
     private def new_page(r : Web::Request) : Nil
       return render_new(r, 200, nil) if r.form_value("ausgabe").empty?
       e = load_expense(r)
-      render_new(r, 200, e, options(e, Domain::FREQ_MONTHLY))
+      render_new(r, 200, e, options(e, Domain::Frequency::Monthly))
     end
 
     private def create(r : Web::Request) : Nil
       e = load_expense(r)
-      freq = Domain::Frequency.new(r.form_value("haeufigkeit"))
+      freq = Domain::Frequency.from_key?(r.form_value("haeufigkeit"))
       id = begin
-        @d.store.create_recurring_from_expense(r.me.id, e.id, freq)
+        @d.store.create_recurring_from_expense(r.me.id, e.id, freq || raise Domain::ValidationError.new("Bitte eine Häufigkeit wählen."))
       rescue ex : Domain::ValidationError
         return render_new(r, 422, e, options(e, freq), ex.msg)
       rescue Store::NotFound
         raise Web::HTTPError.not_found("Ausgabe nicht gefunden.")
       end
-      msg = "„#{e.title}“ wiederholt sich jetzt #{freq.adverb}."
+      msg = "„#{e.title}“ wiederholt sich jetzt #{Web.frequency_adverb(freq)}."
       n = materialize_logged(id)
       msg += " #{count_text(n)} nachgetragen." if n > 0
       r.set_flash(msg)
