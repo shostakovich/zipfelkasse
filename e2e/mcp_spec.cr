@@ -1231,9 +1231,9 @@ describe "MCP on the seed household" do
     text.should contain(", 8: Gesundheit (archived), ")
     text.downcase.should_not contain("create table ynab")
     # The token appears nowhere.
-    text.should_not contain(E2E::FakeYNAB::TOKEN)
+    text.should_not contain(FakeYNAB::TOKEN)
     %w(participants categories expenses expense_shares recurring activity fx_rates settings).each do |t|
-      MK.text(MK.call(user, "sql_query", {query: "SELECT * FROM #{t}"}.to_json)).should_not contain(E2E::FakeYNAB::TOKEN)
+      MK.text(MK.call(user, "sql_query", {query: "SELECT * FROM #{t}"}.to_json)).should_not contain(FakeYNAB::TOKEN)
     end
   end
 end

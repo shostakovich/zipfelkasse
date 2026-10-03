@@ -80,7 +80,7 @@ module E2E
       else
         sleep YNAB_QUIET
       end
-      ynab.wait_idle
+      ynab.wait_idle(YNAB_QUIET)
       ynab.requests[mark..].dup
     end
 
