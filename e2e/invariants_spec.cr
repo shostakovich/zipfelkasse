@@ -133,7 +133,7 @@ describe "Seed invariants" do
       case e.source
       when "ezb"
         day = Time.parse_utc(Math.min(e.date, e.updated_at[0, 10]), "%Y-%m-%d")
-        until E2E::FakeECB.business_day?(day)
+        until FakeECB.business_day?(day)
           day -= 1.day
         end
         {e.id, e.rate}.should eq({e.id, world.ecb.rate(e.currency, day).to_f})

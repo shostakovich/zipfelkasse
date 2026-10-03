@@ -366,8 +366,8 @@ describe "YNAB sync" do
   after_all { world.stop }
 
   page = "/einstellungen/ynab"
-  token = E2E::FakeYNAB::TOKEN
-  target = "#{E2E::FakeYNAB::PLAN}|#{E2E::FakeYNAB::ACCOUNT}"
+  token = FakeYNAB::TOKEN
+  target = "#{FakeYNAB::PLAN}|#{FakeYNAB::ACCOUNT}"
   post_txns = "POST /v1/plans/plan-1/transactions"
   patch_txns = "PATCH /v1/plans/plan-1/transactions"
   get_plans = "GET /v1/plans"
@@ -736,7 +736,7 @@ describe "YNAB sync" do
     user.login("Anna")
     before = RY.live(world)
     calls = RY.ynab_calls(world, 1) do
-      r = user.post("#{page}/token", {"token" => E2E::FakeYNAB::OTHER_TOKEN})
+      r = user.post("#{page}/token", {"token" => FakeYNAB::OTHER_TOKEN})
       r.status.should eq 303
       r.flash.should eq "Token gespeichert. Der bisher gewählte Plan ist mit diesem Token nicht erreichbar – bitte Plan und Konto neu wählen."
     end

@@ -68,14 +68,14 @@ module FxExportSpec
     count = ->(file : String) { world.ecb.requests.count(file) }
     nf = "eurofxref-hist-90d.xml"
     zip = "eurofxref-hist.zip"
-    currencies = E2E::FakeECB::BASE.keys.sort
+    currencies = FakeECB::BASE.keys.sort
 
     scenario "downloads the 90-day file at startup and shows the latest rates", world do
       world.app
       # On an empty cache the app loads the 90-day file, nothing else.
       count.call(nf).should eq 1
       count.call(zip).should eq 0
-      days = (0...90).map { |i| last - i.days }.select { |d| E2E::FakeECB.business_day?(d) }
+      days = (0...90).map { |i| last - i.days }.select { |d| FakeECB.business_day?(d) }
       E2E::Database.open(world.app.db_path) do |db|
         db.query_one("SELECT count(*), count(DISTINCT currency), min(date), max(date) FROM fx_rates WHERE source = 'ezb'",
           as: {Int64, Int64, String, String}).should eq({days.size * 16, 16, "2026-07-06", "2026-10-02"})
@@ -448,14 +448,9 @@ module FxExportSpec
   end
 
   describe "Exchange rates when the ECB fails" do
-    upstream = E2E::FakeECB.new
-    ecb = E2E::SwitchableECB.new(upstream)
-    world = E2E::World.new("fx-failure", env: {"ZIPFELKASSE_TEST_ECB_URL" => ecb.base_url})
-    after_all do
-      world.stop
-      ecb.close
-      upstream.close
-    end
+    world = E2E::World.new("fx-failure")
+    ecb = world.ecb
+    after_all { world.stop }
     failed = ->(why : String) { "Die EZB-Kurse konnten nicht geladen werden (#{why}). Bitte später erneut versuchen oder den Kurs von Hand eintragen." }
 
     scenario "refresh, /api/kurs and the expense form report the failure", world do
@@ -503,15 +498,10 @@ module FxExportSpec
     fri = Time.utc(2036, 11, 7)
     mon = fri + 3.days
     later = fri + 7.days
-    first = E2E::FakeECB.new(fri)
-    ecb = E2E::SwitchableECB.new(first)
-    fakes = [first, E2E::FakeECB.new(mon), E2E::FakeECB.new(later)]
-    world = E2E::World.new("fx-schedule", now: "2036-11-08T11:00:00Z", env: {"ZIPFELKASSE_TEST_ECB_URL" => ecb.base_url})
-    after_all do
-      world.stop
-      ecb.close
-      fakes.each(&.close)
-    end
+    world = E2E::World.new("fx-schedule", now: "2036-11-08T11:00:00Z")
+    ecb = world.ecb
+    ecb.last_day = fri
+    after_all { world.stop }
     newest = -> { E2E::Database.open(world.app.db_path) { |db| db.scalar("SELECT max(date) FROM fx_rates WHERE source = 'ezb'").as(String) } }
     # Restarts at *now* (UTC) and checks which files the startup fetched.
     restart = ->(now : String, files : Array(String)) do
@@ -540,24 +530,24 @@ module FxExportSpec
 
       # Monday 16:29 in Berlin (CET): Friday's rates are the newest expected.
       restart.call("2036-11-10T15:29:00Z", [] of String)
-      user.get("/api/kurs?waehrung=USD").json.should eq kurs_json("USD", "2036-11-07", first.rate("USD", fri), "ezb")
+      user.get("/api/kurs?waehrung=USD").json.should eq kurs_json("USD", "2036-11-07", ecb.rate("USD", fri), "ezb")
       # 16:30 in Berlin (15:30 UTC): Monday's rates are due, the daily file is
       # enough.
-      ecb.upstream = fakes[1]
+      ecb.last_day = mon
       restart.call("2036-11-10T15:30:00Z", ["eurofxref-daily.xml"])
       newest.call.should eq "2036-11-10"
-      user.get("/api/kurs?waehrung=USD").json.should eq kurs_json("USD", "2036-11-10", fakes[1].rate("USD", mon), "ezb")
+      user.get("/api/kurs?waehrung=USD").json.should eq kurs_json("USD", "2036-11-10", ecb.rate("USD", mon), "ezb")
       user.get("/einstellungen/kurse").text.should contain("bis 10.11.2036.")
       # Tuesday morning: nothing new is expected yet.
       restart.call("2036-11-11T07:00:00Z", [] of String)
       # A week later, with gaps in the cache: the 90-day file.
-      ecb.upstream = fakes[2]
+      ecb.last_day = later
       restart.call("2036-11-15T11:00:00Z", ["eurofxref-hist-90d.xml"])
       newest.call.should eq "2036-11-14"
       E2E::Database.count(world.app.db_path, "SELECT count(DISTINCT date) FROM fx_rates WHERE source = 'ezb' AND date > '2036-11-10'").should eq 4
       # Sunday evening: still Friday's rates.
       restart.call("2036-11-16T19:00:00Z", [] of String)
-      user.get("/api/kurs?waehrung=GBP&datum=2036-11-16").json.should eq kurs_json("GBP", "2036-11-14", fakes[2].rate("GBP", later), "ezb")
+      user.get("/api/kurs?waehrung=GBP&datum=2036-11-16").json.should eq kurs_json("GBP", "2036-11-14", ecb.rate("GBP", later), "ezb")
     end
   end
 

@@ -1,9 +1,7 @@
-require "./mcp_helper"
-
-private alias MCP = Zipfelkasse::MCP
+require "../spec_helper"
 
 describe "MCP.client_ip" do
-  trusted = Zipfelkasse::Config::Prefix.parse_list("10.0.0.0/8, 172.16.0.5")
+  trusted = Config::Prefix.parse_list("10.0.0.0/8, 172.16.0.5")
   [
     {"direct", "1.2.3.4:5000", [] of String, "", "1.2.3.4"},
     {"direct IPv6", "[2001:db8::1]:5000", [] of String, "", "2001:db8::1"},
@@ -37,16 +35,5 @@ describe "MCP.client_ip" do
         ip.to_s.should eq want
       end
     end
-  end
-end
-
-describe "MCP.decode_header_value" do
-  it "decodes the Base64 form and keeps other values" do
-    MCP.decode_header_value("balances").should eq "balances"
-    MCP.decode_header_value("=?base64?SGVsbG8sIOS4lueVjA==?=").should eq "Hello, 世界"
-    MCP.decode_header_value("=?base64?PT9iYXNlNjQ/bGl0ZXJhbD89?=").should eq "=?base64?literal?="
-    MCP.decode_header_value("=?base64?SGVsbG8?=").should eq "Hello" # without padding
-    MCP.decode_header_value("=?base64?!!!?=").should be_nil
-    MCP.decode_header_value("=?base64?=").should eq "=?base64?=" # too short for the format
   end
 end

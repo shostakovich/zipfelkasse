@@ -84,7 +84,7 @@ module E2E
 
     # Waits for background work (YNAB sync).
     def settle : Nil
-      app.ynab.wait_idle
+      app.ynab.wait_idle(YNAB_QUIET)
     end
 
     # Forgets recorded problems (after a failed scenario).

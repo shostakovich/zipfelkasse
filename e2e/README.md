@@ -23,7 +23,8 @@ ran (`scenario "…", world, errors: ["substring"]` allows errors a scenario pro
   own small world with an empty database.
 - `process_spec.cr`: the process itself: graceful shutdown, startup errors, the nightly backup.
 - `read_spec.cr`, `invariants_spec.cr`, the seed part of `mcp_spec.cr`: read-only checks on the shared seed household.
-- `support/`: the harness (`World`, `App`, `Browser`, the fakes and per-spec helpers).
+- `support/`: the harness (`World`, `App`, `Browser` and per-spec helpers). The fake ECB and YNAB servers are shared with the
+  unit specs and live in `../spec/support/`.
 
 Scenarios of one `describe` share their world and build on each other: IDs, people and settings come from earlier
 scenarios. Run whole files; a single feature scenario with `-e`, or `--order random`, fails.

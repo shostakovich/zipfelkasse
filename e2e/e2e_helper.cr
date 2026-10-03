@@ -1,4 +1,6 @@
 require "spec"
+require "../spec/support/fake_ecb"
+require "../spec/support/fake_ynab"
 require "./support/*"
 
 # An example that fails afterwards if a page contained injected scripts or the

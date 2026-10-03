@@ -1,8 +1,5 @@
 require "../spec_helper"
 
-private alias YNAB = Zipfelkasse::YNAB
-private alias Sync = Zipfelkasse::Store::YNABSync
-
 private PERSON = 1_i64
 private DAY    = Time.utc(2026, 9, 1)
 
@@ -14,26 +11,26 @@ private def wants(*list : YNAB::Want) : Hash(Int64, YNAB::Want)
   list.to_h { |w| {w.expense_id, w} }
 end
 
-private def rows(*list : Sync) : Hash(Int64, Sync)
+private def rows(*list : Store::YNABSync) : Hash(Int64, Store::YNABSync)
   list.to_h { |r| {r.expense_id, r} }
 end
 
-private def synced(w : YNAB::Want, txn_id : String) : Sync
-  Sync.synced(w.expense_id, PERSON, txn_id, w.fingerprint, DAY)
+private def synced(w : YNAB::Want, txn_id : String) : Store::YNABSync
+  Store::YNABSync.synced(w.expense_id, PERSON, txn_id, w.fingerprint, DAY)
 end
 
 describe YNAB::Plan do
   it "creates what has no transaction yet" do
     a, b = want(1), want(2)
     plan = YNAB::Plan.build(wants(a, b), rows(synced(a, "t1")), false)
-    {plan.creates.map(&.expense_id), plan.updates, plan.deletes, plan.forget}.should eq({[2_i64], [] of YNAB::Update, [] of Sync, [] of Int64})
-    YNAB::Plan.build(wants(b, a), {} of Int64 => Sync, false).creates.map(&.expense_id).should eq [1, 2]
+    {plan.creates.map(&.expense_id), plan.updates, plan.deletes, plan.forget}.should eq({[2_i64], [] of YNAB::Update, [] of Store::YNABSync, [] of Int64})
+    YNAB::Plan.build(wants(b, a), {} of Int64 => Store::YNABSync, false).creates.map(&.expense_id).should eq [1, 2]
   end
 
   it "creates a row that lost its transaction" do
     a = want(1)
-    YNAB::Plan.build(wants(a), rows(Sync.new(1_i64, PERSON)), false).creates.should eq [a]
-    YNAB::Plan.build(wants(a), rows(Sync.pending(1_i64, PERSON)), false).creates.should eq [a]
+    YNAB::Plan.build(wants(a), rows(Store::YNABSync.new(1_i64, PERSON)), false).creates.should eq [a]
+    YNAB::Plan.build(wants(a), rows(Store::YNABSync.pending(1_i64, PERSON)), false).creates.should eq [a]
   end
 
   it "updates what changed since it was transferred" do
@@ -48,11 +45,11 @@ describe YNAB::Plan do
 
   it "retries a failed state only when it changed or in the full sync" do
     a, changed = want(1), want(1, 2000_i64)
-    failed = Sync.failed(1_i64, PERSON, "t1", a.fingerprint, "broken")
+    failed = Store::YNABSync.failed(1_i64, PERSON, "t1", a.fingerprint, "broken")
     YNAB::Plan.build(wants(a), rows(failed), false).updates.should be_empty
     YNAB::Plan.build(wants(a), rows(failed), true).updates.map(&.txn_id).should eq ["t1"]
     YNAB::Plan.build(wants(changed), rows(failed), false).updates.map(&.txn_id).should eq ["t1"]
-    without = Sync.failed(1_i64, PERSON, nil, a.fingerprint, "broken")
+    without = Store::YNABSync.failed(1_i64, PERSON, nil, a.fingerprint, "broken")
     YNAB::Plan.build(wants(a), rows(without), false).creates.should be_empty
     YNAB::Plan.build(wants(a), rows(without), true).creates.should eq [a]
   end
@@ -60,7 +57,7 @@ describe YNAB::Plan do
   it "deletes what is gone and forgets rows without a transaction" do
     a = want(1)
     gone = synced(a, "t1")
-    plan = YNAB::Plan.build({} of Int64 => YNAB::Want, rows(gone, Sync.new(2_i64, PERSON), Sync.pending(3_i64, PERSON)), false)
+    plan = YNAB::Plan.build({} of Int64 => YNAB::Want, rows(gone, Store::YNABSync.new(2_i64, PERSON), Store::YNABSync.pending(3_i64, PERSON)), false)
     {plan.deletes, plan.forget}.should eq({[gone], [2_i64, 3_i64]})
   end
 
