@@ -12,16 +12,6 @@ module Zipfelkasse::Web
   UNIDENTIFIED_PATHS = {"/healthz", "/manifest.webmanifest", "/sw.js", "/favicon.ico"}
   PUBLIC_PATHS       = {"/wer", "/wer/neu"}
 
-  # A handler rather than a filter, so that the MCP endpoint gets the headers too.
-  class SecurityHeaders
-    include HTTP::Handler
-
-    def call(context : HTTP::Server::Context)
-      context.response.headers.merge!(SECURITY_HEADERS)
-      call_next(context)
-    end
-  end
-
   # Client disconnects and timeouts surface as IO errors in whatever handler
   # reads or writes; they are no server errors.
   class QuietDisconnects
@@ -34,9 +24,11 @@ module Zipfelkasse::Web
     end
   end
 
-  # Rejects requests that a browser sends from a foreign site and selects the
-  # person. Public paths work without a person, static files need none.
+  # Sets the security headers, rejects requests that a browser sends from a
+  # foreign site and selects the person. Public paths work without a person,
+  # static files need none.
   def self.install_filters(store : Store) : Nil
+    before_all { |env| env.response.headers.merge!(SECURITY_HEADERS) }
     before_all do |env|
       request = env.request
       next if request.path.starts_with?("/mcp/")

@@ -1298,6 +1298,18 @@ describe "Web: security, PWA, static files and CLI" do
     r.content_type.should start_with "application/json"
     r.json.should eq JSON.parse(%({"error":"Anfrage von einer fremden Seite abgelehnt."}))
     security_headers!(r)
+    # Every answer carries them: pages, error pages, static files, redirects.
+    {"/salden" => 200, "/does-not-exist" => 404, "/static/app.css" => 200}.each do |path, status|
+      r = user.get(path)
+      {path, r.status}.should eq({path, status})
+      security_headers!(r)
+    end
+    r = user.post("/export/ausgaben.csv")
+    r.status.should eq 405
+    security_headers!(r)
+    r = anon.get("/salden")
+    r.status.should eq 303
+    security_headers!(r)
   end
 
   scenario "request bodies over 1 MiB are rejected", world do

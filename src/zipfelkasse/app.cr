@@ -43,7 +43,6 @@ module Zipfelkasse
       Kemal.config.max_request_body_size = Web::MAX_BODY_BYTES
       # Shorter than the 10 seconds `docker stop` waits before it kills the process.
       Kemal.config.shutdown_timeout = 5.seconds
-      use Web::SecurityHeaders.new
       use Web::QuietDisconnects.new
     end
 
