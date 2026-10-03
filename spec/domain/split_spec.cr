@@ -87,46 +87,61 @@ describe Domain do
     end
   end
 
-  it "allocates by the largest remainder and rotates ties" do
+  describe ".allocate" do
     max = Domain::MAX_AMOUNT_CENTS
-    [
-      {667_i64, [600_i64, 400_i64], 0_i64, [400_i64, 267_i64]},
-      {100_i64, [1_i64, 1_i64, 1_i64], 0_i64, [34_i64, 33_i64, 33_i64]},
-      {100_i64, [1_i64, 1_i64, 1_i64], 4_i64, [33_i64, 34_i64, 33_i64]},
-      {200_i64, [1_i64, 1_i64, 1_i64], 1_i64, [66_i64, 67_i64, 67_i64]},  # two extra cents from index 1 on
-      {100_i64, [1_i64, 1_i64, 1_i64], -1_i64, [33_i64, 33_i64, 34_i64]}, # negative rotation wraps around
-      {100_i64, [2_i64, 1_i64, 1_i64, 0_i64], 1_i64, [50_i64, 25_i64, 25_i64, 0_i64]},
-      {909_i64, [333_i64, 333_i64, 334_i64], 0_i64, [303_i64, 303_i64, 303_i64]},
-      {1000_i64, [250_i64, 750_i64], 3_i64, [250_i64, 750_i64]},
-      {5_i64, [0_i64, 0_i64], 0_i64, [0_i64, 0_i64]},
-      # No overflow: total · weight > Int64::MAX.
-      {max, [999_999_999_999_999_i64, 1_i64], 0_i64, [max, 0_i64]},
-      {max, [max * 100, max * 100], 1_i64, [max // 2, max // 2]},
-      {0_i64, [1_i64, 2_i64], 5_i64, [0_i64, 0_i64]},
-      {7_i64, [1_i64] * 8, 5_i64, [1_i64, 1_i64, 1_i64, 1_i64, 0_i64, 1_i64, 1_i64, 1_i64]},
-      {10_i64, [3_i64, 3_i64, 1_i64, 1_i64, 1_i64, 1_i64], -7_i64, [3_i64, 3_i64, 1_i64, 1_i64, 1_i64, 1_i64]},
-    ].each do |(total, weights, rotation, want)|
-      Domain.allocate(total, weights, rotation).should eq want
+
+    {
+      "gives the larger remainder the cent"                            => {667_i64, [600_i64, 400_i64], 0_i64, [400_i64, 267_i64]},
+      "gives the extra cent to the first of three equal weights"       => {100_i64, [1_i64, 1_i64, 1_i64], 0_i64, [34_i64, 33_i64, 33_i64]},
+      "rotates the extra cent with the rotation"                       => {100_i64, [1_i64, 1_i64, 1_i64], 4_i64, [33_i64, 34_i64, 33_i64]},
+      "gives two extra cents to the tied entries from the rotation on" => {200_i64, [1_i64, 1_i64, 1_i64], 1_i64, [66_i64, 67_i64, 67_i64]},
+      "wraps a negative rotation around"                               => {100_i64, [1_i64, 1_i64, 1_i64], -1_i64, [33_i64, 33_i64, 34_i64]},
+      "gives nothing to a weight of 0"                                 => {100_i64, [2_i64, 1_i64, 1_i64, 0_i64], 1_i64, [50_i64, 25_i64, 25_i64, 0_i64]},
+      "distributes the total in proportion to weights of any sum"      => {909_i64, [333_i64, 333_i64, 334_i64], 0_i64, [303_i64, 303_i64, 303_i64]},
+      "does not rotate when nothing is left over"                      => {1000_i64, [250_i64, 750_i64], 3_i64, [250_i64, 750_i64]},
+      "gives nothing when all weights are 0"                           => {5_i64, [0_i64, 0_i64], 0_i64, [0_i64, 0_i64]},
+      "gives nothing when the total is 0"                              => {0_i64, [1_i64, 2_i64], 5_i64, [0_i64, 0_i64]},
+      "does not overflow when total times weight exceeds Int64::MAX"   => {max, [999_999_999_999_999_i64, 1_i64], 0_i64, [max, 0_i64]},
+      "does not overflow for weights beyond the maximum amount"        => {max, [max * 100, max * 100], 1_i64, [max // 2, max // 2]},
+      "rotates through eight tied entries"                             => {7_i64, [1_i64] * 8, 5_i64, [1_i64, 1_i64, 1_i64, 1_i64, 0_i64, 1_i64, 1_i64, 1_i64]},
+      "rotates only the tied entries"                                  => {10_i64, [3_i64, 3_i64, 1_i64, 1_i64, 1_i64, 1_i64], -7_i64, [3_i64, 3_i64, 1_i64, 1_i64, 1_i64, 1_i64]},
+    }.each do |name, (total, weights, rotation, allocated)|
+      it name do
+        Domain.allocate(total, weights, rotation).should eq allocated
+      end
     end
   end
 
-  it "splits an amount entered in a foreign currency in proportion to the weights" do
-    ps = parts({3, 334}, {1, 333}, {2, 333})
-    Domain.split_converted(Domain::SplitMode::Amount, 909, 1000, "USD", ps, 0).should eq [
-      Domain::Share.new(1, 333, 303), Domain::Share.new(2, 333, 303), Domain::Share.new(3, 334, 303),
-    ]
-    m = amounts(Domain.split_converted(Domain::SplitMode::Amount, 1001, 1000, "USD", parts({1, 500}, {2, 500}), 1))
-    {m[1], m[2]}.should eq({500, 501}) # tie, rotation 1
-    # Other modes as split.
-    m = amounts(Domain.split_converted(Domain::SplitMode::Equal, 1000, 1100, "USD", ps, 1))
-    {m[1], m[2], m[3]}.should eq({333, 334, 333})
+  describe ".split_converted" do
+    people = parts({3, 334}, {1, 333}, {2, 333})
+
+    it "splits the converted euro amount in proportion to the weights in the foreign currency" do
+      Domain.split_converted(Domain::SplitMode::Amount, 909, 1000, "USD", people, 0).should eq [
+        Domain::Share.new(1, 333, 303), Domain::Share.new(2, 333, 303), Domain::Share.new(3, 334, 303),
+      ]
+    end
+
+    it "rotates a tied cent with the expense ID" do
+      shares = amounts(Domain.split_converted(Domain::SplitMode::Amount, 1001, 1000, "USD", parts({1, 500}, {2, 500}), 1))
+
+      {shares[1], shares[2]}.should eq({500, 501})
+    end
+
+    it "splits like .split in the other modes" do
+      shares = amounts(Domain.split_converted(Domain::SplitMode::Equal, 1000, 1100, "USD", people, 1))
+
+      {shares[1], shares[2], shares[3]}.should eq({333, 334, 333})
+    end
+
     {
-      parts({1, 600}, {2, 300})                                   => "Die Beträge müssen zusammen 10,00 USD ergeben (aktuell 9,00 USD).",
-      parts({1, 909})                                             => "Die Beträge müssen zusammen 10,00 USD ergeben (aktuell 9,09 USD).",
-      parts({1, -1}, {2, 1001})                                   => "negativ",
-      parts({1, 1_i64 << 62}, {2, 1_i64 << 62}, {3, 1_i64 << 62}) => "zu groß",
-    }.each do |ps, message|
-      expect_raises(Domain::ValidationError, message) { Domain.split_converted(Domain::SplitMode::Amount, 909, 1000, "USD", ps, 0) }
+      "weights that fall short of the amount" => {parts({1, 600}, {2, 300}), "Die Beträge müssen zusammen 10,00 USD ergeben (aktuell 9,00 USD)."},
+      "a single weight that falls short"      => {parts({1, 909}), "Die Beträge müssen zusammen 10,00 USD ergeben (aktuell 9,09 USD)."},
+      "a negative weight"                     => {parts({1, -1}, {2, 1001}), "negativ"},
+      "weights whose sum overflows"           => {parts({1, 1_i64 << 62}, {2, 1_i64 << 62}, {3, 1_i64 << 62}), "zu groß"},
+    }.each do |name, (weights, message)|
+      it "refuses #{name}" do
+        expect_raises(Domain::ValidationError, message) { Domain.split_converted(Domain::SplitMode::Amount, 909, 1000, "USD", weights, 0) }
+      end
     end
   end
 
@@ -137,19 +152,35 @@ describe Domain do
     Domain::SplitMode.from_key?("foo").should be_nil
   end
 
-  it "parses the weights of each split mode" do
-    {"5" => 5, " 5 " => 5, "+5" => 5, "-3" => -3, "\t5" => 5}.each do |v, want|
-      Domain.parse_weight(Domain::SplitMode::Shares, "EUR", v).should eq want
+  describe ".parse_weight" do
+    {"5" => 5, " 5 " => 5, "+5" => 5, "-3" => -3, "\t5" => 5}.each do |text, shares|
+      it "reads #{text.inspect} as #{shares} shares" do
+        Domain.parse_weight(Domain::SplitMode::Shares, "EUR", text).should eq shares
+      end
     end
-    {"1.5", "", "x"}.each do |v|
-      expect_invalid("Anteile müssen ganze Zahlen sein („#{v}“).") { Domain.parse_weight(Domain::SplitMode::Shares, "EUR", v) }
+
+    {"1.5", "", "x"}.each do |text|
+      it "refuses #{text.inspect} as shares" do
+        expect_invalid("Anteile müssen ganze Zahlen sein („#{text}“).") { Domain.parse_weight(Domain::SplitMode::Shares, "EUR", text) }
+      end
     end
-    Domain.parse_weight(Domain::SplitMode::Amount, "JPY", "1.500").should eq 1500
-    Domain.parse_weight(Domain::SplitMode::Percent, "JPY", "33,3").should eq 3330
-    Domain.parse_weight(Domain::SplitMode::Equal, "JPY", "xyz").should eq 0
-    Domain.weight_decimals(Domain::SplitMode::Amount, "KWD").should eq 3
-    Domain.weight_decimals(Domain::SplitMode::Percent, "KWD").should eq 2
-    Domain.weight_decimals(Domain::SplitMode::Shares, "KWD").should eq 0
+
+    it "reads amounts in the minor unit of the currency and percentages in basis points" do
+      Domain.parse_weight(Domain::SplitMode::Amount, "JPY", "1.500").should eq 1500
+      Domain.parse_weight(Domain::SplitMode::Percent, "JPY", "33,3").should eq 3330
+    end
+
+    it "ignores the text of an equal split" do
+      Domain.parse_weight(Domain::SplitMode::Equal, "JPY", "xyz").should eq 0
+    end
+  end
+
+  describe ".weight_decimals" do
+    it "is the decimals of the currency for amounts, 2 for percentages and 0 for shares" do
+      Domain.weight_decimals(Domain::SplitMode::Amount, "KWD").should eq 3
+      Domain.weight_decimals(Domain::SplitMode::Percent, "KWD").should eq 2
+      Domain.weight_decimals(Domain::SplitMode::Shares, "KWD").should eq 0
+    end
   end
 
   it "reads and writes parts and shares as JSON, the format of stored recurring templates" do

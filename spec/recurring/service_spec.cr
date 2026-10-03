@@ -215,20 +215,19 @@ describe Recurring::Service do
   end
 
   describe "occurrences for which an equal expense exists" do
-    it "skips them" do
+    it "skips an occurrence for which an equal expense was entered, and no other" do
       rule_id, _ = rule(expense("Miete", "2026-01-31", 100000), Domain::Frequency::Monthly)
+      equal = expense("Miete", "2026-02-28", 100000)
+      other_amount = expense("Miete", "2026-03-31", 99999)
+      other_title = expense("Mieten", "2026-03-31", 100000)
       other_payer = expense("Miete", "2026-03-31", 100000)
       other_payer.paid_by = household.ben
-      entered = [
-        expense("Miete", "2026-02-28", 100000),  # equal: skipped
-        expense("Miete", "2026-03-31", 99999),   # another amount
-        expense("Mieten", "2026-03-31", 100000), # another title
-        other_payer,
-        expense("Miete", "2026-04-30", 100000), # deleted below
-      ].map { |input| household.create(input) }
-      store.delete_expense(household.anna, entered.last)
+      deleted = household.create(expense("Miete", "2026-04-30", 100000))
+      [equal, other_amount, other_title, other_payer].each { |input| household.create(input) }
+      store.delete_expense(household.anna, deleted)
 
       materialize(service, "2026-05-15").should eq 2
+
       dates(rule_id).should eq "2026-01-31 2026-03-31 2026-04-30"
       next_date(rule_id).should eq "2026-05-31"
     end

@@ -109,8 +109,7 @@ describe "Store expenses" do
     end
   end
 
-  # Line breaks arrive as CR LF but count as one character in the form.
-  it "counts a line break of the notes as one character" do
+  it "counts a line break of the notes (CR LF from a browser) as one character" do
     input = household.equal("Einkauf", 1000, "2026-08-01", household.anna, household.anna)
     input.notes = "a\r\n" * 999 + "aa"
     store.create_expense(household.anna, input)

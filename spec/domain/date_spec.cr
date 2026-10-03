@@ -110,7 +110,6 @@ describe Domain do
 
   it "takes the calendar date of a moment in a time zone" do
     berlin = Time::Location.load("Europe/Berlin")
-    # 23:30 UTC on Oct 1 is already Oct 2 in Berlin.
     got = Domain.date_of(Time.utc(2026, 10, 1, 23, 30).in(berlin))
     got.to_s(Domain::DATE_LAYOUT).should eq "2026-10-02"
     got.location.should eq Time::Location::UTC

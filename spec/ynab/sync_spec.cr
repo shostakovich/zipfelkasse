@@ -32,7 +32,6 @@ private def target(account : String, start : String) : Store::YNABTarget
   Store::YNABTarget.new(plan_id: FakeYNAB::PLAN, account_id: account, start: date(start))
 end
 
-# Anna's YNAB: the token, the shared account and the start date.
 private def connect(start : String = "2026-09-01", account : String = FakeYNAB::ACCOUNT) : Nil
   store.set_ynab_token(anna, FakeYNAB::TOKEN)
   store.set_ynab_target(anna, target(account, start))
@@ -55,7 +54,6 @@ private def sync(full : Bool = false) : YNAB::Outcome
   service.sync_person(anna, full)
 end
 
-# The result of a sync that must succeed.
 private def sync!(full : Bool = false) : YNAB::SyncResult
   outcome = sync(full)
   raise outcome.error.not_nil! if outcome.error
@@ -74,7 +72,6 @@ private def requests : Array(String)
   fake.take_requests
 end
 
-# A sync that hangs in its first request to YNAB until it is released.
 private record HungSync, hold : Channel(Nil), done : Channel(Nil) do
   def release : Nil
     hold.close
@@ -216,8 +213,7 @@ describe YNAB::Service do
     end
   end
 
-  describe "selecting the expenses" do
-    # The expenses of these examples exist before the setup, unless they say otherwise.
+  describe "selecting the expenses that were entered before the setup" do
     before_each do
       store.clock = -> { Time.utc(2026, 9, 21, 10) }
       connect("2026-09-10")
@@ -396,21 +392,30 @@ describe YNAB::Service do
       fake.live.size.should eq 1
     end
 
-    it "recreates transactions that were deleted in YNAB" do
+    it "recreates a transaction that YNAB returns as deleted" do
       connect
-      a = create(shared("A", 1000, "2026-09-20"))
-      b = create(shared("B", 2000, "2026-09-21"))
+      id = create(shared("A", 1000, "2026-09-20"))
       sync!
-      transaction_ids = rows.transform_values(&.txn_id)
-      fake.txns[transaction_ids[a]].deleted = true # a PATCH returns it as deleted
-      fake.txns.delete(transaction_ids[b])         # a PATCH answers 404
-      edit(a) { |input| input.title = "A2"; input }
-      edit(b) { |input| input.title = "B2"; input }
+      fake.txns[rows[id].txn_id.not_nil!].deleted = true
+      edit(id) { |input| input.title = "A2"; input }
 
       sync!.again?.should be_true
       sync!
 
-      fake.live.map(&.payee_name).should eq ["A2", "B2"]
+      fake.live.map(&.payee_name).should eq ["A2"]
+    end
+
+    it "recreates a transaction that YNAB does not know any more" do
+      connect
+      id = create(shared("B", 2000, "2026-09-21"))
+      sync!
+      fake.txns.delete(rows[id].txn_id.not_nil!)
+      edit(id) { |input| input.title = "B2"; input }
+
+      sync!.again?.should be_true
+      sync!
+
+      fake.live.map(&.payee_name).should eq ["B2"]
     end
 
     it "aborts a hanging request on shutdown without pausing the next start" do
@@ -503,14 +508,14 @@ describe YNAB::Service do
       sync!.created.should eq 1
     end
 
-    it "records a rejected transaction and retries it only in the full sync" do
+    it "records a rejected transaction after trying the batch and each transaction on its own, and retries it only in the full sync" do
       connect
       good = create(shared("Gut", 1000, "2026-09-20"))
       bad = create(shared("REJECT", 2000, "2026-09-21"))
 
       result = sync!
       {result.created, result.failed}.should eq({1, 1})
-      requests.should eq [POST, POST, POST] # the batch is rejected, then each one is tried
+      requests.should eq [POST] * 3
       rows[good].txn_id.should_not be_nil
       rows[bad].txn_id.should be_nil
       rows[bad].last_error.to_s.should contain "payee rejected"
@@ -522,12 +527,12 @@ describe YNAB::Service do
       store.ynab_sync_summary(anna)[1].map(&.title).should eq ["REJECT"]
     end
 
-    it "deletes right away what a failed PATCH could not update" do
+    it "deletes right away what a failed batch and a failed single PATCH could not update" do
       connect
       id = create(shared("Kino", 2400, "2026-09-20"))
       sync!
       edit(id) { |input| input.title = "Kino 2"; input }
-      fake.fail(400, 400) # the batch and the single attempt
+      fake.fail(400, 400)
 
       sync!.failed.should eq 1
       {rows[id].txn_id.nil?, rows[id].last_error.nil?}.should eq({false, false})

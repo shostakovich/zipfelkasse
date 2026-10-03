@@ -53,11 +53,11 @@ describe Domain do
       "--1"                  => "Ungültiger Betrag „--1“.",
       "€12"                  => "Ungültiger Betrag „€12“.",
       "12 €€"                => "Ungültiger Betrag „12€“.",
-      "1\u{202f}000"         => "Ungültiger Betrag „1\u{202f}000“.", # only space and no-break space are removed
+      "1\u{202f}000"         => "Ungültiger Betrag „1\u{202f}000“.",
       "\u{661}\u{662}"       => "Ungültiger Betrag „\u{661}\u{662}“.",
       "12,345"               => "Höchstens 2 Nachkommastellen erlaubt.",
       "1,234"                => "Höchstens 2 Nachkommastellen erlaubt.",
-      "0.123"                => "Höchstens 2 Nachkommastellen erlaubt.", # after a leading 0 the dot is a decimal point
+      "0.123"                => "Höchstens 2 Nachkommastellen erlaubt.",
       "000.123"              => "Höchstens 2 Nachkommastellen erlaubt.",
       "12.3456"              => "Höchstens 2 Nachkommastellen erlaubt.",
       "1" * 16               => "Der Betrag ist zu groß.",
@@ -139,7 +139,7 @@ describe Domain do
 
   describe ".to_eur_cents" do
     {
-      {10000_i64, "USD", 1.0823}  => 9240, # 100 USD / 1.0823 = 92.396 €
+      {10000_i64, "USD", 1.0823}  => 9240,
       {1000_i64, "JPY", 160.5}    => 623,
       {1234_i64, "EUR", 1.0}      => 1234,
       {-10000_i64, "USD", 1.0823} => -9240,
@@ -165,13 +165,22 @@ describe Domain do
   describe ".parse_rate" do
     {
       "1,0857" => 1.0857, "1.0857" => 1.0857, "17000" => 17000.0, "17.000,5" => 17000.5, "17,000.5" => 17000.5,
-      "17.000" => 17000.0, # a dot before exactly three digits is a thousands separator, as for amounts
-      "1.085" => 1085.0,
-      "0.856" => 0.856, # but not after a leading 0
       "00.856" => 0.856, "0.8565" => 0.8565, "1.234.567,25" => 1234567.25, " 0,8653 " => 0.8653, "162,45" => 162.45,
       "1,5" => 1.5, "1 000,5" => 1000.5, "123456789012,5" => 123456789012.5, "0,000000000001" => 1e-12,
     }.each do |text, rate|
       it "reads #{text.inspect} as #{rate}" do
+        Domain.parse_rate(text).should eq rate
+      end
+    end
+
+    {"17.000" => 17000.0, "1.085" => 1085.0}.each do |text, rate|
+      it "reads the dot before exactly three digits in #{text.inspect} as a thousands separator, as for amounts" do
+        Domain.parse_rate(text).should eq rate
+      end
+    end
+
+    {"0.856" => 0.856, "0.8565" => 0.8565}.each do |text, rate|
+      it "reads the dot after a leading 0 in #{text.inspect} as a decimal point" do
         Domain.parse_rate(text).should eq rate
       end
     end

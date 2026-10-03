@@ -1,5 +1,10 @@
 require "../spec_helper"
 
+# The expenses, newest first, as {title, category, times}.
+private def history(*entries : {String, Int64, Int32}) : Array(Store::TitleCategory)
+  entries.flat_map { |title, category, times| Array.new(times) { Store::TitleCategory.new(title, category) } }.to_a
+end
+
 describe "category suggestions" do
   food, dining, home = 1_i64, 2_i64, 3_i64
 
@@ -15,35 +20,32 @@ describe "category suggestions" do
   end
 
   describe "learning from the recent history" do
-    suggestions = Web.suggest_categories([] of Store::TitleCategory)
+    it "suggests the category a title was used with most often, regardless of its case, and ignores an outlier" do
+      suggestions = Web.suggest_categories(history({"Kaufland", food, 2}, {"kaufland", dining, 1}, {"Kaufland", food, 3}))
 
-    before_each do
-      history = [] of Store::TitleCategory # newest first
-      add = ->(title : String, category : Int64, times : Int32) { times.times { history << Store::TitleCategory.new(title, category) } }
-      add.call("Kaufland", food, 2)
-      add.call("kaufland", dining, 1) # an outlier
-      add.call("Kaufland", food, 3)
-      add.call("DM", home, 1) # a tie: the most recent one wins
-      add.call("dm", food, 1)
-      add.call("Aldi Süd", food, 1)
-      add.call("Rewe", dining, 3) # within the window food wins 7:3 ...
-      add.call("Rewe", food, 7)
-      add.call("Rewe", dining, 10) # ... older ones beyond the window do not count
-      suggestions = Web.suggest_categories(history)
+      suggestions.titles["kaufland"]?.should eq food
     end
 
-    {"kaufland" => 1_i64, "dm" => 3_i64, "aldi süd" => 1_i64, "rewe" => 1_i64}.each do |key, category|
-      it "suggests category #{category} for the title #{key.inspect}" do
-        suggestions.titles[key]?.should eq category
-      end
+    it "suggests the most recent category on a tie" do
+      suggestions = Web.suggest_categories(history({"DM", home, 1}, {"dm", food, 1}))
+
+      suggestions.titles["dm"]?.should eq home
+    end
+
+    it "counts only the recent history" do
+      suggestions = Web.suggest_categories(history({"Rewe", dining, 3}, {"Rewe", food, 7}, {"Rewe", dining, 10}))
+
+      suggestions.titles["rewe"]?.should eq food
     end
 
     it "does not suggest a category for a part of a title" do
-      suggestions.titles.has_key?("aldi").should be_false
+      Web.suggest_categories(history({"Aldi Süd", food, 1})).titles.has_key?("aldi").should be_false
     end
 
     it "suggests a category for every word of a title, with the support of the category" do
-      {"kaufland" => {food, 5_i64}, "aldi" => {food, 1_i64}, "süd" => {food, 1_i64}, "rewe" => {food, 7_i64}}.each do |word, support|
+      suggestions = Web.suggest_categories(history({"Kaufland", food, 5}, {"Aldi Süd", food, 1}))
+
+      {"kaufland" => {food, 5_i64}, "aldi" => {food, 1_i64}, "süd" => {food, 1_i64}}.each do |word, support|
         suggestions.words[word]?.should eq support
       end
     end

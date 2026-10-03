@@ -11,11 +11,11 @@ describe "ECB publication calendar" do
     end
   end
 
-  it "knows the TARGET business days" do
+  it "knows the TARGET business days, not Good Friday, Easter Monday, 1 May and Christmas" do
     {
       "2026-10-02" => true, "2026-10-05" => true, "2026-12-24" => true,
       "2026-10-03" => false, "2026-10-04" => false,
-      "2026-04-03" => false, "2026-04-06" => false, # Good Friday, Easter Monday
+      "2026-04-03" => false, "2026-04-06" => false,
       "2026-05-01" => false, "2026-12-25" => false, "2027-01-01" => false,
     }.each do |day, business_day|
       FX.business_day?(date(day)).should eq(business_day), "business_day?(#{day})"

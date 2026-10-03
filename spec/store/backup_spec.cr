@@ -3,9 +3,8 @@ require "../spec_helper"
 describe "Store backups" do
   use_household
 
-  it "writes and rotates backups" do
+  it "writes backups, keeps the last seven and leaves unrelated files alone" do
     with_temp_dir do |dir|
-      # Unrelated files are left untouched.
       File.write(File.join(dir, "notiz.txt"), "x")
       base = Time.utc(2026, 10, 1, 3, 0, 0)
       paths = (0...9).map do |i|

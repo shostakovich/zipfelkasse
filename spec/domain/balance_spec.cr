@@ -14,15 +14,12 @@ end
 
 describe Domain do
   it "computes each balance from what a person paid and what they share" do
-    entries = [
-      # A (1) pays 30 € for all three
-      Domain::Entry.new(1, 3000, [share(1, 1000), share(2, 1000), share(3, 1000)]),
-      # B (2) pays 10 € for C only
-      Domain::Entry.new(2, 1000, [share(3, 1000)]),
-      # Reimbursement: C pays 5 € to A (A has a 100 % share)
-      Domain::Entry.new(3, 500, [share(1, 500)]),
-    ]
-    got = Domain.balances(entries)
+    a_pays_for_all = Domain::Entry.new(1, 3000, [share(1, 1000), share(2, 1000), share(3, 1000)])
+    b_pays_for_c = Domain::Entry.new(2, 1000, [share(3, 1000)])
+    c_pays_back_a = Domain::Entry.new(3, 500, [share(1, 500)])
+
+    got = Domain.balances([a_pays_for_all, b_pays_for_c, c_pays_back_a])
+
     got.should eq balances({1 => 1500, 2 => 0, 3 => -1500})
     got.values.sum.should eq 0
   end

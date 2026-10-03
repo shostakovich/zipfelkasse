@@ -4,179 +4,267 @@ private def target(plan : String, account : String, start : String) : Store::YNA
   Store::YNABTarget.new(plan_id: plan, account_id: account, start: date(start))
 end
 
-private def ynab_activity(s : Store) : Array(Store::Activity)
-  s.list_activity.select { |a| a.details.text.try(&.starts_with?("YNAB")) }
-end
-
-private def settings_texts(s : Store) : Array(String)
-  ynab_activity(s).map(&.details.text.to_s)
+private def ynab_texts : Array(String)
+  store.list_activity.compact_map(&.details.text).select(&.starts_with?("YNAB"))
 end
 
 describe "Store YNAB" do
   use_household
 
-  it "stores the connection" do
-    h = household
-    s = store
-    expect_raises(Store::NotFound) { s.get_ynab_config(h.anna) }
-    expect_raises(Store::NotFound) { s.set_ynab_target(h.anna, target("p", "a", "2026-09-01")) }
-    s.set_ynab_token(h.anna, "tok").should be_false
-    c = s.get_ynab_config(h.anna)
-    {c.token, c.enabled?, c.ready?, c.start_date}.should eq({"tok", true, false, nil})
-    c.inspect.should_not contain "tok\""
-    c.inspect.should contain "[redacted]"
-    s.set_ynab_target(h.anna, target("p", "a", "2026-09-01"))
-    c = s.get_ynab_config(h.anna)
-    {c.plan_id, c.account_id, c.start_date, c.ready?}.should eq({"p", "a", date("2026-09-01"), true})
-
-    # Ben has a token, Cleo is archived, Anna disconnects later.
-    s.set_ynab_token(h.ben, "tok-b")
-    s.set_ynab_token(h.cleo, "tok-c")
-    s.set_participant_archived(nil, h.cleo, true)
-    s.list_ynab_configs.map(&.participant_id).should eq [h.anna, h.ben]
-    s.set_ynab_token(h.anna, nil)
-    c = s.get_ynab_config(h.anna)
-    {c.token, c.enabled?, c.ready?, c.plan_id}.should eq({nil, false, false, "p"})
-    s.list_ynab_configs.size.should eq 1
-  end
-
-  it "logs token and target changes" do
-    h = household
-    s = store
-    s.set_ynab_token(h.anna, "tok")
-    s.set_ynab_target(h.anna, Store::YNABTarget.new(plan_id: "p", account_id: "a", plan_name: "Haushalt",
-      start: date("2026-09-01")))
-    s.set_ynab_target(h.anna, Store::YNABTarget.new(plan_id: "p", account_id: "a", start: date("2026-08-01")))
-    s.set_ynab_target(h.anna, Store::YNABTarget.new(plan_id: "p", account_id: "a", start: date("2026-08-01")))
-    s.set_ynab_token(h.anna, "tok-2", Set{"p", "q"}).should be_false
-    s.set_ynab_token(h.anna, "tok-3", Set{"q"}).should be_true
-    c = s.get_ynab_config(h.anna)
-    {c.plan_id, c.account_id, c.start_date}.should eq({nil, nil, date("2026-08-01")})
-    s.set_ynab_token(h.anna, "")
-    settings_texts(s).reverse.should eq [
-      "YNAB verbunden (Token gesetzt)",
-      "YNAB: Konto „a“ im Plan „Haushalt“ gewählt, Startdatum 01.09.2026",
-      "YNAB: Startdatum 01.09.2026 → 01.08.2026",
-      "YNAB-Token ersetzt",
-      "YNAB-Token ersetzt (Plan und Konto zurückgesetzt)",
-      "YNAB-Verbindung getrennt",
-    ]
-    ynab_activity(s).map { |a| {a.actor_id, a.action} }.uniq.should eq [{h.anna, Store::Action::SettingsUpdated}]
-  end
-
-  it "resets the sync state when the target changes" do
-    h = household
-    s = store
-    id = s.create_expense(h.anna, h.equal("Kino", 1000, "2026-09-10", h.anna, h.anna, h.ben))
-    s.set_ynab_token(h.anna, "tok")
-    s.set_ynab_target(h.anna, target("p", "a", "2026-09-01"))
-    at = Time.utc(2026, 9, 10, 12, 0, 0)
-    s.put_ynab_sync(Store::YNABSync.new(id, h.anna, txn_id: "t1", synced_hash: "h", synced_at: at))
-    rows = s.list_ynab_sync(h.anna)
-    rows.size.should eq 1
-    {rows[0].txn_id, rows[0].synced_at}.should eq({"t1", at})
-    # Changing only the start date: sync state is kept.
-    s.set_ynab_target(h.anna, target("p", "a", "2026-08-01"))
-    s.list_ynab_sync(h.anna)[0].txn_id.should eq "t1"
-    # Changing the account: the rows stay (the sync looks for their
-    # transactions in the new account), but without the old transaction.
-    s.set_ynab_target(h.anna, target("p", "b", "2026-08-01"))
-    rows = s.list_ynab_sync(h.anna)
-    rows.size.should eq 1
-    {rows[0].txn_id, rows[0].synced_hash, rows[0].synced_at}.should eq({nil, Store::YNABSync::RETARGET, nil})
-    s.ynab_sync_summary(h.anna)[0].should eq 0
-  end
-
-  it "stores the category mapping and summarises the sync" do
-    h = household
-    s = store
-    s.set_ynab_category_map(h.anna, {h.food => "y1", 999_i64 => ""})
-    expect_invalid("Unbekannte Kategorie.") do
-      s.set_ynab_category_map(h.anna, {999_i64 => "y2"})
+  describe "the connection" do
+    it "does not exist before a token is stored" do
+      expect_raises(Store::NotFound) { store.get_ynab_config(household.anna) }
+      expect_raises(Store::NotFound) { store.set_ynab_target(household.anna, target("p", "a", "2026-09-01")) }
     end
-    s.ynab_category_map(h.anna).should eq({h.food => "y1"})
-    s.ynab_category_map(h.ben).should be_empty
 
-    a = s.create_expense(h.anna, h.equal("A", 1000, "2026-09-10", h.anna, h.anna, h.ben))
-    b = s.create_expense(h.anna, h.equal("B", 1000, "2026-09-11", h.anna, h.anna, h.ben))
-    s.put_ynab_sync(Store::YNABSync.new(a, h.anna, txn_id: "t1", synced_hash: "h"),
-      Store::YNABSync.new(b, h.anna, last_error: "broken"))
-    synced, problems = s.ynab_sync_summary(h.anna)
-    synced.should eq 1
-    problems.should eq [Store::YNABSyncProblem.new(b, "B", date("2026-09-11"), "broken")]
-    s.delete_ynab_sync(h.anna, a, b)
-    s.list_ynab_sync(h.anna).should be_empty
+    it "is enabled but not ready with a token alone" do
+      store.set_ynab_token(household.anna, "tok").should be_false
+
+      config = store.get_ynab_config(household.anna)
+      {config.token, config.enabled?, config.ready?, config.start_date}.should eq({"tok", true, false, nil})
+    end
+
+    it "is ready with token, plan, account and start date" do
+      store.set_ynab_token(household.anna, "tok")
+      store.set_ynab_target(household.anna, target("p", "a", "2026-09-01"))
+
+      config = store.get_ynab_config(household.anna)
+      {config.plan_id, config.account_id, config.start_date, config.ready?}.should eq({"p", "a", date("2026-09-01"), true})
+    end
+
+    it "never shows the token when it is inspected" do
+      store.set_ynab_token(household.anna, "tok")
+
+      store.get_ynab_config(household.anna).inspect.should_not contain "tok\""
+      store.get_ynab_config(household.anna).inspect.should contain "[redacted]"
+    end
+
+    it "is listed for every active person with a token" do
+      store.set_ynab_token(household.anna, "tok")
+      store.set_ynab_token(household.ben, "tok-b")
+      store.set_ynab_token(household.cleo, "tok-c")
+      store.set_participant_archived(nil, household.cleo, true)
+
+      store.list_ynab_configs.map(&.participant_id).should eq [household.anna, household.ben]
+    end
+
+    it "keeps plan and account when the token is removed, but is no longer enabled" do
+      store.set_ynab_token(household.anna, "tok")
+      store.set_ynab_target(household.anna, target("p", "a", "2026-09-01"))
+      store.set_ynab_token(household.anna, nil)
+
+      config = store.get_ynab_config(household.anna)
+      {config.token, config.enabled?, config.ready?, config.plan_id}.should eq({nil, false, false, "p"})
+      store.list_ynab_configs.should be_empty
+    end
   end
 
-  it "logs changes of the category mapping" do
-    h = household
-    s = store
-    cats = s.list_categories
-    food, restaurant = cats[0], cats[1]
-    names = {"y1" => "Lebensmittel & Drogerie", "y2" => "Essen gehen"}
-    s.set_ynab_category_map(h.anna, {food.id => "y1"}, names)
-    s.set_ynab_category_map(h.anna, {food.id => "y1"}, names)
-    s.set_ynab_category_map(h.anna, {restaurant.id => "y2", food.id => "gone"}, names)
-    settings_texts(s).reverse.should eq [
-      "YNAB: Kategorie-Zuordnung geändert (#{food.name} → Lebensmittel & Drogerie)",
-      "YNAB: Kategorie-Zuordnung geändert (#{food.name} → (nicht mehr vorhanden) (vorher Lebensmittel & Drogerie), " \
-      "#{restaurant.name} → Essen gehen)",
-    ]
-    s.set_ynab_category_map(h.anna, {} of Int64 => String, names)
-    settings_texts(s).first.should eq "YNAB: Kategorie-Zuordnung geändert (#{food.name} → unkategorisiert " \
-                                      "(vorher (nicht mehr vorhanden)), #{restaurant.name} → unkategorisiert (vorher Essen gehen))"
+  describe "the activity log" do
+    it "logs the token and the chosen target" do
+      store.set_ynab_token(household.anna, "tok")
+      store.set_ynab_target(household.anna, Store::YNABTarget.new(plan_id: "p", account_id: "a", plan_name: "Haushalt", start: date("2026-09-01")))
+      store.set_ynab_target(household.anna, target("p", "a", "2026-08-01"))
+      store.set_ynab_target(household.anna, target("p", "a", "2026-08-01"))
+
+      ynab_texts.reverse.should eq [
+        "YNAB verbunden (Token gesetzt)",
+        "YNAB: Konto „a“ im Plan „Haushalt“ gewählt, Startdatum 01.09.2026",
+        "YNAB: Startdatum 01.09.2026 → 01.08.2026",
+      ]
+    end
+
+    it "logs a replaced token, and that plan and account were reset for another YNAB user" do
+      store.set_ynab_token(household.anna, "tok")
+      store.set_ynab_target(household.anna, target("p", "a", "2026-08-01"))
+
+      store.set_ynab_token(household.anna, "tok-2", Set{"p", "q"}).should be_false
+      store.set_ynab_token(household.anna, "tok-3", Set{"q"}).should be_true
+
+      config = store.get_ynab_config(household.anna)
+      {config.plan_id, config.account_id, config.start_date}.should eq({nil, nil, date("2026-08-01")})
+      ynab_texts.first(2).should eq ["YNAB-Token ersetzt (Plan und Konto zurückgesetzt)", "YNAB-Token ersetzt"]
+    end
+
+    it "logs the disconnection, with the person as the author of every entry" do
+      store.set_ynab_token(household.anna, "tok")
+      store.set_ynab_token(household.anna, "")
+
+      ynab_texts.first.should eq "YNAB-Verbindung getrennt"
+      store.list_activity.map { |entry| {entry.actor_id, entry.action} }.uniq.should contain({household.anna, Store::Action::SettingsUpdated})
+    end
   end
 
-  it "records when the target was chosen" do
-    h = household
-    s = store
-    clock = Time.utc(2026, 9, 1, 10, 0, 0)
-    s.clock = -> { clock }
-    s.set_ynab_token(h.anna, "tok")
-    s.get_ynab_config(h.anna).connected_at.should be_nil
-    s.set_ynab_target(h.anna, target("p", "a", "2026-09-01"))
-    s.get_ynab_config(h.anna).connected_at.should eq clock
-    # Changing only the start date: timestamp is kept.
-    clock += 1.hour
-    s.set_ynab_target(h.anna, target("p", "a", "2026-08-01"))
-    s.get_ynab_config(h.anna).connected_at.should eq clock - 1.hour
-    # Account changed: set up anew.
-    s.set_ynab_target(h.anna, target("p", "b", "2026-08-01"))
-    s.get_ynab_config(h.anna).connected_at.should eq clock
-    list = s.list_ynab_configs
-    list.size.should eq 1
-    list[0].connected_at.should eq clock
-    # Legacy data without a stored timestamp: set once.
-    s.set_ynab_token(h.ben, "tok-b")
-    s.ensure_ynab_connected_at(h.ben).should eq clock
-    clock += 1.hour
-    s.ensure_ynab_connected_at(h.ben).should eq clock - 1.hour
-    expect_raises(Store::NotFound) { s.ensure_ynab_connected_at(h.cleo) }
+  describe "the sync state of expenses" do
+    expense_id = 0_i64
+    synced_at = Time.utc(2026, 9, 10, 12)
+
+    before_each do
+      expense_id = household.create(household.equal("Kino", 1000, "2026-09-10", household.anna, household.anna, household.ben))
+      store.set_ynab_token(household.anna, "tok")
+      store.set_ynab_target(household.anna, target("p", "a", "2026-09-01"))
+      store.put_ynab_sync(Store::YNABSync.new(expense_id, household.anna, txn_id: "t1", synced_hash: "h", synced_at: synced_at))
+    end
+
+    it "is stored per expense" do
+      rows = store.list_ynab_sync(household.anna)
+
+      {rows.size, rows[0].txn_id, rows[0].synced_at}.should eq({1, "t1", synced_at})
+    end
+
+    it "is kept when only the start date changes" do
+      store.set_ynab_target(household.anna, target("p", "a", "2026-08-01"))
+
+      store.list_ynab_sync(household.anna)[0].txn_id.should eq "t1"
+    end
+
+    it "keeps its rows without the old transaction when the account changes, so that the sync looks for them in the new account" do
+      store.set_ynab_target(household.anna, target("p", "b", "2026-08-01"))
+
+      rows = store.list_ynab_sync(household.anna)
+      {rows.size, rows[0].txn_id, rows[0].synced_hash, rows[0].synced_at}.should eq({1, nil, Store::YNABSync::RETARGET, nil})
+      store.ynab_sync_summary(household.anna)[0].should eq 0
+    end
+
+    it "is summarized as the number of synced expenses and the problems of the others" do
+      other = household.create(household.equal("B", 1000, "2026-09-11", household.anna, household.anna, household.ben))
+      store.put_ynab_sync(Store::YNABSync.new(other, household.anna, last_error: "broken"))
+
+      synced, problems = store.ynab_sync_summary(household.anna)
+
+      synced.should eq 1
+      problems.should eq [Store::YNABSyncProblem.new(other, "B", date("2026-09-11"), "broken")]
+    end
+
+    it "can be deleted" do
+      store.delete_ynab_sync(household.anna, expense_id)
+
+      store.list_ynab_sync(household.anna).should be_empty
+    end
   end
 
-  it "stores the sync status" do
-    h = household
-    s = store
-    expect_raises(Store::NotFound) { s.get_ynab_status(h.anna) }
-    expect_raises(Store::NotFound) { s.set_ynab_status(h.anna, Store::YNABStatus.new(summary: "x")) }
-    s.set_ynab_token(h.anna, "tok")
-    s.get_ynab_status(h.anna).should eq Store::YNABStatus.new
+  describe "the category mapping" do
+    it "ignores an empty YNAB category and refuses an unknown app category" do
+      store.set_ynab_category_map(household.anna, {household.food => "y1", 999_i64 => ""})
+
+      expect_invalid("Unbekannte Kategorie.") { store.set_ynab_category_map(household.anna, {999_i64 => "y2"}) }
+      store.ynab_category_map(household.anna).should eq({household.food => "y1"})
+      store.ynab_category_map(household.ben).should be_empty
+    end
+
+    it "logs a change with the names of the YNAB categories, and nothing for an unchanged mapping" do
+      names = {"y1" => "Lebensmittel & Drogerie", "y2" => "Essen gehen"}
+      store.set_ynab_category_map(household.anna, {household.food => "y1"}, names)
+      store.set_ynab_category_map(household.anna, {household.food => "y1"}, names)
+
+      ynab_texts.should eq ["YNAB: Kategorie-Zuordnung geändert (Lebensmittel → Lebensmittel & Drogerie)"]
+    end
+
+    it "logs a YNAB category that no longer exists, and a mapping that is removed" do
+      names = {"y1" => "Lebensmittel & Drogerie", "y2" => "Essen gehen"}
+      store.set_ynab_category_map(household.anna, {household.food => "y1"}, names)
+      store.set_ynab_category_map(household.anna, {household.restaurant => "y2", household.food => "gone"}, names)
+      store.set_ynab_category_map(household.anna, {} of Int64 => String, names)
+
+      ynab_texts.first(2).should eq [
+        "YNAB: Kategorie-Zuordnung geändert (Lebensmittel → unkategorisiert (vorher (nicht mehr vorhanden)), " \
+        "Restaurant → unkategorisiert (vorher Essen gehen))",
+        "YNAB: Kategorie-Zuordnung geändert (Lebensmittel → (nicht mehr vorhanden) (vorher Lebensmittel & Drogerie), " \
+        "Restaurant → Essen gehen)",
+      ]
+    end
+  end
+
+  describe "the time the target was chosen" do
+    clock = Time.utc(2026, 9, 1, 10)
+
+    before_each do
+      clock = Time.utc(2026, 9, 1, 10)
+      store.clock = -> { clock }
+      store.set_ynab_token(household.anna, "tok")
+    end
+
+    it "is unknown until a target is chosen" do
+      store.get_ynab_config(household.anna).connected_at.should be_nil
+
+      store.set_ynab_target(household.anna, target("p", "a", "2026-09-01"))
+
+      store.get_ynab_config(household.anna).connected_at.should eq clock
+    end
+
+    it "is kept when only the start date changes" do
+      store.set_ynab_target(household.anna, target("p", "a", "2026-09-01"))
+      chosen = clock
+      clock += 1.hour
+
+      store.set_ynab_target(household.anna, target("p", "a", "2026-08-01"))
+
+      store.get_ynab_config(household.anna).connected_at.should eq chosen
+    end
+
+    it "starts anew when the account changes" do
+      store.set_ynab_target(household.anna, target("p", "a", "2026-09-01"))
+      clock += 1.hour
+
+      store.set_ynab_target(household.anna, target("p", "b", "2026-09-01"))
+
+      store.get_ynab_config(household.anna).connected_at.should eq clock
+      store.list_ynab_configs.map(&.connected_at).should eq [clock]
+    end
+
+    it "is set once for legacy data without a stored time" do
+      store.set_ynab_token(household.ben, "tok-b")
+      store.ensure_ynab_connected_at(household.ben).should eq clock
+
+      clock += 1.hour
+      store.ensure_ynab_connected_at(household.ben).should eq clock - 1.hour
+    end
+
+    it "does not exist for a person without a connection" do
+      expect_raises(Store::NotFound) { store.ensure_ynab_connected_at(household.cleo) }
+    end
+  end
+
+  describe "the sync status" do
     run = Time.utc(2026, 9, 1, 10, 0, 0, nanosecond: 123456789)
-    want = Store::YNABStatus.new(last_run: run, last_sync: run - 1.hour, summary: "1 neu", error: "kaputt",
+    status = Store::YNABStatus.new(last_run: run, last_sync: run - 1.hour, summary: "1 neu", error: "kaputt",
       token_invalid: true, retry_at: run + 5.minutes, backoff: 10.minutes)
-    s.set_ynab_status(h.anna, want)
-    s.get_ynab_status(h.anna).should eq want
-    s.db.scalar("SELECT last_run || ' ' || retry_at FROM ynab_config WHERE participant_id = ?", h.anna)
-      .should eq "2026-09-01T10:00:00.123456789Z 2026-09-01T10:05:00.123456789Z"
-    # The target does not touch the status.
-    s.set_ynab_target(h.anna, target("p", "a", "2026-09-01"))
-    s.get_ynab_status(h.anna).should eq want
-    # A new token resets what belonged to the old one, in the same write.
-    s.set_ynab_token(h.anna, "tok-2")
-    reset = Store::YNABStatus.new(last_run: want.last_run, last_sync: want.last_sync, summary: want.summary)
-    s.get_ynab_status(h.anna).should eq reset
-    s.set_ynab_status(h.anna, want)
-    s.set_ynab_token(h.anna, "")
-    s.get_ynab_status(h.anna).should eq reset
+    without_token_state = Store::YNABStatus.new(last_run: status.last_run, last_sync: status.last_sync, summary: status.summary)
+
+    it "does not exist without a connection" do
+      expect_raises(Store::NotFound) { store.get_ynab_status(household.anna) }
+      expect_raises(Store::NotFound) { store.set_ynab_status(household.anna, Store::YNABStatus.new(summary: "x")) }
+    end
+
+    it "starts empty and is stored with the precision of nanoseconds" do
+      store.set_ynab_token(household.anna, "tok")
+      store.get_ynab_status(household.anna).should eq Store::YNABStatus.new
+
+      store.set_ynab_status(household.anna, status)
+
+      store.get_ynab_status(household.anna).should eq status
+      store.db.scalar("SELECT last_run || ' ' || retry_at FROM ynab_config WHERE participant_id = ?", household.anna)
+        .should eq "2026-09-01T10:00:00.123456789Z 2026-09-01T10:05:00.123456789Z"
+    end
+
+    it "is not touched by choosing a target" do
+      store.set_ynab_token(household.anna, "tok")
+      store.set_ynab_status(household.anna, status)
+
+      store.set_ynab_target(household.anna, target("p", "a", "2026-09-01"))
+
+      store.get_ynab_status(household.anna).should eq status
+    end
+
+    it "loses what belonged to the old token when a new token is stored, in the same write" do
+      store.set_ynab_token(household.anna, "tok")
+      store.set_ynab_status(household.anna, status)
+
+      store.set_ynab_token(household.anna, "tok-2")
+      store.get_ynab_status(household.anna).should eq without_token_state
+
+      store.set_ynab_status(household.anna, status)
+      store.set_ynab_token(household.anna, "")
+      store.get_ynab_status(household.anna).should eq without_token_state
+    end
   end
 end

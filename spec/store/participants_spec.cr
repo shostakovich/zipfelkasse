@@ -48,8 +48,7 @@ end
 describe "Store participants with expenses" do
   use_household
 
-  # Deleted expenses do not count.
-  it "archives a person only without a balance" do
+  it "archives a person only without a balance, which deleted expenses do not change" do
     h = household
     id = h.create(h.equal("Einkauf", 1000, "2026-08-01", h.anna, h.anna, h.ben))
     expect_raises(Domain::ValidationError, "Ben hat noch einen Saldo von -5,00 €") { store.set_participant_archived(nil, h.ben, true) }
