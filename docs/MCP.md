@@ -23,7 +23,10 @@ with "The app refused the entry (message in German):" followed by the app's Germ
 | `create_expense` | **writes:** creates an expense |
 | `create_reimbursement` | **writes:** records a settlement payment from one person to another |
 
-Parameters in detail:
+Parameters in detail. Choice values (`interval`, `reimbursements`, `sort`, `detail`, `group_by`, `compare`, `action`,
+`split`) are matched ignoring case and surrounding whitespace. Optional text parameters that are empty count as not
+given; numbers such as `limit`, `expense_id` and `before_id` must respect the minimum of the schema (1) and are refused
+otherwise.
 
 - `search_expenses`: `from`, `to` (dates, inclusive), `category`, `person` (expenses the person paid **or** takes
   part in), `paid_by` (only paid by), `involved` (only with a share of), `text` (substring of title or notes; a list
@@ -57,7 +60,9 @@ Parameters in detail:
 
 Rules for both write tools:
 
-- The person who paid (`paid_by` or `from`) counts as the author in the activity log; MCP has no logged-in user.
+- The person who paid (`paid_by` or `from`) counts as the author in the activity log; MCP has no logged-in user. The
+  entry carries the text "Über MCP angelegt", so entries created through MCP can be told apart.
+- Titles are limited to 200 characters and notes to 2000, as in the app.
 - Amounts are strict: digits with a dot as decimal separator, no thousands separator (`"1234.50"`, not `"1.234,50"`),
   so `"1.234"` is refused instead of becoming 1234 €.
 - Archived people and categories cannot be used.
@@ -97,11 +102,13 @@ Main output keys:
   `person`, `count`, `amount`, `amount_cents`, with `group_by=person` also `paid`, `paid_cents`, with `compare` also
   `previous`, `previous_cents`, `change`, `change_cents`, `change_percent`), `rows_total`, `truncated`, `total`,
   `total_cents`, with `compare` also `previous_period`, `previous_total`, `previous_total_cents`, `note`.
-- `balance_history`: `interval`, `period`, `rows[]` (`month`/`week`/`year`, `balances[]` as in `balances`), `note`.
+- `balance_history`: `interval`, `period`, `rows[]` (`month`/`week`/`year`, `balances[]` with `person`, `balance` and
+  `balance_cents`), `note`.
 - `activity`: `entries[]` (`id`, `at` in the server time zone, `actor` (`system` for automatic changes), `action`,
   `expense_id`, `title`, `amount`, `amount_cents`, `changes[]` (`field`, `old`, `new`, as shown in the app), `text`),
   `shown`, `more`, and `note` with the next `before_id` when there are more.
-- `sql_query`: `columns`, `rows`, `row_count`, `truncated`, and `note` when truncated.
+- `sql_query`: `columns`, `rows`, `row_count`, `truncated`, and `note` when truncated. Numbers are JSON numbers, infinite
+  values (`9e999`) appear as the strings `"Infinity"` and `"-Infinity"`.
 
 **Protection in `sql_query`:** the query does not run on the real database. It runs on a fresh in-memory copy. The
 server attaches the real file, copies the allowed tables in a read transaction and detaches the file again. After
@@ -114,7 +121,7 @@ numeric suffix (`x`, `x:1`).
 
 The allowed tables are participants, categories, expenses, expense_shares, recurring, activity, fx_rates and settings
 (without `ynab…` keys). The YNAB tables holding the token do not exist in the copy at all. New tables only become
-visible once they are listed in `store.MCPTables`.
+visible once they are listed in `Store::EXPOSED_TABLES`.
 
 ## Access
 
@@ -251,7 +258,7 @@ The server is "dual era":
   `data.supported`, an unknown method in 404 with `-32601`. Supported are `server/discover`, `tools/list`,
   `tools/call` and `ping`.
 - **Legacy (2025-11-25, 2025-06-18, 2025-03-26):** `initialize` negotiates the version, `notifications/initialized`
-  results in 202. After that come `tools/list`, `tools/call` and `ping`. Without the version header, 2025-03-26
-  applies.
+  results in 202. After that come `tools/list`, `tools/call`, `server/discover` and `ping`. Without the version header,
+  2025-03-26 applies.
 - For both: responses are only sent as `application/json`, without SSE and without session IDs. GET and DELETE
   result in 405, notifications in 202 without a body. Batches are rejected, and a message may be at most 1 MB.

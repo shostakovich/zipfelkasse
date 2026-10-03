@@ -198,6 +198,7 @@ module Zipfelkasse
       SQL
 
     # As maxlength in the expense form.
+    MAX_TITLE_LEN =  200
     MAX_NOTES_LEN = 2000
 
     # "Title or notes of e contain one of terms", compared folded (LIKE would
@@ -221,7 +222,7 @@ module Zipfelkasse
       input.title = normalize_name(input.title)
       input.notes = input.notes.strip
       raise Domain::ValidationError.new("Bitte einen Titel angeben.") if input.title.empty?
-      raise Domain::ValidationError.new("Der Titel ist zu lang (höchstens 200 Zeichen).") if input.title.size > 200
+      raise Domain::ValidationError.new("Der Titel ist zu lang (höchstens #{MAX_TITLE_LEN} Zeichen).") if input.title.size > MAX_TITLE_LEN
       # Browsers count a line break as one character for maxlength but send
       # it as CR LF.
       if input.notes.gsub("\r\n", "\n").size > MAX_NOTES_LEN
@@ -283,8 +284,8 @@ module Zipfelkasse
       end
     end
 
-    # No actor means the system.
-    def create_expense(actor_id : Int64?, input : ExpenseInput) : Int64
+    # No actor means the system. The text is shown with the activity entry.
+    def create_expense(actor_id : Int64?, input : ExpenseInput, text : String? = nil) : Int64
       input = Store.normalize_expense(input)
       id = transaction do |tx|
         check_refs(tx, input)
@@ -305,7 +306,7 @@ module Zipfelkasse
         end
         insert_shares(tx, new_id, Store.split_shares(input, new_id))
         insert_activity(tx, actor_id, Action::ExpenseCreated, new_id,
-          ActivityDetails.new(title: input.title, amount_cents: input.amount_cents))
+          ActivityDetails.new(title: input.title, amount_cents: input.amount_cents, text: text))
         new_id
       end
       notify(ExpenseChange.new(id, Action::ExpenseCreated))
