@@ -68,9 +68,7 @@ module Zipfelkasse::Web
     def initialize(@store : Store)
     end
 
-    # Not `& : IO ->`: a block restriction wider than the yielded type
-    # crashes Crystal 1.21's codegen ("BUG: trying to downcast IO+ <-
-    # String::Builder") once a template uses the parameter two blocks deep.
+    # Not IO: a block arg restricted wider than the yielded type crashes Crystal 1.21.1 when read two blocks deep.
     def page(req : Request, status : Int32, page : Page, & : String::Builder ->) : Nil
       content = String.build { |io| yield io }
       me = req.me?
