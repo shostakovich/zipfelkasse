@@ -23,20 +23,13 @@ class HTTP::Server::Context
     URI.decode_www_form(cookie.value) if Zipfelkasse::Web.valid_escapes?(cookie.value)
   end
 
+  # The appearance the person chose; clean and following the system before anyone is identified.
   def look : Zipfelkasse::Web::Look
-    request.cookies[Zipfelkasse::Web::LOOK_COOKIE]?.try { |c| Zipfelkasse::Web::Look.parse?(c.value) } || Zipfelkasse::Web::Look::Felt
+    me?.try { |m| Zipfelkasse::Web::Look.parse?(m.look) } || Zipfelkasse::Web::Look::Clean
   end
 
   def theme : Zipfelkasse::Web::Theme
-    request.cookies[Zipfelkasse::Web::THEME_COOKIE]?.try { |c| Zipfelkasse::Web::Theme.parse?(c.value) } || Zipfelkasse::Web::Theme::Auto
-  end
-
-  def remember_appearance(look : Zipfelkasse::Web::Look, theme : Zipfelkasse::Web::Theme) : Nil
-    secure = request.headers["X-Forwarded-Proto"]? == "https"
-    {Zipfelkasse::Web::LOOK_COOKIE => look, Zipfelkasse::Web::THEME_COOKIE => theme}.each do |name, value|
-      response.cookies << HTTP::Cookie.new(name, value.to_s.downcase,
-        path: "/", max_age: 365.days, http_only: true, secure: secure, samesite: HTTP::Cookie::SameSite::Lax)
-    end
+    me?.try { |m| Zipfelkasse::Web::Theme.parse?(m.theme) } || Zipfelkasse::Web::Theme::Auto
   end
 
   def identify_as(participant_id : Int64) : Nil

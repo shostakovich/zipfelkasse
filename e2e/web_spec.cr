@@ -1453,14 +1453,14 @@ describe "Web: security, PWA, static files and CLI" do
     {
       "name" => "Zipfelkasse", "short_name" => "Zipfelkasse", "description" => "Gemeinsame Ausgaben teilen", "lang" => "de",
       "dir" => "ltr", "id" => "/", "start_url" => "/", "scope" => "/", "display" => "standalone",
-      "background_color" => "#ece4d4", "theme_color" => "#ece4d4",
+      "background_color" => "#f6f7f9", "theme_color" => "#f6f7f9",
     }.each { |k, v| {k, m[k].as_s}.should eq({k, v}) }
     m["shortcuts"].should eq JSON.parse(%([{"name":"Ausgabe hinzufügen","url":"/ausgaben/neu"},{"name":"Salden","url":"/salden"}]))
     icons = m["icons"].as_a
     icons.map { |i| {i["src"].as_s.split('?').first, i["sizes"].as_s, i["type"].as_s, i["purpose"].as_s} }.should eq [
-      {"/static/icons/icon-felt-192.webp", "192x192", "image/webp", "any"},
-      {"/static/icons/icon-felt-512.webp", "512x512", "image/webp", "any"},
-      {"/static/icons/maskable-felt-512.webp", "512x512", "image/webp", "maskable"},
+      {"/static/icons/icon-clean-192.webp", "192x192", "image/webp", "any"},
+      {"/static/icons/icon-clean-512.webp", "512x512", "image/webp", "any"},
+      {"/static/icons/maskable-clean-512.webp", "512x512", "image/webp", "maskable"},
     ]
     icons.each do |i|
       src = i["src"].as_s
@@ -1477,38 +1477,49 @@ describe "Web: security, PWA, static files and CLI" do
     r.body.should_not contain "caches."
     r = anon.get("/favicon.ico")
     {r.status, r.content_type, r.headers["Cache-Control"]}.should eq({200, "image/png", "public, max-age=86400"})
-    r.body.should eq anon.get("/static/icons/favicon-felt-light.png").body
+    r.body.should eq anon.get("/static/icons/favicon-clean-light.png").body
   end
 
-  scenario "appearance per device", world do
-    user = world.user
-    user.login("Anna")
+  scenario "appearance per person", world do
+    anna = world.user
     html = ->(r : E2E::Response) { {W.attr(r, "//html", "data-look"), W.attr(r, "//html", "data-bs-theme")} }
     mascots = ->(r : E2E::Response) do
       r.doc.xpath_nodes(%(//a[#{W.cls("app-brand")}]//*[@src or @srcset])).map { |n| (n["src"]? || n["srcset"]).split('?').first }
     end
-    # Felt, following the system, until the device chooses otherwise.
-    r = user.get("/")
-    html.call(r).should eq({"felt", nil})
-    mascots.call(r).should eq ["/static/brand/mascot-felt-dark.webp", "/static/brand/mascot-felt-light.webp"]
-    W.texts(r, %(//meta[@name="theme-color"]/@content)).should eq ["#ece4d4", "#26292d"]
-    r = user.get("/einstellungen")
-    r.doc.xpath_nodes(%(//form[@action="/einstellungen/darstellung"]//input[@checked])).map(&.["value"]).should eq ["felt", "auto"]
+    # Clean, following the system, before anyone is identified and until the person chooses otherwise.
+    html.call(anna.get("/wer")).should eq({"clean", nil})
+    anna.login("Anna")
+    r = anna.get("/")
+    html.call(r).should eq({"clean", nil})
+    mascots.call(r).should eq ["/static/brand/mascot-clean-dark.webp", "/static/brand/mascot-clean-light.webp"]
+    W.texts(r, %(//meta[@name="theme-color"]/@content)).should eq ["#f6f7f9", "#212529"]
+    r = anna.get("/einstellungen")
+    r.doc.xpath_nodes(%(//form[@action="/einstellungen/darstellung"]//input[@checked])).map(&.["value"]).should eq ["clean", "auto"]
 
-    r = user.post("/einstellungen/darstellung", {"look" => "clean", "theme" => "dark"})
+    r = anna.post("/einstellungen/darstellung", {"look" => "felt", "theme" => "dark"})
     {r.status, r.headers["Location"]}.should eq({303, "/einstellungen#darstellung"})
-    r = user.get("/")
-    html.call(r).should eq({"clean", "dark"})
-    mascots.call(r).should eq ["/static/brand/mascot-clean-dark.webp"]
-    W.texts(r, %(//meta[@name="theme-color"]/@content)).should eq ["#212529"]
-    W.attr(r, %(//link[@rel="apple-touch-icon"]), "href").not_nil!.should start_with "/static/icons/apple-touch-icon-clean.png?v="
-    user.get("/manifest.webmanifest").json["icons"][0]["src"].as_s.should start_with "/static/icons/icon-clean-192.webp?v="
+    r = anna.get("/")
+    html.call(r).should eq({"felt", "dark"})
+    mascots.call(r).should eq ["/static/brand/mascot-felt-dark.webp"]
+    W.texts(r, %(//meta[@name="theme-color"]/@content)).should eq ["#26292d"]
+    W.attr(r, %(//link[@rel="apple-touch-icon"]), "href").not_nil!.should start_with "/static/icons/apple-touch-icon-felt.png?v="
+    anna.get("/manifest.webmanifest").json["icons"][0]["src"].as_s.should start_with "/static/icons/icon-felt-192.webp?v="
+
+    # The choice belongs to the person, not the device: Ben on the same browser sees his own, Anna gets hers back.
+    anna.login("Ben")
+    html.call(anna.get("/")).should eq({"clean", nil})
+    anna.login("Anna")
+    html.call(anna.get("/")).should eq({"felt", "dark"})
+    # and on another device.
+    other = world.user
+    other.login("Anna")
+    html.call(other.get("/")).should eq({"felt", "dark"})
 
     # Unknown values keep the current choice.
-    user.post("/einstellungen/darstellung", {"look" => "plaid", "theme" => "light"}).status.should eq 303
-    html.call(user.get("/")).should eq({"clean", "light"})
-    user.post("/einstellungen/darstellung", {"look" => "felt", "theme" => "auto"})
-    html.call(user.get("/")).should eq({"felt", nil})
+    anna.post("/einstellungen/darstellung", {"look" => "plaid", "theme" => "light"}).status.should eq 303
+    html.call(anna.get("/")).should eq({"felt", "light"})
+    anna.post("/einstellungen/darstellung", {"look" => "clean", "theme" => "auto"})
+    html.call(anna.get("/")).should eq({"clean", nil})
   end
 
   scenario "static files and cache busting", world do
@@ -1543,8 +1554,8 @@ describe "Web: security, PWA, static files and CLI" do
     refs = page.doc.xpath_nodes("//link[@href]|//script[@src]|//img[@src]|//use[@href]").map { |n| n["href"]? || n["src"] }
     statics = refs.select(&.starts_with?("/static/")).map(&.split('#').first).uniq!
     statics.map(&.split('?').first).sort.should eq [
-      "/static/app.css", "/static/app.js", "/static/brand/mascot-felt-light.webp", "/static/expense-form.js", "/static/icons.svg",
-      "/static/icons/apple-touch-icon-felt.png", "/static/icons/favicon-felt-dark.png", "/static/icons/favicon-felt-light.png",
+      "/static/app.css", "/static/app.js", "/static/brand/mascot-clean-light.webp", "/static/expense-form.js", "/static/icons.svg",
+      "/static/icons/apple-touch-icon-clean.png", "/static/icons/favicon-clean-dark.png", "/static/icons/favicon-clean-light.png",
     ]
     statics.each do |ref|
       path, v = ref.split("?v=")

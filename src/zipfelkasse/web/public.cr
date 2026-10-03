@@ -9,7 +9,7 @@ module Zipfelkasse::Web
         Static.send(env, name, env.query("v").empty? ? "public, max-age=300" : "public, max-age=31536000, immutable")
       end
       get("/sw.js") { |env| Static.send(env, "sw.js", "no-cache") }
-      get("/favicon.ico") { |env| Static.send(env, "icons/favicon-felt-light.png", "public, max-age=86400") }
+      get("/favicon.ico") { |env| Static.send(env, "icons/favicon-clean-light.png", "public, max-age=86400") }
       get("/manifest.webmanifest") { |env| manifest(env) }
       get("/healthz") { |env| healthz(env) }
     end
