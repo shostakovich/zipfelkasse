@@ -21,6 +21,8 @@ module Zipfelkasse::Web
   end
 
   module Helpers
+    extend self
+
     def eur(cents : Int64) : String
       Domain.format_cents(cents)
     end
@@ -35,6 +37,10 @@ module Zipfelkasse::Web
 
     def date_time(t : Time?) : String
       t.try &.to_local.to_s("%d.%m.%Y, %H:%M") || ""
+    end
+
+    def expense_count(n : Int) : String
+      n == 1 ? "1 Ausgabe" : "#{n} Ausgaben"
     end
 
     def sign_class(v : Int64) : String

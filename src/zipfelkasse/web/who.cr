@@ -20,23 +20,17 @@ module Zipfelkasse::Web
 
     private def select_person(env : HTTP::Server::Context) : String
       return_to = Web.safe_return(env.form("zurueck"))
-      id = Web.positive_id?(env.form("id"))
-      person = id.try { |i| @d.store.get_participant?(i) }
+      person = Web.positive_id?(env.form("id")).try { |id| @d.store.get_participant?(id) }
       return show(env, 422, return_to, "", "Diese Person gibt es nicht (mehr).") if person.nil? || person.archived?
       env.identify_as(person.id)
       redirect(env, return_to)
     end
 
     private def create_person(env : HTTP::Server::Context) : String
-      return_to = Web.safe_return(env.form("zurueck"))
-      name = env.form("name")
-      id = begin
-        @d.store.join_as_participant(name)
-      rescue ex : Domain::ValidationError
-        return show(env, 422, return_to, name, ex.msg)
-      end
-      env.identify_as(id)
-      redirect(env, return_to, "Willkommen!")
+      env.identify_as(@d.store.join_as_participant(env.form("name")))
+      redirect(env, Web.safe_return(env.form("zurueck")), "Willkommen!")
+    rescue ex : Domain::ValidationError
+      show(env, 422, Web.safe_return(env.form("zurueck")), env.form("name"), ex.msg)
     end
   end
 end

@@ -386,12 +386,8 @@ module Zipfelkasse
       @db.scalar("SELECT coalesce(max(id), 0) + 1 FROM expenses").as(Int64)
     end
 
-    def balance_entries : Array(Domain::Entry)
-      dated_balance_entries(nil).map(&.entry)
-    end
-
     # Non-deleted expenses dated up to `to` (nil = all), oldest first.
-    def dated_balance_entries(to : Time?) : Array(DatedEntry)
+    def dated_balance_entries(to : Time?, db : DB::QueryMethods = @db) : Array(DatedEntry)
       q = "SELECT e.id, e.date, e.paid_by, e.amount_cents, x.participant_id, x.amount_cents " \
           "FROM expenses e JOIN expense_shares x ON x.expense_id = e.id WHERE e.deleted_at IS NULL"
       args = [] of DB::Any
@@ -401,7 +397,7 @@ module Zipfelkasse
       end
       entries = [] of DatedEntry
       last_id = 0_i64
-      @db.query(q + " ORDER BY e.date, e.id, x.participant_id", args: args) do |rs|
+      db.query(q + " ORDER BY e.date, e.id, x.participant_id", args: args) do |rs|
         rs.each do
           id, date, paid_by, amount, pid, share = rs.read(Int64, String, Int64, Int64, Int64, Int64)
           if id != last_id
@@ -416,8 +412,8 @@ module Zipfelkasse
 
     # Cents per person (positive = is owed money); people without entries are
     # missing.
-    def balances : Hash(Int64, Int64)
-      Domain.balances(balance_entries)
+    def balances(db : DB::QueryMethods = @db) : Hash(Int64, Int64)
+      Domain.balances(dated_balance_entries(nil, db).map(&.entry))
     end
 
     # Non-deleted, non-reimbursement expenses with an active category, newest

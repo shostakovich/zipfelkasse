@@ -1,5 +1,6 @@
 module Zipfelkasse::Recurring
   LIST_PATH = "/einstellungen/wiederkehrend"
+  NOT_FOUND = "Wiederkehrende Ausgabe nicht gefunden."
 
   # A frequency to choose in the form, with what it would do for the expense.
   record FreqOption, preview : Preview, checked : Bool do
@@ -82,54 +83,45 @@ module Zipfelkasse::Recurring
     end
 
     private def rule_id(env : HTTP::Server::Context) : Int64
-      path_id(env) || raise Web::HTTPError.new(env, 404, "Wiederkehrende Ausgabe nicht gefunden.")
+      or_404(env, NOT_FOUND) { path_id(env) }
     end
 
     private def set_active(env : HTTP::Server::Context, active : Bool) : String
       id = rule_id(env)
-      or_404(env, "Wiederkehrende Ausgabe nicht gefunden.") { @d.store.set_recurring_active(env.me.id, id, active, @d.today) }
-      message = "Pausiert."
-      if active
-        message = "Fortgesetzt."
-        created = materialize_logged(id)
-        message += " #{count_text(created)} angelegt." if created > 0
-      end
-      redirect(env, LIST_PATH, message)
+      or_404(env, NOT_FOUND) { @d.store.set_recurring_active(env.me.id, id, active, @d.today) }
+      return redirect(env, LIST_PATH, "Pausiert.") unless active
+      created = materialize_logged(id)
+      redirect(env, LIST_PATH, created > 0 ? "Fortgesetzt. #{Web::Helpers.expense_count(created)} angelegt." : "Fortgesetzt.")
     end
 
     # Errors are only logged: the rule itself was changed.
     private def materialize_logged(id : Int64) : Int32
       @service.materialize_rule(id, @d.today)
-    rescue ex : Error
-      Log.error(exception: ex) { "recurring expenses" }
-      ex.created
     rescue ex
       Log.error(exception: ex) { "recurring expenses" }
-      0
+      ex.is_a?(Error) ? ex.created : 0
     end
 
     private def refresh_template(env : HTTP::Server::Context) : String
       id = rule_id(env)
-      message = begin
-        or_404(env, "Wiederkehrende Ausgabe nicht gefunden.") { @d.store.update_recurring_template_from_latest(env.me.id, id) }
-        "Vorlage aus der letzten Ausgabe übernommen."
-      rescue Store::NoInstance
-        "Es gibt keine Ausgabe dieser Wiederholung mehr, aus der die Vorlage übernommen werden könnte."
-      end
-      redirect(env, LIST_PATH, message)
+      or_404(env, NOT_FOUND) { @d.store.update_recurring_template_from_latest(env.me.id, id) }
+      redirect(env, LIST_PATH, "Vorlage aus der letzten Ausgabe übernommen.")
+    rescue Store::NoInstance
+      redirect(env, LIST_PATH, "Es gibt keine Ausgabe dieser Wiederholung mehr, aus der die Vorlage übernommen werden könnte.")
     end
 
     private def delete(env : HTTP::Server::Context) : String
       id = rule_id(env)
-      or_404(env, "Wiederkehrende Ausgabe nicht gefunden.") { @d.store.delete_recurring(env.me.id, id) }
+      or_404(env, NOT_FOUND) { @d.store.delete_recurring(env.me.id, id) }
       redirect(env, LIST_PATH, "Wiederholung gelöscht. Bereits angelegte Ausgaben bleiben erhalten.")
     end
 
     private def find_expense(env : HTTP::Server::Context, value : String) : Store::Expense
-      id = Web.positive_id?(value)
-      expense = or_404(env, "Ausgabe nicht gefunden.", id && @d.store.get_expense?(id))
-      raise Web::HTTPError.new(env, 404, "Ausgabe nicht gefunden.") if expense.deleted?
-      expense
+      or_404(env, "Ausgabe nicht gefunden.") do
+        expense = @d.store.get_expense(Web.positive_id?(value) || raise Store::NotFound.new)
+        raise Store::NotFound.new if expense.deleted?
+        expense
+      end
     end
 
     private def new_form(env : HTTP::Server::Context) : String
@@ -143,15 +135,14 @@ module Zipfelkasse::Recurring
       expense = find_expense(env, env.form("ausgabe"))
       frequency = Domain::Frequency.parse?(env.form("haeufigkeit"))
       id = begin
-        @d.store.create_recurring_from_expense(env.me.id, expense.id, frequency || raise Domain::ValidationError.new("Bitte eine Häufigkeit wählen."))
+        raise Domain::ValidationError.new("Bitte eine Häufigkeit wählen.") unless frequency
+        or_404(env, "Ausgabe nicht gefunden.") { @d.store.create_recurring_from_expense(env.me.id, expense.id, frequency) }
       rescue ex : Domain::ValidationError
         return show_form(env, expense, @service.previews(expense), frequency, 422, ex.msg)
-      rescue Store::NotFound
-        raise Web::HTTPError.new(env, 404, "Ausgabe nicht gefunden.")
       end
-      message = "„#{expense.title}“ wiederholt sich jetzt #{Web.frequency_adverb(frequency)}."
       created = materialize_logged(id)
-      message += " #{count_text(created)} nachgetragen." if created > 0
+      message = "„#{expense.title}“ wiederholt sich jetzt #{Web.frequency_adverb(frequency)}."
+      message += " #{Web::Helpers.expense_count(created)} nachgetragen." if created > 0
       redirect(env, LIST_PATH, message)
     end
 
@@ -159,10 +150,6 @@ module Zipfelkasse::Recurring
                           selected : Domain::Frequency? = nil, status = 200, error : String? = nil) : String
       options = previews.map { |preview| FreqOption.new(preview, preview.frequency == selected) }
       page(env, Views::New.new(expense, options), "Wiederkehrende Ausgabe anlegen", Web::Nav::Settings, status, error)
-    end
-
-    private def count_text(count : Int32) : String
-      count == 1 ? "1 Ausgabe" : "#{count} Ausgaben"
     end
   end
 end

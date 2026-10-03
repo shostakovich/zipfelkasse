@@ -6,7 +6,6 @@ module Zipfelkasse
       end
     end
 
-    # Categories are only ever archived, never deleted.
     record Category, id : Int64, name : String, position : Int64, archived_at : Time? do
       include DB::Serializable
       include Archivable
@@ -26,7 +25,6 @@ module Zipfelkasse
       db.query_all("SELECT #{CATEGORY_COLS} FROM categories#{where} ORDER BY position, name COLLATE NOCASE, id", as: Category)
     end
 
-    # Archived categories too.
     def get_category?(id : Int64, db : DB::QueryMethods = @db) : Category?
       db.query_one?("SELECT #{CATEGORY_COLS} FROM categories WHERE id = ?", id, as: Category)
     end
@@ -61,22 +59,12 @@ module Zipfelkasse
 
     def rename_category(actor_id : Int64?, id : Int64, name : String) : Nil
       name = Store.clean_name(name, "die Kategorie")
-      transaction do |tx|
-        old = get_category(id, tx)
-        Store.on_duplicate("Die Kategorie „#{name}“ gibt es schon.") do
-          tx.exec("UPDATE categories SET name = ? WHERE id = ?", name, id)
-        end
-        log_settings(tx, actor_id, "Kategorie „#{old.name}“ umbenannt in „#{name}“") unless old.name == name
-      end
+      rename_row(actor_id, "categories", "Kategorie", id, name, "Die Kategorie „#{name}“ gibt es schon.")
     end
 
-    # Logs even when the state does not change.
     def set_category_archived(actor_id : Int64?, id : Int64, archived : Bool) : Nil
-      verb, at = archived ? {"archiviert", now_string} : {"reaktiviert", nil}
       transaction do |tx|
-        c = get_category(id, tx)
-        tx.exec("UPDATE categories SET archived_at = ? WHERE id = ?", at, id)
-        log_settings(tx, actor_id, "Kategorie „#{c.name}“ #{verb}")
+        archive_row(tx, actor_id, "categories", "Kategorie", get_category(id, tx).name, id, archived)
       end
     end
 
@@ -96,7 +84,6 @@ module Zipfelkasse
       end
     end
 
-    # Non-deleted expenses per category; categories without any are missing.
     def expense_count_by_category : Hash(Int64, Int32)
       @db.query_all("SELECT category_id, count(*) FROM expenses " \
                     "WHERE deleted_at IS NULL AND category_id IS NOT NULL GROUP BY category_id",
