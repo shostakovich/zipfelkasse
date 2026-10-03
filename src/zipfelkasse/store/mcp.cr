@@ -169,6 +169,8 @@ module Zipfelkasse
     #     SELECT count(*), json_group_array(json_array(…)) FROM (SELECT * FROM mcp_u LIMIT n+1)
     #
     # so the whole result comes from a single step and only a SELECT parses.
+    # Reals go through quote(): SQLite >= 3.54 writes them with only 15
+    # significant digits in JSON.
     def self.run_wrapped(conn : SQLite3::Connection, body : String) : QueryResult
       columns = column_names(conn, body)
       if columns.empty?
@@ -177,7 +179,8 @@ module Zipfelkasse
       aliases = Array.new(columns.size) { |i| "c#{i}" }
       cells = aliases.map do |a|
         "CASE typeof(#{a}) WHEN 'blob' THEN '[BLOB, ' || length(#{a}) || ' Bytes]' " \
-        "WHEN 'text' THEN substr(#{a}, 1, #{SQL_MAX_CELL_RUNES}) ELSE #{a} END"
+        "WHEN 'text' THEN substr(#{a}, 1, #{SQL_MAX_CELL_RUNES}) " \
+        "WHEN 'real' THEN json(quote(#{a})) ELSE #{a} END"
       end
       q = "WITH mcp_u(#{aliases.join(", ")}) AS (\n#{body}\n)\n" \
           "SELECT count(*), json_group_array(json_array(#{cells.join(", ")})) FROM (SELECT * FROM mcp_u LIMIT #{SQL_MAX_ROWS + 1})"
