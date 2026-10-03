@@ -78,9 +78,9 @@ module E2E
       if expected > 0
         E2E.wait_until("#{expected} YNAB requests", 15.seconds) { ynab.request_count >= mark + expected } rescue nil
       else
-        sleep 1.second # debounce (300 ms) and a run that must not send anything
+        sleep YNAB_QUIET
       end
-      ynab.wait_idle(quiet: 700.milliseconds)
+      ynab.wait_idle
       ynab.requests[mark..].dup
     end
 

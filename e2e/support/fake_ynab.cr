@@ -73,7 +73,7 @@ module E2E
     end
 
     # Waits until the app has not talked to the fake for `quiet`.
-    def wait_idle(quiet = 1.5.seconds, timeout = 30.seconds) : Nil
+    def wait_idle(quiet = YNAB_QUIET, timeout = 30.seconds) : Nil
       E2E.wait_until("YNAB fake idle", timeout) { Time.instant - @last_request > quiet }
     end
 

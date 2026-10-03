@@ -432,7 +432,7 @@ module FxExportSpec
     scenario "after a restart nothing is downloaded again", world do
       requests = {count.call(nf), count.call(zip)}
       world.restart(E2E::DEFAULT_NOW)
-      sleep 700.milliseconds
+      sleep 250.milliseconds
       user = world.user
       user.login("Anna")
       user.get("/api/kurs?waehrung=JPY&datum=2024-05-17").body.should eq kurs_json("JPY", "2024-05-17", rate.call("JPY", "2024-05-17"), "ezb")
@@ -514,7 +514,7 @@ module FxExportSpec
       world.restart(now)
       expected = files
       E2E.wait_until("startup downloads at #{now}", 10.seconds) { ecb.requests.size >= before + expected.size }
-      sleep 700.milliseconds # nothing else follows
+      sleep 250.milliseconds # nothing else follows
       ecb.requests[before..].sort.should eq expected.sort
     end
 

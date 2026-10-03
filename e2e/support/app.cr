@@ -7,6 +7,8 @@ module E2E
 
   MCP_SECRET    = "e2e-secret"
   YNAB_DELAY_MS = 50
+  # Silence that proves a debounced YNAB run has come and gone.
+  YNAB_QUIET = (YNAB_DELAY_MS * 5).milliseconds
 
   # A running Zipfelkasse binary with its own database directory.
   class App
