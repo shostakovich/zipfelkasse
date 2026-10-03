@@ -1,16 +1,9 @@
 module Zipfelkasse::MCP
-  # Runs a single SELECT/WITH query of the sql_query tool in a sandbox and
-  # returns at most MAX_ROWS rows. Input and SQL errors are ValidationErrors
-  # (English).
-  #
-  # The sandbox is a fresh in-memory database: Store::EXPOSED_TABLES are
-  # copied into it from the database file in one read transaction, then the
-  # file is detached. The YNAB tables do not exist there at all. Further
-  # layers: no ATTACH (sqlite3_limit), query_only, the lexical check, and the
-  # query embedded as a subquery so that only a SELECT parses.
-  #
-  # SQLite blocks the only thread while it steps, so TIMEOUT is kept short:
-  # the whole app waits for a slow query.
+  # Runs the single SELECT/WITH query of sql_query on a fresh in-memory copy
+  # of Store::EXPOSED_TABLES (the YNAB tables do not exist there). Further
+  # layers: the lexical check, no ATTACH, query_only, and the query embedded
+  # as a subquery so that only a SELECT parses. SQLite blocks the only thread
+  # while it steps, hence the short TIMEOUT.
   class SQLSandbox
     MAX_ROWS       = 500
     TIMEOUT        = 2.seconds # total, including the copy
@@ -102,10 +95,8 @@ module Zipfelkasse::MCP
       end
     end
 
-    # Checks lexically that query is exactly one statement starting with
-    # SELECT or WITH and returns it without the trailing ";". Follows SQLite's
-    # tokenizer: '…', "…", `…` (doubling escapes), […], -- and /* */
-    # comments. Tokens after the first ";" may only be quoted or comments.
+    # Exactly one statement starting with SELECT or WITH, without the trailing
+    # ";". Follows SQLite's tokenizer for quotes and comments.
     def self.check_select(query : String) : String
       raise Domain::ValidationError.new("The query contains a NUL character.") if query.includes?('\0')
       size = query.bytesize
@@ -153,7 +144,6 @@ module Zipfelkasse::MCP
       s.byte_at?(i).try(&.unsafe_chr)
     end
 
-    # The position after the literal that starts at i.
     private def self.skip_quoted(s : String, i : Int32, open : Char, close : Char) : Int32
       j = i + 1
       while j < s.bytesize

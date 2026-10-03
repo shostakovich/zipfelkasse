@@ -1,7 +1,6 @@
 require "json"
 
 module Zipfelkasse::MCP
-  # One property of a tool's input schema (JSON Schema).
   class Prop
     include JSON::Serializable
 
@@ -103,7 +102,6 @@ module Zipfelkasse::MCP
 
   READ_ONLY = Annotations.new(read_only: true, idempotent: true)
 
-  # Neither read-only nor idempotent, so clients ask before running them.
   WRITE = Annotations.new(read_only: false, idempotent: false)
 
   struct ToolDefinition

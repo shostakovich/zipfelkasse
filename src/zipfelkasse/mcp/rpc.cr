@@ -3,7 +3,6 @@ require "json"
 
 module Zipfelkasse::MCP
   # Modern = stateless with _meta per request, legacy = initialize handshake.
-  # The first version of each list is the preferred one.
   MODERN_VERSIONS = ["2026-07-28"]
   LEGACY_VERSIONS = ["2025-11-25", "2025-06-18", "2025-03-26"]
   ALL_VERSIONS    = MODERN_VERSIONS + LEGACY_VERSIONS
@@ -23,10 +22,8 @@ module Zipfelkasse::MCP
   META_PROTOCOL_VERSION = "io.modelcontextprotocol/protocolVersion"
   META_SERVER_INFO      = "io.modelcontextprotocol/serverInfo"
 
-  # Cache hint (ttlMs) for tools/list and server/discover.
   LIST_TTL = 1.hour
 
-  # An answer with an error instead of a result; status is the HTTP status.
   class RPCError < Exception
     getter status : Int32
     getter code : Int32
@@ -59,7 +56,6 @@ module Zipfelkasse::MCP
     end
   end
 
-  # Raw JSON, for values that are passed on or echoed unchanged.
   module RawJSON
     def self.from_json(pull : JSON::PullParser) : String
       pull.read_raw
@@ -95,7 +91,6 @@ module Zipfelkasse::MCP
       @id || ("null" if @id_present)
     end
 
-    # A response from the client.
     def answer? : Bool
       @result_present || @error_present
     end
@@ -139,18 +134,14 @@ module Zipfelkasse::MCP
     raise RPCError.invalid_params("Invalid params: #{decode_error(Params, ex, "params")}", id)
   end
 
-  # The legacy version for initialize: the requested one if supported,
-  # otherwise the newest.
   def self.negotiate(requested : String?) : String
     requested && LEGACY_VERSIONS.includes?(requested) ? requested : LEGACY_VERSIONS.first
   end
 
-  # The first value of a header, without the whitespace around it.
   def self.header(headers : HTTP::Headers, name : String) : String
     headers.get?(name).try(&.first?).try(&.strip) || ""
   end
 
-  # The mandatory headers of modern requests have to match the body.
   def self.check_headers(headers : HTTP::Headers, method : String, name : String, version : String, id : String?) : Nil
     mismatch = ->(reason : String) { RPCError.header_mismatch("Header mismatch: #{reason}", id) }
     h = header(headers, "MCP-Protocol-Version")
@@ -166,8 +157,6 @@ module Zipfelkasse::MCP
     raise mismatch.call("Mcp-Name #{value.inspect} does not match params.name #{name.inspect}.") if value != name
   end
 
-  # Decodes the Base64 form =?base64?…?=; other values are returned as they
-  # are, nil means broken Base64.
   def self.decode_header_value(v : String) : String?
     prefix, suffix = "=?base64?", "?="
     return v unless v.starts_with?(prefix) && v.ends_with?(suffix) && v.bytesize >= prefix.bytesize + suffix.bytesize
@@ -183,8 +172,6 @@ module Zipfelkasse::MCP
   # requests).
   record Request, id : String?, method : String, params : Params, version : String, modern : Bool, reply : Bool
 
-  # Decides how to treat a message without any I/O; fills in what is logged
-  # about it. Raises an RPCError for everything that is not a valid request.
   def self.parse_request(body : String, headers : HTTP::Headers, info : RequestInfo) : Request
     raise RPCError.invalid_request("JSON-RPC batches are not supported.") if body.lstrip.starts_with?('[')
     message = parse_message(body)
@@ -225,7 +212,6 @@ module Zipfelkasse::MCP
   CAPABILITIES = {tools: {listChanged: false}}
 
   class Server
-    # Answers exactly one JSON-RPC message.
     def handle_post(ctx : HTTP::Server::Context, info : RequestInfo) : Nil
       http = ctx.request
       unless MCP.header(http.headers, "Content-Type").partition(';')[0].strip.downcase == "application/json"
@@ -286,8 +272,6 @@ module Zipfelkasse::MCP
       write_error(ctx, status, id, ex.code, ex.message || "", ex.data)
     end
 
-    # The results are named tuples, so that handle_post can add the modern
-    # fields.
     private def dispatch(request : Request, info : RequestInfo)
       case request.method
       when "initialize"

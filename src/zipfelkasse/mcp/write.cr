@@ -1,17 +1,10 @@
-# The write tools create_expense and create_reimbursement. They only add
-# entries – nothing is changed or deleted. The person who paid counts as the
-# author in the activity log (MCP has no logged-in user).
 module Zipfelkasse::MCP
   class DecimalError < Exception
   end
 
-  # Digits with a dot as decimal separator, nothing else.
   STRICT_DECIMAL = /\A[0-9]+(\.[0-9]*)?\z/
 
-  # A non-negative number with a dot as decimal separator and at most
-  # decimals decimal places (superfluous zeros are fine) in the smallest
-  # unit: ("23.4", 2) → 2340. Unlike the form it accepts no thousands
-  # separators, so "1.234" is never 1234.
+  # Unlike the form, no thousands separators: "1.234" is never 1234.
   def self.parse_decimal(text : String, decimals : Int32) : Int64
     text = text.strip
     unless STRICT_DECIMAL.matches?(text)
@@ -25,8 +18,6 @@ module Zipfelkasse::MCP
     Domain.parse_minor(text.rchop('.').tr(".", ","), decimals)
   end
 
-  # Participants (equal) or weights (other modes) as parts; without either,
-  # equal goes to all active people.
   def self.split_parts(directory : Directory, mode : Domain::SplitMode, currency : String, participants : Array(String),
                        weights : Hash(String, String)) : Array(Domain::Part)
     parts = [] of Domain::Part
@@ -137,7 +128,6 @@ module Zipfelkasse::MCP
       create(input, from, directory, a.allow_duplicate)
     end
 
-    # The stored limits, in English.
     private def notes(value : String?) : String
       text = value.try(&.strip) || ""
       if text.gsub("\r\n", "\n").size > Store::MAX_NOTES_LEN
@@ -146,13 +136,10 @@ module Zipfelkasse::MCP
       text
     end
 
-    # Nil = today in the server time zone.
     private def date_or_today(value : String?) : Time
       MCP.parse_date_arg("date", value) || today
     end
 
-    # Amount, currency and rate; a foreign currency without fx_rate gets the
-    # ECB rate of the date.
     private def set_money(input : Store::ExpenseInput, a : MoneyArgs, date : Time) : Store::ExpenseInput
       currency = (MCP.given(a.currency) || "EUR").upcase
       unless Domain.valid_currency_code?(currency)
@@ -190,8 +177,6 @@ module Zipfelkasse::MCP
       input
     end
 
-    # Stores input with the payer as author, unless an identical entry exists
-    # (same date, payer, amount in euros, kind and title or recipient).
     private def create(input : Store::ExpenseInput, payer : Store::Participant, directory : Directory,
                        allow_duplicate : Bool) : CreatedOut
       cents = euro_cents(input)

@@ -41,8 +41,6 @@ module Zipfelkasse::Export
     people.select { |p| seen.includes?(p.id) }
   end
 
-  # Defuses text that spreadsheet programs would run as a formula (CSV
-  # injection).
   def self.cell(s : String) : String
     s.starts_with?(/[=+\-@\t\r]/) ? "'" + s : s
   end
@@ -101,16 +99,12 @@ module Zipfelkasse::Export
     io << statement.gsub('\n', "\r\n")
   end
 
-  # Collapses whitespace (incl. line breaks), cuts to the OFX field length n
-  # (characters) and then escapes &, < and >.
   def self.sgml(s : String, n : Int32) : String
     s = s.split.join(" ")
     s = s[0, n].strip if s.size > n
     s.gsub({'&' => "&amp;", '<' => "&lt;", '>' => "&gt;"})
   end
 
-  # The CSV of the YNAB file import: ISO dates, amounts with a dot, comma, no
-  # BOM.
   def self.write_ynab_csv(io : IO, ps : Array(YNAB::Posting)) : Nil
     CSV.build(io) do |csv|
       csv.row "Date", "Payee", "Memo", "Outflow", "Inflow"

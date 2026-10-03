@@ -3,19 +3,14 @@ require "json"
 module Zipfelkasse::MCP
   SERVER_VERSION = "1.1.0"
 
-  # Explains the server to the model (initialize, server/discover);
-  # Server#instructions appends today's date and a data overview.
   INSTRUCTIONS_TEXT = {{ read_file("#{__DIR__}/texts/instructions.txt") }}.rstrip
 
   SCHEMA_TEXT = {{ read_file("#{__DIR__}/texts/schema.txt") }}
 
   CATEGORY_HINT = %(Use "#{NO_CATEGORY_ARG}" for expenses without a category (statistics labels them "#{NO_CATEGORY_LABEL}").)
 
-  # A tool returns its result as text: JSON, or plain text for schema.
   record Tool, definition : ToolDefinition, run : Proc(String?, String)
 
-  # The people of the group, archived ones too, looked up by name; read once
-  # per tool call.
   class Directory
     getter people : Array(Store::Participant)
     getter names : Hash(Int64, String)
@@ -28,13 +23,11 @@ module Zipfelkasse::MCP
       @names[id]? || ""
     end
 
-    # nil for a blank name.
     def find?(name : String?) : Store::Participant?
       name = MCP.given(name) || return
       MCP.find_named(@people, "person", name)
     end
 
-    # A person who is not archived.
     def active(arg : String, name : String?) : Store::Participant
       name = MCP.given(name) || raise MCP.invalid("Parameter #{arg} is missing.")
       available = [] of String
@@ -67,14 +60,12 @@ module Zipfelkasse::MCP
       @d.today
     end
 
-    # The current date in the server time zone, computed per request so that
-    # long-running servers never report a stale date.
+    # Per request, so that a long-running server never reports a stale date.
     def today_line : String
       %(Today is #{Store.format_date(today)} (#{today.day_of_week}), server time zone #{@d.config.location_name}. ) +
         %(Resolve relative periods such as "last month" from this date.)
     end
 
-    # With the data overview, left out if it cannot be read.
     def instructions : String
       text = INSTRUCTIONS_TEXT + "\n" + today_line
       begin
@@ -85,8 +76,7 @@ module Zipfelkasse::MCP
       end
     end
 
-    # server/discover contains the date, so it is cached at most until the
-    # next midnight in the server time zone.
+    # server/discover contains the date: cached until midnight at most.
     def discover_ttl : Time::Span
       t = @d.now.in(location)
       midnight = Time.local(t.year, t.month, t.day, location: location).shift(days: 1)
@@ -198,9 +188,8 @@ module Zipfelkasse::MCP
       MCP.find_named(@d.store.list_categories(include_archived: true), "category", name)
     end
 
-    # A category name, or "none" / "No category" (the statistics label) for
-    # expenses without a category; a real category of that name wins.
-    # Returns {category_id, without_category}.
+    # "none" / "No category" select expenses without a category; a real
+    # category of that name wins.
     private def category_arg(name : String?) : {Int64?, Bool}
       name = MCP.given(name) || return {nil, false}
       {find_category(name).id, false}
@@ -233,15 +222,11 @@ module Zipfelkasse::MCP
       directory = self.directory
       person = directory.find?(a.person)
       today = self.today
-      # The obvious case before loading anything.
       check_period_count(Domain::Period.labels(unit, from, MCP.min_time(to, today))) if from
 
-      # Up to the end of the last period: each row is the balance after all
-      # expenses dated in or before its period.
       entries = @d.store.dated_balance_entries(to.try { |t| Domain::Period.last_day(unit, t) })
       if to.nil?
-        # Until today, or the last expense if one is dated later: the last row
-        # then equals the current balances.
+        # the last row then equals the current balances
         to = today
         if (last = entries.last?) && last.date > to
           to = last.date
@@ -252,7 +237,6 @@ module Zipfelkasse::MCP
       periods = Domain::Period.labels(unit, from, to)
       check_period_count(periods)
 
-      # Expenses before the first period are the opening balance.
       balance = Hash(Int64, Int64).new(0_i64)
       ever_non_zero = Set(Int64).new
       i = 0
@@ -340,7 +324,6 @@ module Zipfelkasse::MCP
       pairs = rows.map { |row| {row, nil.as(Int64?)} }
       if compare
         previous_filter = filter.copy_with(from: filter.from.try(&.shift(years: -1)), to: filter.to.try(&.shift(years: -1)))
-        # Without from and to, the previous year's rows are the same rows.
         previous_rows = previous_filter.from || previous_filter.to ? @d.store.stats(previous_filter) : stat_rows
         window = time_keyed ? Statistics.period_window(filter, stat_rows, today) : nil
         pairs = Statistics.with_previous(rows, previous_rows, window, group).map { |row, previous| {row, previous.as(Int64?)} }
@@ -400,7 +383,6 @@ module Zipfelkasse::MCP
         result.truncated)
     end
 
-    # JSON has no infinite numbers.
     private def json_value(value : SQLSandbox::Value) : SQLSandbox::Value
       value.is_a?(Float64) && !value.finite? ? value.to_s : value
     end

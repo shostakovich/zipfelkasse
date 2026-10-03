@@ -2,10 +2,8 @@ require "http/client"
 require "set"
 
 module Zipfelkasse
-  # The HTTP requests an integration (YNAB, ECB) makes. Stopping closes the
-  # running ones, so that a shutdown does not wait for a slow server, and
-  # refuses new ones. Like Crystal's HTTP::Client, it ignores HTTPS_PROXY and
-  # follows no redirects.
+  # The requests of YNAB and ECB; stopping aborts them and refuses new ones, so
+  # a shutdown does not wait for a slow server. No proxy, no redirects.
   class OutboundHTTP
     class Stopped < Exception
       def initialize
@@ -21,7 +19,6 @@ module Zipfelkasse
     def initialize(@timeout : Time::Span, @max_body : Int32)
     end
 
-    # The body is cut at max_body bytes.
     def request(method : String, url : String, headers : HTTP::Headers, body : String? = nil) : Response
       raise Stopped.new if @stopped
       uri = URI.parse(url)

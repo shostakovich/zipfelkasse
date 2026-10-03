@@ -1,13 +1,9 @@
 module Zipfelkasse::MCP
-  # Helpers of the statistics tool for time groupings and year-over-year
-  # comparison.
   module Statistics
     extend self
 
     alias Key = {String?, String?, String?, String?}
 
-    # Lists the periods without expenses of a time grouping with 0: from from
-    # (or the first row) to to (or today), never beyond today.
     def fill_gaps(rows : Array(Store::StatRow), filter : Store::StatsFilter, today : Time) : Array(Store::StatRow)
       unit = filter.group_by.period_unit.not_nil!
       first = filter.from || rows.first?.try { |r| Domain::Period.first_day(unit, r.period.to_s) }
@@ -15,9 +11,6 @@ module Zipfelkasse::MCP
       Store.fill_periods(rows, filter.group_by, first, MCP.min_time(filter.to, today))
     end
 
-    # Whether a period lies within the requested range of a time-keyed
-    # grouping: from from (or the first row) to to (or today), never beyond
-    # today.
     def period_window(filter : Store::StatsFilter, rows : Array(Store::StatRow), today : Time) : Proc(String, Bool)
       unit = filter.group_by.period_unit.not_nil!
       first = filter.from.try { |t| Domain::Period.label(unit, t) } || rows.compact_map(&.period).min?
@@ -26,11 +19,8 @@ module Zipfelkasse::MCP
       ->(period : String) { first <= period <= last }
     end
 
-    # Each row with the amount of the same group one year earlier. previous
-    # are the rows of the period one year earlier; their periods are shifted
-    # by one year to match. Groups that only exist in previous are appended
-    # with 0 – for time-keyed groupings (window given) only if their period
-    # lies within window.
+    # Groups that only exist in previous are appended with 0, for time
+    # groupings (window given) only if their period lies within it.
     def with_previous(rows : Array(Store::StatRow), previous : Array(Store::StatRow), window : Proc(String, Bool)?,
                       group : Store::StatsGroup) : Array({Store::StatRow, Int64})
       key = ->(row : Store::StatRow) { {row.category, row.title.try(&.downcase(:fold)), row.person, row.period}.as(Key) }

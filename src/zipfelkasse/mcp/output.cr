@@ -1,12 +1,9 @@
 require "json"
 
 module Zipfelkasse::MCP
-  # The no-category value of statistics rows and of the category arguments.
   NO_CATEGORY_ARG   = "none"
   NO_CATEGORY_LABEL = "No category"
 
-  # The tool results. Fields that are nil are left out; every amount appears
-  # as text ("1234.56") and in cents.
   record BalanceOut, person : String, balance : String, balance_cents : Int64, status : String? = nil do
     include JSON::Serializable
 
@@ -45,8 +42,6 @@ module Zipfelkasse::MCP
     include JSON::Serializable
   end
 
-  # Without full only the compact fields (no split, shares, notes and foreign
-  # currency).
   struct ExpenseOut
     include JSON::Serializable
 

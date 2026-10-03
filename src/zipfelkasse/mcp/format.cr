@@ -1,5 +1,4 @@
 module Zipfelkasse::MCP
-  # Locale-neutral: 123456 → "1234.56".
   def self.eur(cents : Int64) : String
     Domain.format_decimal(cents, 2, '.')
   end
@@ -8,7 +7,6 @@ module Zipfelkasse::MCP
     cents.try { |c| eur(c) }
   end
 
-  # (2340, "usd") → "23.40 USD".
   def self.money(minor : Int64, currency : String) : String
     currency = currency.strip.upcase
     "#{Domain.format_decimal(minor, Domain.currency_decimals(currency), '.')} #{currency}"
@@ -20,12 +18,10 @@ module Zipfelkasse::MCP
     t.offset == 0 ? t.to_s("%Y-%m-%dT%H:%M:%SZ") : t.to_s("%Y-%m-%dT%H:%M:%S%:z")
   end
 
-  # t, or fallback if t is nil or after fallback.
   def self.min_time(t : Time?, fallback : Time) : Time
     t.nil? || t > fallback ? fallback : t
   end
 
-  # A blank string counts as not given.
   def self.given(value : String?) : String?
     value.try(&.strip.presence)
   end
@@ -73,21 +69,18 @@ module Zipfelkasse::MCP
     end
   end
 
-  # A person or category name, found case-insensitively.
   def self.find_named(items : Array(T), kind : String, name : String) : T forall T
     name = name.strip
     items.find(&.name.compare(name, case_insensitive: true).zero?) ||
       raise invalid("Unknown #{kind} #{name.inspect}. Available: #{items.join(", ", &.name)}.")
   end
 
-  # nil for no limit, otherwise 1 to SQLSandbox::MAX_ROWS.
   def self.limit(value : Int64?, default : Int32) : Int32
     return default unless value
     raise invalid("limit must be between 1 and #{SQLSandbox::MAX_ROWS}.") unless 1 <= value <= SQLSandbox::MAX_ROWS
     value.to_i
   end
 
-  # Euros to cents.
   def self.amount_cents(name : String, euros : Float64?) : Int64?
     return unless euros
     raise invalid("#{name} must be an amount in euros of at least 0.") if euros < 0 || euros.nan? || euros > 1e12

@@ -5,8 +5,6 @@ module Zipfelkasse::MCP
     Domain::ValidationError.new(message)
   end
 
-  # A JSON object decoded with JSON::Serializable; `expected` names what a
-  # wrongly typed field should have been.
   module Decodable
     macro included
       include JSON::Serializable
@@ -31,7 +29,6 @@ module Zipfelkasse::MCP
     end
   end
 
-  # whole names the object itself.
   def self.decode_error(type : T.class, ex : JSON::SerializableError, whole : String) : String forall T
     field = ex.attribute || return "#{whole} must be an object."
     "#{field} must be #{T.expected(field)}."
@@ -54,7 +51,6 @@ module Zipfelkasse::MCP
     raise invalid("Invalid arguments: #{decode_error(T, ex, "arguments")}")
   end
 
-  # A string or a list of strings.
   module TextList
     def self.from_json(pull : JSON::PullParser) : Array(String)
       not_text = MCP.invalid("Invalid arguments: must be a string or a list of strings")
@@ -92,8 +88,6 @@ module Zipfelkasse::MCP
     end
   end
 
-  # The value of a choice argument: case and surrounding whitespace do not
-  # matter.
   module Choice(T)
     def self.from_json(pull : JSON::PullParser) : T
       location = pull.location
@@ -102,7 +96,6 @@ module Zipfelkasse::MCP
     end
   end
 
-  # The error for a missing choice argument.
   def self.one_of(name : String, type : T.class) : Domain::ValidationError forall T
     invalid("Invalid arguments: #{name} must be one of #{type.values.join(", ", &.to_s.underscore)}.")
   end
