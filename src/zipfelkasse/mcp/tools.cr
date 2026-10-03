@@ -61,7 +61,7 @@ module Zipfelkasse::MCP
     end
 
     def today_line : String
-      %(Today is #{Store.format_date(today)} (#{today.day_of_week}), server time zone #{@d.config.location_name}. ) +
+      %(Today is #{Store.format_date(today)} (#{today.day_of_week}), server time zone #{location.name}. ) +
         %(Resolve relative periods such as "last month" from this date.)
     end
 

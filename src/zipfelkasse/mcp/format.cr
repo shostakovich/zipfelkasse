@@ -1,6 +1,6 @@
 module Zipfelkasse::MCP
   def self.eur(cents : Int64) : String
-    Domain.format_decimal(cents, 2, '.')
+    Domain.format_minor(cents, 2, '.')
   end
 
   # Time#to_rfc3339 would convert to UTC.

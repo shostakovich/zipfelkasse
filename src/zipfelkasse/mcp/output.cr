@@ -70,7 +70,7 @@ module Zipfelkasse::MCP
       end
       return unless full
       if e.foreign?
-        @original = "#{Domain.format_decimal(e.original_amount_minor, Domain.currency_decimals(e.original_currency), '.')} #{e.original_currency}"
+        @original = "#{Domain.format_minor(e.original_amount_minor, Domain.currency_decimals(e.original_currency), '.')} #{e.original_currency}"
         @fx_rate = e.fx_rate unless e.fx_rate == 0
         @fx_source = e.fx_source.try(&.key)
       end

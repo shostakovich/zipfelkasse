@@ -40,7 +40,7 @@ NEWFILEUID:NONE
 <STMTTRN>
 <TRNTYPE>DEBIT
 <DTPOSTED><%= p.date.to_s("%Y%m%d") %>
-<TRNAMT><%= Domain.format_decimal(-p.amount_cents, 2, '.') %>
+<TRNAMT><%= Domain.format_minor(-p.amount_cents, 2, '.') %>
 <FITID>zipfelkasse-<%= p.expense_id %>
 <NAME><%= sgml(p.payee, 32) %>
 <MEMO><%= sgml(p.memo, 255) %>
@@ -48,7 +48,7 @@ NEWFILEUID:NONE
 <% end -%>
 </BANKTRANLIST>
 <LEDGERBAL>
-<BALAMT><%= Domain.format_decimal(total, 2, '.') %>
+<BALAMT><%= Domain.format_minor(total, 2, '.') %>
 <DTASOF><%= to.to_s("%Y%m%d") %>
 </LEDGERBAL>
 </STMTRS>

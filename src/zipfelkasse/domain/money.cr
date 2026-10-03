@@ -131,10 +131,6 @@ module Zipfelkasse::Domain
     v
   end
 
-  def format_decimal(v : Int64, decimals : Int32, sep : Char) : String
-    format_minor(v, decimals, sep)
-  end
-
   def format_minor_input(minor : Int64, currency : String) : String
     format_minor(minor, currency_decimals(currency))
   end

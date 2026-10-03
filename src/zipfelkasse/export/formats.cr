@@ -19,14 +19,14 @@ module Zipfelkasse::Export
           cell(e.title),
           cell(e.category_name || ""),
           cell(e.paid_by_name),
-          Domain.format_decimal(e.amount_cents, 2, ','),
-          Domain.format_decimal(e.original_amount_minor, Domain.currency_decimals(e.original_currency), ','),
+          Domain.format_minor(e.amount_cents, 2, ','),
+          Domain.format_minor(e.original_amount_minor, Domain.currency_decimals(e.original_currency), ','),
           e.original_currency,
           e.foreign? ? Domain.format_rate(e.fx_rate) : "",
           e.reimbursement? ? Domain::REIMBURSEMENT_TITLE : "Ausgabe",
           Web.split_mode_label(e.split_mode),
           cell(e.notes),
-        ] + people.map { |p| e.shares.any?(&.participant_id.==(p.id)) ? Domain.format_decimal(e.share_of(p.id), 2, ',') : "" }
+        ] + people.map { |p| e.shares.any?(&.participant_id.==(p.id)) ? Domain.format_minor(e.share_of(p.id), 2, ',') : "" }
       end
     end
   end
@@ -106,7 +106,7 @@ module Zipfelkasse::Export
     CSV.build(io) do |csv|
       csv.row "Date", "Payee", "Memo", "Outflow", "Inflow"
       ps.each do |p|
-        csv.row Store.format_date(p.date), cell(p.payee), cell(p.memo), Domain.format_decimal(p.amount_cents, 2, '.'), ""
+        csv.row Store.format_date(p.date), cell(p.payee), cell(p.memo), Domain.format_minor(p.amount_cents, 2, '.'), ""
       end
     end
   end

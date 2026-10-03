@@ -24,7 +24,7 @@ module Zipfelkasse::YNAB
     @categories_cache = {} of String => {Time, Array(APICategoryGroup)}
 
     def initialize(@d : Web::Deps)
-      @base_url = @d.config.ynab_base_url.presence || DEFAULT_BASE_URL
+      @base_url = @d.config.ynab_base_url || DEFAULT_BASE_URL
       delay = @d.config.ynab_delay
       @debounce = delay && delay.positive? ? delay : DEFAULT_DEBOUNCE
       @start_delay = delay && delay.positive? ? delay : DEFAULT_START_DELAY

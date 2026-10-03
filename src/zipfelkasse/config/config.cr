@@ -21,10 +21,6 @@ module Zipfelkasse
 
     property location : Time::Location = Time::Location.load_local
 
-    def location_name : String
-      location.name
-    end
-
     def backup_dir : String
       @backup_dir || Path.new(File.dirname(db_path), "backups").normalize.to_s
     end
