@@ -1,14 +1,11 @@
 module Zipfelkasse::MCP
-  # Runs the single SELECT/WITH query of sql_query on a fresh in-memory copy
-  # of Store::EXPOSED_TABLES (the YNAB tables do not exist there). Further
-  # layers: the lexical check, no ATTACH, query_only, and the query embedded
-  # as a subquery so that only a SELECT parses. SQLite blocks the only thread
-  # while it steps, hence the short TIMEOUT.
+  # Runs a query on an in-memory copy of Store::EXPOSED_TABLES with query_only and without ATTACH, embedded as a
+  # subquery so that only a single SELECT parses. SQLite blocks the only thread while it steps, hence the short TIMEOUT.
   class SQLSandbox
     MAX_ROWS       = 500
-    TIMEOUT        = 2.seconds # total, including the copy
+    TIMEOUT        = 2.seconds
     MAX_CELL_CHARS = 2000
-    MAX_RESULT     = 8 << 20 # bytes, SQLITE_LIMIT_LENGTH
+    MAX_RESULT     = 8 << 20
 
     alias Value = Int64 | Float64 | String | Nil
 
@@ -18,7 +15,8 @@ module Zipfelkasse::MCP
     end
 
     def query(query : String, timeout : Time::Span = TIMEOUT) : Result
-      body = SQLSandbox.check_select(query)
+      raise Domain::ValidationError.new("The query contains a NUL character.") if query.includes?('\0')
+      body = query.strip.rstrip("; \t\n\r")
       deadline = Time.instant + timeout
       begin
         with_sandbox(deadline) { |conn| SQLSandbox.select_rows(conn, body) }
@@ -38,9 +36,7 @@ module Zipfelkasse::MCP
       Domain::ValidationError.new(message)
     end
 
-    # Yields the locked-down sandbox connection; SQLite interrupts every
-    # statement on it once deadline has passed (a timer fiber could not run
-    # while sqlite3_step blocks the thread).
+    # A timer fiber could not run while sqlite3_step blocks the thread: SQLite's progress handler checks the deadline.
     def with_sandbox(deadline : Time::Instant, & : SQLite3::Connection -> T) : T forall T
       if @path.empty? || @path == ":memory:"
         raise Domain::ValidationError.new("sql_query needs a database file (not available with :memory:).")
@@ -93,67 +89,6 @@ module Zipfelkasse::MCP
       when String then value.size > MAX_CELL_CHARS ? value[0, MAX_CELL_CHARS] : value
       else             value.as(Value)
       end
-    end
-
-    # Exactly one statement starting with SELECT or WITH, without the trailing
-    # ";". Follows SQLite's tokenizer for quotes and comments.
-    def self.check_select(query : String) : String
-      raise Domain::ValidationError.new("The query contains a NUL character.") if query.includes?('\0')
-      size = query.bytesize
-      finish = size
-      first = ""
-      i = 0
-      while i < size
-        c = query.byte_at(i).unsafe_chr
-        case
-        when c.in?(' ', '\t', '\n', '\r', '\f', '\v')
-          i += 1
-        when c == '-' && byte_char(query, i + 1) == '-'
-          i = (query.byte_index('\n', i) || size - 1) + 1
-        when c == '/' && byte_char(query, i + 1) == '*'
-          e = query.byte_index("*/", i + 2)
-          i = e ? e + 2 : size
-        when c.in?('\'', '"', '`')
-          i = skip_quoted(query, i, c, c)
-        when c == '['
-          i = skip_quoted(query, i, '[', ']')
-        when c == ';'
-          finish = i if finish == size
-          i += 1
-        else
-          if finish != size
-            raise Domain::ValidationError.new(%(Please send only a single query (no second statement after ";").))
-          end
-          if first.empty?
-            j = i
-            while byte_char(query, j).try { |d| d.ascii_letter? || d == '_' }
-              j += 1
-            end
-            first = j > i ? query.byte_slice(i, j - i).upcase : c.to_s
-          end
-          i += 1
-        end
-      end
-      unless first.in?("SELECT", "WITH")
-        raise Domain::ValidationError.new("Only a single read-only query is allowed (SELECT … or WITH … SELECT …).")
-      end
-      query.byte_slice(0, finish)
-    end
-
-    private def self.byte_char(s : String, i : Int32) : Char?
-      s.byte_at?(i).try(&.unsafe_chr)
-    end
-
-    private def self.skip_quoted(s : String, i : Int32, open : Char, close : Char) : Int32
-      j = i + 1
-      while j < s.bytesize
-        if byte_char(s, j) == close
-          return j + 1 unless open == close && byte_char(s, j + 1) == close
-          j += 1 # doubled quote character
-        end
-        j += 1
-      end
-      s.bytesize
     end
   end
 end

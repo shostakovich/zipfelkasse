@@ -60,7 +60,6 @@ module Zipfelkasse::MCP
       @d.today
     end
 
-    # Per request, so that a long-running server never reports a stale date.
     def today_line : String
       %(Today is #{Store.format_date(today)} (#{today.day_of_week}), server time zone #{@d.config.location_name}. ) +
         %(Resolve relative periods such as "last month" from this date.)
@@ -188,8 +187,7 @@ module Zipfelkasse::MCP
       MCP.find_named(@d.store.list_categories(include_archived: true), "category", name)
     end
 
-    # "none" / "No category" select expenses without a category; a real
-    # category of that name wins.
+    # "none" and "No category" select expenses without a category, unless a real category has that name.
     private def category_arg(name : String?) : {Int64?, Bool}
       name = MCP.given(name) || return {nil, false}
       {find_category(name).id, false}
@@ -226,7 +224,6 @@ module Zipfelkasse::MCP
 
       entries = @d.store.dated_balance_entries(to.try { |t| Domain::Period.last_day(unit, t) })
       if to.nil?
-        # the last row then equals the current balances
         to = today
         if (last = entries.last?) && last.date > to
           to = last.date
@@ -274,7 +271,7 @@ module Zipfelkasse::MCP
         without_category: without_category, participant_id: person.try(&.id), paid_by: payer.try(&.id),
         involved_id: involved.try(&.id), min_cents: min_cents, max_cents: max_cents,
         sort: a.sort || Store::ExpenseSort::DateDesc)
-      sharer = person || involved # whose shares are summed up
+      sharer = person || involved
       limit = MCP.limit(a.limit, 50)
 
       matches = @d.store.list_expenses(filter).select do |e|
@@ -292,7 +289,7 @@ module Zipfelkasse::MCP
     end
 
     private def statistics(a : StatisticsArgs) : StatisticsOut
-      group = a.group_by || raise MCP.one_of("group_by", Store::StatsGroup)
+      group = a.group_by
       from, to = MCP.parse_range(a.from, a.to)
       category_id, without_category = category_arg(a.category)
       perspective = "total amounts of the expenses"
@@ -336,7 +333,7 @@ module Zipfelkasse::MCP
       end
       previous_total = pairs.sum(0_i64) { |_, previous| previous || 0_i64 } if compare
       StatisticsOut.new(group.to_s.underscore, note, MCP.describe_range(filter.from, filter.to), perspective,
-        previous_period, MCP.eur?(previous_total), previous_total,
+        previous_period, previous_total.try { |cents| MCP.eur(cents) }, previous_total,
         pairs.first(limit).map { |row, previous| StatLine.new(row, group, previous) }, pairs.size,
         MCP.eur(total), total, pairs.size > limit)
     end

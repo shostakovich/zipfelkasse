@@ -24,7 +24,8 @@ with "The app refused the entry (message in German):" followed by the app's Germ
 | `create_reimbursement` | **writes:** records a settlement payment from one person to another |
 
 Parameters in detail. Choice values (`interval`, `reimbursements`, `sort`, `detail`, `group_by`, `compare`, `action`,
-`split`) are matched ignoring case and surrounding whitespace. Optional text parameters that are empty count as not
+`split`) are matched ignoring case. Arguments of the wrong type or unknown arguments are refused with a message
+naming the argument. Optional text parameters that are empty count as not
 given; numbers such as `limit`, `expense_id` and `before_id` must respect the minimum of the schema (1) and are refused
 otherwise.
 
@@ -112,8 +113,9 @@ Main output keys:
 
 **Protection in `sql_query`:** the query does not run on the real database. It runs on a fresh in-memory copy. The
 server attaches the real file, copies the allowed tables in a read transaction and detaches the file again. After
-that, `ATTACH` is blocked via `sqlite3_limit` and `PRAGMA query_only` is on. Lexically, exactly one `SELECT`/`WITH`
-is allowed. The query is additionally embedded as a subquery, so only a `SELECT` parses.
+that, `ATTACH` is blocked via `sqlite3_limit` and `PRAGMA query_only` is on. The query (without trailing semicolons)
+is embedded as a subquery, `SELECT * FROM (<query>)`, so only a single `SELECT` or `WITH … SELECT` parses; anything else
+gets SQLite's error.
 
 SQLite runs on the only thread of the app, so a slow query makes the whole app (web UI, YNAB sync, other MCP calls)
 wait. Queries are therefore aborted after 2 seconds, including the copy of the data. Columns with the same name get a

@@ -169,7 +169,7 @@ describe "MCP transport" do
 
     # A failed tool call is a result as well.
     r = MK.call(user, "sql_query", %({"query":"DELETE FROM expenses"}))
-    MK.text(r, error: true).should eq "Only a single read-only query is allowed (SELECT … or WITH … SELECT …)."
+    MK.text(r, error: true).should start_with "SQL error: "
     {MK.result(r)["resultType"], MK.result(r)["_meta"]}.should eq({"complete", meta})
   end
 
@@ -490,7 +490,6 @@ describe "MCP tools" do
     {
       %({"amount":"10","paid_by":"Anna"})                                        => "Parameter title is missing.",
       %({"title":"  ","amount":"10","paid_by":"Anna"})                           => "Parameter title is missing.",
-      %({#{x},"split":"random"})                                                 => "Invalid arguments: split must be one of equal, shares, percent, amount.",
       %({#{x},"date":"morgen"})                                                  => %(Invalid date for date: "morgen" (expected YYYY-MM-DD).),
       %({#{x},"date":"2026-02-30"})                                              => %(Invalid date for date: "2026-02-30" (expected YYYY-MM-DD).),
       %({#{x},"date":"1999-12-31"})                                              => %(Invalid date for date: "1999-12-31" (expected YYYY-MM-DD).),
@@ -498,22 +497,21 @@ describe "MCP tools" do
       %({#{x},"currency":"U1D"})                                                 => %(currency must be a three-letter ISO code such as USD, not "U1D".),
       %({"title":"X","paid_by":"Anna"})                                          => "Parameter amount is missing.",
       %({"title":"X","amount":" ","paid_by":"Anna"})                             => "Parameter amount is missing.",
-      %({"title":"X","amount":"1.234","paid_by":"Anna"})                         => %(Invalid amount "1.234" for EUR: at most 2 decimal places),
-      %({"title":"X","amount":"1,5","paid_by":"Anna"})                           => %(Invalid amount "1,5" for EUR: use digits with a dot as decimal separator and no thousands separator, e.g. 1234.50),
-      %({"title":"X","amount":"1.000,00","paid_by":"Anna"})                      => %(Invalid amount "1.000,00" for EUR: use digits with a dot as decimal separator and no thousands separator, e.g. 1234.50),
-      %({"title":"X","amount":"-5","paid_by":"Anna"})                            => %(Invalid amount "-5" for EUR: use digits with a dot as decimal separator and no thousands separator, e.g. 1234.50),
-      %({"title":"X","amount":"10 €","paid_by":"Anna"})                          => %(Invalid amount "10 €" for EUR: use digits with a dot as decimal separator and no thousands separator, e.g. 1234.50),
-      %({"title":"X","amount":"1.5","currency":"JPY","paid_by":"Anna"})          => %(Invalid amount "1.5" for JPY: must be a whole number),
-      %({"title":"X","amount":"1.2345","currency":"kwd","paid_by":"Anna"})       => %(Invalid amount "1.2345" for KWD: at most 3 decimal places),
-      %({"title":"X","amount":"1234567890123456","paid_by":"Anna"})              => %(Invalid amount "1234567890123456" for EUR: too large),
-      %({"title":"X","amount":"0","paid_by":"Anna"})                             => "amount must be greater than 0.",
-      %({"title":"X","amount":"0.00","paid_by":"Anna"})                          => "amount must be greater than 0.",
-      %({"title":"X","amount":0,"paid_by":"Anna"})                               => "amount must be greater than 0.",
-      %({"title":"X","amount":true,"paid_by":"Anna"})                            => "Invalid arguments: must be a string or a number",
+      %({"title":"X","amount":"1.234","paid_by":"Anna"})                         => %(Invalid amount "1.234" for EUR: expected digits with at most 2 decimal places after a dot and no thousands separator.),
+      %({"title":"X","amount":"1,5","paid_by":"Anna"})                           => %(Invalid amount "1,5" for EUR: expected digits with at most 2 decimal places after a dot and no thousands separator.),
+      %({"title":"X","amount":"1.000,00","paid_by":"Anna"})                      => %(Invalid amount "1.000,00" for EUR: expected digits with at most 2 decimal places after a dot and no thousands separator.),
+      %({"title":"X","amount":"-5","paid_by":"Anna"})                            => %(Invalid amount "-5" for EUR: expected digits with at most 2 decimal places after a dot and no thousands separator.),
+      %({"title":"X","amount":"10 €","paid_by":"Anna"})                          => %(Invalid amount "10 €" for EUR: expected digits with at most 2 decimal places after a dot and no thousands separator.),
+      %({"title":"X","amount":"1.5","currency":"JPY","paid_by":"Anna"})          => %(Invalid amount "1.5" for JPY: expected digits with at most 0 decimal places after a dot and no thousands separator.),
+      %({"title":"X","amount":"1.2345","currency":"kwd","paid_by":"Anna"})       => %(Invalid amount "1.2345" for KWD: expected digits with at most 3 decimal places after a dot and no thousands separator.),
+      %({"title":"X","amount":"1234567890123456","paid_by":"Anna"})              => %(Invalid amount "1234567890123456" for EUR: expected digits with at most 2 decimal places after a dot and no thousands separator.),
+      %({"title":"X","amount":"0","paid_by":"Anna"})                             => "The app refused the entry (message in German): Der Betrag muss größer als 0 sein.",
+      %({"title":"X","amount":"0.00","paid_by":"Anna"})                          => "The app refused the entry (message in German): Der Betrag muss größer als 0 sein.",
+      %({"title":"X","amount":0,"paid_by":"Anna"})                               => "The app refused the entry (message in German): Der Betrag muss größer als 0 sein.",
       %({#{x},"fx_rate":1.1})                                                    => "fx_rate is only for foreign currencies.",
       %({#{x},"currency":"eur","fx_rate":1})                                     => "fx_rate is only for foreign currencies.",
-      %({#{x},"currency":"USD","fx_rate":0})                                     => "fx_rate must be greater than 0.",
-      %({#{x},"currency":"USD","fx_rate":-1.5})                                  => "fx_rate must be greater than 0.",
+      %({#{x},"currency":"USD","fx_rate":0})                                     => "The app refused the entry (message in German): Bitte einen Wechselkurs für USD angeben.",
+      %({#{x},"currency":"USD","fx_rate":-1.5})                                  => "The app refused the entry (message in German): Bitte einen Wechselkurs für USD angeben.",
       %({#{x},"currency":"XAF"})                                                 => "There is no exchange rate for XAF on 2026-10-03. Ask the user for the rate and pass it as fx_rate.",
       %({#{x},"currency":"USD","date":"2023-06-01"})                             => "There is no exchange rate for USD on 2023-06-01. Ask the user for the rate and pass it as fx_rate.",
       %({"title":"X","amount":"10"})                                             => "Parameter paid_by is missing.",
@@ -529,33 +527,35 @@ describe "MCP tools" do
       %({#{x},"participants":["Anna","anna"]})                                   => "Anna appears twice in the split.",
       %({#{x},"participants":["Anna","Zoe"]})                                    => %(Unknown person "Zoe" in the split. #{active_people}),
       %({#{x},"participants":["Emil"]})                                          => "Emil is archived and cannot take part in new entries.",
-      %({#{x},"split":"shares","weights":{"Anna":"1.5","Ben":1}})                => %(Invalid value "1.5" for Anna in weights: must be a whole number.),
-      %({#{x},"split":"shares","weights":{"Anna":"zwei"}})                       => %(Invalid value "zwei" for Anna in weights: use digits with a dot as decimal separator and no thousands separator, e.g. 1234.50.),
+      %({#{x},"split":"shares","weights":{"Anna":"1.5","Ben":1}})                => %(Invalid value "1.5" for Anna in weights: expected digits with at most 0 decimal places after a dot and no thousands separator.),
+      %({#{x},"split":"shares","weights":{"Anna":"zwei"}})                       => %(Invalid value "zwei" for Anna in weights: expected digits with at most 0 decimal places after a dot and no thousands separator.),
       # Weights are checked in the byte order of the names.
-      %({#{x},"split":"shares","weights":{"Zoe":1,"Anna":"x"}})              => %(Invalid value "x" for Anna in weights: use digits with a dot as decimal separator and no thousands separator, e.g. 1234.50.),
+      %({#{x},"split":"shares","weights":{"Zoe":1,"Anna":"x"}})              => %(Invalid value "x" for Anna in weights: expected digits with at most 0 decimal places after a dot and no thousands separator.),
       %({#{x},"split":"shares","weights":{"ben":1,"Anna":1,"Zoe":1}})        => %(Unknown person "Zoe" in the split. #{active_people}),
       %({#{x},"split":"shares","weights":{"anna":2,"Anna":1}})               => "Anna appears twice in the split.",
       %({#{x},"split":"shares","weights":{"Emil":1}})                        => "Emil is archived and cannot take part in new entries.",
-      %({#{x},"split":"shares","weights":{"Anna":true}})                     => "Invalid arguments: must be a string or a number",
-      %({#{x},"split":"percent","weights":{"Anna":"33.333","Ben":"66.667"}}) => %(Invalid value "33.333" for Anna in weights: at most 2 decimal places.),
-      %({#{jpy},"split":"amount","weights":{"Anna":"500.5","Ben":500}})      => %(Invalid value "500.5" for Anna in weights: must be a whole number.),
+      %({#{x},"split":"percent","weights":{"Anna":"33.333","Ben":"66.667"}}) => %(Invalid value "33.333" for Anna in weights: expected digits with at most 2 decimal places after a dot and no thousands separator.),
+      %({#{jpy},"split":"amount","weights":{"Anna":"500.5","Ben":500}})      => %(Invalid value "500.5" for Anna in weights: expected digits with at most 0 decimal places after a dot and no thousands separator.),
       # The app's own split rules answer in German.
       %({#{x},"split":"percent","weights":{"Anna":60,"Ben":"30"}}) => "The app refused the entry (message in German): Die Prozente müssen zusammen 100 % ergeben (aktuell 90,00 %).",
       %({#{x},"split":"amount","weights":{"Anna":"5","Ben":"4"}})  => "The app refused the entry (message in German): Die Beträge müssen zusammen 10,00 € ergeben (aktuell 9,00 €).",
       %({#{x},"split":"shares","weights":{"Anna":0,"Ben":"0"}})    => "The app refused the entry (message in German): Die Summe der Anteile muss größer als 0 sein.",
-      %({"title":"#{"t" * 201}","amount":"1","paid_by":"Anna"})    => "title must be at most 200 characters.",
-      %({#{x},"notes":"#{"n" * 2001}"})                            => "notes must be at most 2000 characters.",
+      %({"title":"#{"t" * 201}","amount":"1","paid_by":"Anna"})    => "The app refused the entry (message in German): Der Titel ist zu lang (höchstens 200 Zeichen).",
+      %({#{x},"notes":"#{"n" * 2001}"})                            => "The app refused the entry (message in German): Die Notiz ist zu lang (höchstens 2000 Zeichen).",
       # The order of the checks.
       %({"amount":"x","paid_by":"Zoe","date":"x"})                                             => "Parameter title is missing.",
-      %({"amount":"x","paid_by":"Zoe","split":"x","date":"x"})                                 => "Invalid arguments: split must be one of equal, shares, percent, amount.",
-      %({"title":"X","amount":"x","paid_by":"Zoe","split":"x","date":"x"})                     => "Invalid arguments: split must be one of equal, shares, percent, amount.",
       %({"title":"X","amount":"x","paid_by":"Zoe","date":"x"})                                 => %(Invalid date for date: "x" (expected YYYY-MM-DD).),
-      %({"title":"X","amount":"x","paid_by":"Zoe","category":"Yacht"})                         => %(Invalid amount "x" for EUR: use digits with a dot as decimal separator and no thousands separator, e.g. 1234.50),
+      %({"title":"X","amount":"x","paid_by":"Zoe","category":"Yacht"})                         => %(Invalid amount "x" for EUR: expected digits with at most 2 decimal places after a dot and no thousands separator.),
       %({"title":"X","amount":"1","paid_by":"Zoe","category":"Yacht"})                         => %(Unknown person "Zoe" in paid_by. #{active_people}),
       %({"title":"X","amount":"1","paid_by":"Anna","category":"Yacht","participants":["Zoe"]}) => unknown_category,
     }.each do |args, message|
       fail.call(args).should eq message
     end
+    MK.decode_fail(user, "create_expense", %({#{x},"split":"random"}), "split")
+    MK.decode_fail(user, "create_expense", %({"title":"X","amount":true,"paid_by":"Anna"}), "amount")
+    MK.decode_fail(user, "create_expense", %({#{x},"split":"shares","weights":{"Anna":true}}), "weights")
+    MK.decode_fail(user, "create_expense", %({"amount":"x","paid_by":"Zoe","split":"x","date":"x"}), "split")
+    MK.decode_fail(user, "create_expense", %({"title":"X","amount":"x","paid_by":"Zoe","split":"x","date":"x"}), "split")
     MK.decode_fail(user, "create_expense", %({#{x},"titel":"Y"}), "titel")
     MK.decode_fail(user, "create_expense", %({"title":5,"amount":"10","paid_by":"Anna"}), "title")
     MK.decode_fail(user, "create_expense", %({#{x},"participants":"Anna"}), "participants")
@@ -576,16 +576,16 @@ describe "MCP tools" do
       %({"from":"Ben","to":"Zoe","amount":"5"})                          => %(Unknown person "Zoe" in to. #{active_people}),
       %({"from":"emil","to":"Anna","amount":"5"})                        => "Emil is archived and cannot take part in new entries.",
       %({"from":"Ben","to":"EMIL","amount":"5"})                         => "Emil is archived and cannot take part in new entries.",
-      %({"from":"ben","to":" Ben ","amount":"5"})                        => "from and to must be different people.",
-      %({"from":"Ben","to":"Anna","amount":"0"})                         => "amount must be greater than 0.",
-      %({"from":"Ben","to":"Anna","amount":"5,50"})                      => %(Invalid amount "5,50" for EUR: use digits with a dot as decimal separator and no thousands separator, e.g. 1234.50),
+      %({"from":"ben","to":" Ben ","amount":"5"})                        => "The app refused the entry (message in German): Bei einer Rückzahlung müssen Zahler und Empfänger verschieden sein.",
+      %({"from":"Ben","to":"Anna","amount":"0"})                         => "The app refused the entry (message in German): Der Betrag muss größer als 0 sein.",
+      %({"from":"Ben","to":"Anna","amount":"5,50"})                      => %(Invalid amount "5,50" for EUR: expected digits with at most 2 decimal places after a dot and no thousands separator.),
       %({"from":"Ben","to":"Anna","amount":"5","date":"31.02.2026"})     => %(Invalid date for date: "31.02.2026" (expected YYYY-MM-DD).),
       %({"from":"Ben","to":"Anna","amount":"5","currency":"XAF"})        => "There is no exchange rate for XAF on 2026-10-03. Ask the user for the rate and pass it as fx_rate.",
       %({"from":"Ben","to":"Anna","amount":"5","fx_rate":2})             => "fx_rate is only for foreign currencies.",
       %({"from":"Ben","to":"Anna","amount":"5","currency":"Dollar"})     => %(currency must be a three-letter ISO code such as USD, not "Dollar".),
-      %({"from":"Ben","to":"Anna","amount":"5","notes":"#{"n" * 2001}"}) => "notes must be at most 2000 characters.",
+      %({"from":"Ben","to":"Anna","amount":"5","notes":"#{"n" * 2001}"}) => "The app refused the entry (message in German): Die Notiz ist zu lang (höchstens 2000 Zeichen).",
       # Date and amount are checked before the people.
-      %({"from":"Zoe","to":"Zoe","amount":"x"}) => %(Invalid amount "x" for EUR: use digits with a dot as decimal separator and no thousands separator, e.g. 1234.50),
+      %({"from":"Zoe","to":"Zoe","amount":"x"}) => %(Invalid amount "x" for EUR: expected digits with at most 2 decimal places after a dot and no thousands separator.),
     }.each do |args, message|
       MK.fail(user, "create_reimbursement", args).should eq message
     end
@@ -678,13 +678,13 @@ describe "MCP tools" do
     MK.ok(user, "balance_history", %({"interval":"year","person":"Emil","from":"2026-01-01"}))["rows"].should eq rows.call("year", [{"2026", [0]}], ["Emil"])
 
     {
-      %({"interval":"day"})                      => "Invalid arguments: interval must be one of year, month, week.",
       %({"person":"Zoe"})                        => %(Unknown person "Zoe". #{all_people}),
       %({"interval":"week","from":"2000-01-01"}) => "That is 1397 periods, at most 500 are possible. Please narrow down from/to or choose a longer interval.",
       %({"from":"1900-01-01"})                   => %(Invalid date for from: "1900-01-01" (expected YYYY-MM-DD).),
       %({"to":"2026-13-01"})                     => %(Invalid date for to: "2026-13-01" (expected YYYY-MM-DD).),
       %({"from":"2026-10-01","to":"2026-09-01"}) => %("to" (2026-09-01) is before "from" (2026-10-01).),
     }.each { |args, message| MK.fail(user, "balance_history", args).should eq message }
+    MK.decode_fail(user, "balance_history", %({"interval":"day"}), "interval")
     MK.decode_fail(user, "balance_history", %({"interval":5}), "interval")
   end
 
@@ -708,7 +708,7 @@ describe "MCP tools" do
     expect.call("{}", [7, 5, 4, 2, 1, 3], 6, 20520, "")
     expect.call(%({"limit":1}), [7], 6, 20520, "")
     expect.call(%({"reimbursements":"only"}), [6], 1, 1500, "")
-    expect.call(%({"reimbursements":" include ","sort":"date_asc"}), [3, 1, 2, 4, 5, 6, 7], 7, 22020, "")
+    expect.call(%({"reimbursements":"include","sort":"date_asc"}), [3, 1, 2, 4, 5, 6, 7], 7, 22020, "")
     expect.call(%({"text":"RÜCKZAHLUNG","reimbursements":"only"}), [6], 1, 1500, "")
     expect.call(%({"text":"rückzahlung"}), [] of Int32, 0, 0, "")
     expect.call(%({"text":["sushi","ZEILE"]}), [5, 3], 2, 3750, "")
@@ -738,8 +738,6 @@ describe "MCP tools" do
     {
       %({"limit":1000})                          => "limit must be between 1 and 500.",
       %({"limit":-1})                            => "limit must be between 1 and 500.",
-      %({"text":5})                              => "Invalid arguments: must be a string or a list of strings",
-      %({"text":["a",1]})                        => "Invalid arguments: must be a string or a list of strings",
       %({"from":"yesterday"})                    => %(Invalid date for from: "yesterday" (expected YYYY-MM-DD).),
       %({"to":"2026-02-30"})                     => %(Invalid date for to: "2026-02-30" (expected YYYY-MM-DD).),
       %({"from":"2101-01-01"})                   => %(Invalid date for from: "2101-01-01" (expected YYYY-MM-DD).),
@@ -750,9 +748,6 @@ describe "MCP tools" do
       %({"paid_by":" zoe "})                     => %(Unknown person "zoe". #{all_people}),
       %({"involved":"An"})                       => %(Unknown person "An". #{all_people}),
       %({"category":"Yacht"})                    => unknown_category,
-      %({"reimbursements":"maybe"})              => "Invalid arguments: reimbursements must be one of exclude, include, only.",
-      %({"sort":"random"})                       => "Invalid arguments: sort must be one of date_desc, date_asc, amount_desc, amount_asc.",
-      %({"detail":"verbose"})                    => "Invalid arguments: detail must be one of compact, full.",
       %({"min_amount":-1})                       => "min_amount must be an amount in euros of at least 0.",
       %({"max_amount":-0.5})                     => "max_amount must be an amount in euros of at least 0.",
       %({"min_amount":2e12})                     => "min_amount must be an amount in euros of at least 0.",
@@ -761,17 +756,23 @@ describe "MCP tools" do
       %({"min_amount":20,"max_amount":10})       => "min_amount (20.00) is greater than max_amount (10.00).",
       %({"min_amount":10.01,"max_amount":10})    => "min_amount (10.01) is greater than max_amount (10.00).",
       # Checked in this order.
-      %({"from":"x","person":"Zoe"})            => %(Invalid date for from: "x" (expected YYYY-MM-DD).),
-      %({"from":"x","person":"Zoe","sort":"x"}) => "Invalid arguments: sort must be one of date_desc, date_asc, amount_desc, amount_asc.",
-      %({"person":"Zoe","category":"Yacht"})    => unknown_category,
-      %({"person":"Zoe","limit":0})             => %(Unknown person "Zoe". #{all_people}),
+      %({"from":"x","person":"Zoe"})         => %(Invalid date for from: "x" (expected YYYY-MM-DD).),
+      %({"person":"Zoe","category":"Yacht"}) => unknown_category,
+      %({"person":"Zoe","limit":0})          => %(Unknown person "Zoe". #{all_people}),
     }.each { |args, message| MK.fail(user, "search_expenses", args).should eq message }
+    MK.decode_fail(user, "search_expenses", %({"text":5}), "text")
+    MK.decode_fail(user, "search_expenses", %({"text":["a",1]}), "text")
+    MK.decode_fail(user, "search_expenses", %({"reimbursements":"maybe"}), "reimbursements")
+    MK.decode_fail(user, "search_expenses", %({"sort":"random"}), "sort")
+    MK.decode_fail(user, "search_expenses", %({"detail":"verbose"}), "detail")
+    MK.decode_fail(user, "search_expenses", %({"from":"x","person":"Zoe","sort":"x"}), "sort")
     MK.decode_fail(user, "search_expenses", %({"von":"2026-01-01"}), "von")
     MK.decode_fail(user, "search_expenses", %({"limit":"5"}), "limit")
     MK.decode_fail(user, "search_expenses", %({"limit":0.5}), "limit")
     MK.decode_fail(user, "search_expenses", %({"limit":5.0}), "limit")
     MK.decode_fail(user, "search_expenses", %({"min_amount":"5"}), "min_amount")
     MK.decode_fail(user, "search_expenses", %({"person":["Anna"]}), "person")
+    MK.decode_fail(user, "search_expenses", %({"sort":" date_asc "}), "sort")
   end
 
   scenario "statistics", world do
@@ -782,7 +783,7 @@ describe "MCP tools" do
     total = "total amounts of the expenses"
 
     MK.ok(user, "statistics", %({"group_by":"category"})).should eq MK.json(%({"group_by":"category","note":"#{base}","period":"all time","perspective":"#{total}","rows":[{"category":"Reisen","count":1,"amount":"88.80","amount_cents":8880},{"category":"No category","count":3,"amount":"46.40","amount_cents":4640},{"category":"Restaurant","count":1,"amount":"40.00","amount_cents":4000},{"category":"Lebensmittel","count":1,"amount":"30.00","amount_cents":3000}],"rows_total":4,"total":"205.20","total_cents":20520,"truncated":false}))
-    d = MK.ok(user, "statistics", %({"group_by":" category ","limit":2}))
+    d = MK.ok(user, "statistics", %({"group_by":"category","limit":2}))
     {d["rows"].as_a.map(&.["category"].as_s), d["rows_total"], d["truncated"], d["total_cents"]}.should eq({["Reisen", "No category"], 4, true, 20520})
     MK.ok(user, "statistics", %({"group_by":"person"})).should eq MK.json(%({"group_by":"person","note":"#{base}#{person_note}","period":"all time","perspective":"#{total}","rows":[{"person":"Ben","count":5,"amount":"69.42","amount_cents":6942,"paid":"48.90","paid_cents":4890},{"person":"Anna","count":6,"amount":"64.43","amount_cents":6443,"paid":"42.50","paid_cents":4250},{"person":"Cleo","count":4,"amount":"46.92","amount_cents":4692,"paid":"25.00","paid_cents":2500},{"person":"Dora","count":2,"amount":"24.43","amount_cents":2443,"paid":"88.80","paid_cents":8880}],"rows_total":4,"total":"205.20","total_cents":20520,"truncated":false}))
     MK.ok(user, "statistics", %({"group_by":"person","category":"none"}))["rows"].should eq MK.json(%([{"person":"Anna","count":3,"amount":"22.23","amount_cents":2223,"paid":"12.50","paid_cents":1250},{"person":"Cleo","count":2,"amount":"14.72","amount_cents":1472,"paid":"25.00","paid_cents":2500},{"person":"Ben","count":2,"amount":"7.22","amount_cents":722,"paid":"8.90","paid_cents":890},{"person":"Dora","count":1,"amount":"2.23","amount_cents":223,"paid":"0.00","paid_cents":0}]))
@@ -799,7 +800,7 @@ describe "MCP tools" do
 
     # compare=previous_year by month and by category.
     MK.ok(user, "statistics", %({"group_by":"month","from":"2026-08-01","compare":"previous_year"})).should eq MK.json(%({"group_by":"month","note":"#{base}#{compare_note}","period":"from 2026-08-01","perspective":"#{total}","previous_period":"each month one year earlier","previous_total":"25.00","previous_total_cents":2500,"rows":[{"month":"2026-08","count":0,"amount":"0.00","amount_cents":0,"previous":"0.00","previous_cents":0,"change":"0.00","change_cents":0},{"month":"2026-09","count":3,"amount":"158.80","amount_cents":15880,"previous":"25.00","previous_cents":2500,"change":"133.80","change_cents":13380,"change_percent":535.2},{"month":"2026-10","count":2,"amount":"21.40","amount_cents":2140,"previous":"0.00","previous_cents":0,"change":"21.40","change_cents":2140}],"rows_total":3,"total":"180.20","total_cents":18020,"truncated":false}))
-    MK.ok(user, "statistics", %({"group_by":"category","from":"2026-09-01","to":"2026-09-30","compare":" previous_year "})).should eq MK.json(%({"group_by":"category","note":"#{base}#{compare_note}","period":"2026-09-01 to 2026-09-30","perspective":"#{total}","previous_period":"2025-09-01 to 2025-09-30","previous_total":"25.00","previous_total_cents":2500,"rows":[{"category":"Reisen","count":1,"amount":"88.80","amount_cents":8880,"previous":"0.00","previous_cents":0,"change":"88.80","change_cents":8880},{"category":"Restaurant","count":1,"amount":"40.00","amount_cents":4000,"previous":"0.00","previous_cents":0,"change":"40.00","change_cents":4000},{"category":"Lebensmittel","count":1,"amount":"30.00","amount_cents":3000,"previous":"0.00","previous_cents":0,"change":"30.00","change_cents":3000},{"category":"No category","count":0,"amount":"0.00","amount_cents":0,"previous":"25.00","previous_cents":2500,"change":"-25.00","change_cents":-2500,"change_percent":-100}],"rows_total":4,"total":"158.80","total_cents":15880,"truncated":false}))
+    MK.ok(user, "statistics", %({"group_by":"category","from":"2026-09-01","to":"2026-09-30","compare":"previous_year"})).should eq MK.json(%({"group_by":"category","note":"#{base}#{compare_note}","period":"2026-09-01 to 2026-09-30","perspective":"#{total}","previous_period":"2025-09-01 to 2025-09-30","previous_total":"25.00","previous_total_cents":2500,"rows":[{"category":"Reisen","count":1,"amount":"88.80","amount_cents":8880,"previous":"0.00","previous_cents":0,"change":"88.80","change_cents":8880},{"category":"Restaurant","count":1,"amount":"40.00","amount_cents":4000,"previous":"0.00","previous_cents":0,"change":"40.00","change_cents":4000},{"category":"Lebensmittel","count":1,"amount":"30.00","amount_cents":3000,"previous":"0.00","previous_cents":0,"change":"30.00","change_cents":3000},{"category":"No category","count":0,"amount":"0.00","amount_cents":0,"previous":"25.00","previous_cents":2500,"change":"-25.00","change_cents":-2500,"change_percent":-100}],"rows_total":4,"total":"158.80","total_cents":15880,"truncated":false}))
     # Without to, the period ends today.
     d = MK.ok(user, "statistics", %({"group_by":"person","from":"2026-09-10","compare":"previous_year","share_of":"Cleo"}))
     {d["period"], d["previous_period"], d["perspective"]}.should eq({"2026-09-10 to 2026-10-03", "2025-09-10 to 2025-10-03", "only the share of Cleo"})
@@ -809,9 +810,6 @@ describe "MCP tools" do
     d["rows"].should eq MK.json(%([{"week":"2026-W37","count":0,"amount":"0.00","amount_cents":0,"previous":"25.00","previous_cents":2500,"change":"-25.00","change_cents":-2500,"change_percent":-100},{"week":"2026-W38","count":2,"amount":"70.00","amount_cents":7000,"previous":"0.00","previous_cents":0,"change":"70.00","change_cents":7000}]))
 
     {
-      %({})                                                                  => "Invalid arguments: group_by must be one of category, title, year, month, week, person, category_month.",
-      %({"group_by":"day"})                                                  => "Invalid arguments: group_by must be one of category, title, year, month, week, person, category_month.",
-      %({"group_by":"month","compare":"last_year"})                          => "Invalid arguments: compare must be one of previous_year.",
       %({"group_by":"title","compare":"previous_year"})                      => "compare=previous_year with group_by=title needs from (and optionally to): the period to compare.",
       %({"group_by":"category","compare":"previous_year","to":"2026-09-30"}) => "compare=previous_year with group_by=category needs from (and optionally to): the period to compare.",
       %({"group_by":"person","compare":"previous_year","from":"2026-12-01"}) => "from (2026-12-01) is in the future; compare=previous_year needs a period up to today or an explicit to.",
@@ -820,8 +818,11 @@ describe "MCP tools" do
       %({"group_by":"month","category":"Yacht"})                             => unknown_category,
       %({"group_by":"month","from":"2026-10-02","to":"2026-10-01"})          => %("to" (2026-10-01) is before "from" (2026-10-02).),
       %({"group_by":"month","from":"heute"})                                 => %(Invalid date for from: "heute" (expected YYYY-MM-DD).),
-      %({"group_by":"month","text":7})                                       => "Invalid arguments: must be a string or a list of strings",
     }.each { |args, message| MK.fail(user, "statistics", args).should eq message }
+    MK.decode_fail(user, "statistics", %({}), "group_by")
+    MK.decode_fail(user, "statistics", %({"group_by":"day"}), "group_by")
+    MK.decode_fail(user, "statistics", %({"group_by":"month","compare":"last_year"}), "compare")
+    MK.decode_fail(user, "statistics", %({"group_by":"month","text":7}), "text")
     MK.decode_fail(user, "statistics", %({"group_by":"month","limit":"5"}), "limit")
     MK.decode_fail(user, "statistics", %({"group_by":"month","per":"Anna"}), "per")
   end
@@ -852,7 +853,7 @@ describe "MCP tools" do
     MK.ok(user, "activity", %({"limit":2,"person":"ben"})).should eq page.call(by_id.call([14, 13]), true, "There are older entries: call again with before_id=13.")
     MK.ok(user, "activity", %({"person":"Ben","before_id":13})).should eq page.call(by_id.call([9]), false, nil)
     MK.ok(user, "activity", %({"expense_id":4})).should eq page.call(by_id.call([11]), false, nil)
-    MK.ok(user, "activity", %({"action":" settings_updated ","limit":7})).should eq page.call(by_id.call([7, 6, 5, 4, 3, 2, 1]), false, nil)
+    MK.ok(user, "activity", %({"action":"settings_updated","limit":7})).should eq page.call(by_id.call([7, 6, 5, 4, 3, 2, 1]), false, nil)
     MK.ok(user, "activity", %({"action":"expense_deleted"})).should eq page.call(none, false, nil)
     MK.ok(user, "activity", %({"person":"Emil"})).should eq page.call(none, false, nil)
     MK.ok(user, "activity", %({"from":"2026-10-04"})).should eq page.call(none, false, nil)
@@ -897,7 +898,8 @@ describe "MCP tools" do
 
     rows.call("SELECT name, archived_at IS NOT NULL AS archived FROM participants ORDER BY id").should eq MK.json(%({"columns":["name","archived"],"row_count":5,"rows":[["Anna",0],["Ben",0],["Cleo",0],["Dora",0],["Emil",1]],"truncated":false}))
     rows.call("  with s as (select paid_by, sum(amount_cents) as c from expenses where deleted_at is null group by paid_by)\n select p.name, s.c from s join participants p on p.id = s.paid_by order by s.c desc")["rows"].should eq MK.json(%([["Dora",8880],["Ben",6390],["Anna",4250],["Cleo",2500]]))
-    rows.call("SELECT 1 AS one; -- done")["rows"].should eq MK.json("[[1]]")
+    rows.call("SELECT 1 AS one -- done")["rows"].should eq MK.json("[[1]]")
+    rows.call("SELECT 1 AS one;\n")["rows"].should eq MK.json("[[1]]")
     rows.call("/* a; b */ SELECT ';' AS x;;")["rows"].should eq MK.json(%([[";"]]))
     rows.call(%(SELECT 'it''s; fine' AS "a;b", [c;d] FROM (SELECT 1 AS [c;d])))["rows"].should eq MK.json(%([["it's; fine",1]]))
     rows.call("SELECT 1, 1, 'a' AS x, 'b' AS x").should eq MK.json(%({"columns":["1","1:1","x","x:1"],"row_count":1,"rows":[[1,1,"a","b"]],"truncated":false}))
@@ -922,18 +924,16 @@ describe "MCP tools" do
     d = rows.call("WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n LIMIT 500) SELECT i FROM n")
     {d["row_count"], d["truncated"], d.as_h.has_key?("note")}.should eq({500, false, false})
 
-    only_select = "Only a single read-only query is allowed (SELECT … or WITH … SELECT …)."
-    single = %(Please send only a single query (no second statement after ";").)
+    # Anything but a single SELECT fails to parse as a subquery: SQLite's error.
     ["DELETE FROM expenses", "INSERT INTO settings VALUES ('a', 'b')", "UPDATE participants SET name = 'x'",
      "DROP TABLE expenses", "ATTACH DATABASE 'x.db' AS x", "PRAGMA query_only = OFF", "PRAGMA table_info(expenses)",
      "pragma writable_schema = 1", "VACUUM INTO '/tmp/x.db'", "CREATE TABLE x (a)", "REPLACE INTO settings VALUES ('a', 'b')",
-     "EXPLAIN SELECT 1", "(SELECT 1)", "-- nur ein Kommentar", "/* SELECT 1 */", "SELEKT 1", "BEGIN", "DETACH src"].each do |q|
-      refused.call(q).should eq only_select
+     "EXPLAIN SELECT 1", "-- nur ein Kommentar", "/* SELECT 1 */", "SELEKT 1", "BEGIN", "DETACH src",
+     "SELECT 1; SELECT 2", "SELECT 1; DELETE FROM expenses", "SELECT 'a'; PRAGMA query_only = OFF", "SELECT 1 /* ; */; ATTACH 'x' AS y",
+     "WITH x AS (SELECT 1) SELECT * FROM x; DROP TABLE expenses", "SELECT 1 AS one; -- done"].each do |q|
+      refused.call(q).should start_with "SQL error: "
     end
-    ["SELECT 1; SELECT 2", "SELECT 1; DELETE FROM expenses", "SELECT 'a'; PRAGMA query_only = OFF", "SELECT 1 /* ; */; ATTACH 'x' AS y",
-     "WITH x AS (SELECT 1) SELECT * FROM x; DROP TABLE expenses"].each do |q|
-      refused.call(q).should eq single
-    end
+    rows.call("(SELECT 1)")["rows"].should eq MK.json("[[1]]")
     refused.call("SELECT 1 \u0000").should eq "The query contains a NUL character."
     refused.call("").should eq "Parameter query is missing."
     refused.call(" \n\t").should eq "Parameter query is missing."

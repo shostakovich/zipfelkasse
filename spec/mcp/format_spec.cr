@@ -5,11 +5,6 @@ describe MCP do
     MCP.eur(-300000).should eq "-3000.00"
   end
 
-  it "formats an amount in its currency" do
-    MCP.money(2340, "usd").should eq "23.40 USD"
-    MCP.money(1500, "JPY").should eq "1500 JPY"
-  end
-
   describe ".parse_decimal" do
     {
       {"23.4", 2} => 2340, {"23.40", 2} => 2340, {"23", 2} => 2300, {"1.000", 2} => 100, {"0.5", 2} => 50,
@@ -20,9 +15,10 @@ describe MCP do
       end
     end
 
-    ["1.234", "1,5", "1.000,00", "-1", "+1", ".5", "1e3", "", "1.2.3", "1 000"].each do |text|
-      it "rejects #{text.inspect}" do
-        expect_raises(MCP::DecimalError) { MCP.parse_decimal(text, 2) }
+    [{"1.234", 2}, {"1.5", 0}, {"1,5", 2}, {"1.000,00", 2}, {"-1", 2}, {"+1", 2}, {".5", 2}, {"1e3", 2}, {"", 2},
+     {"1.2.3", 2}, {"1 000", 2}, {"1234567890123456", 2}].each do |text, decimals|
+      it "rejects #{text.inspect} with #{decimals} decimals" do
+        MCP.parse_decimal(text, decimals).should be_nil
       end
     end
   end

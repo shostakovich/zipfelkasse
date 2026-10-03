@@ -3,17 +3,7 @@ module Zipfelkasse::MCP
     Domain.format_decimal(cents, 2, '.')
   end
 
-  def self.eur?(cents : Int64?) : String?
-    cents.try { |c| eur(c) }
-  end
-
-  def self.money(minor : Int64, currency : String) : String
-    currency = currency.strip.upcase
-    "#{Domain.format_decimal(minor, Domain.currency_decimals(currency), '.')} #{currency}"
-  end
-
-  # RFC 3339 in t's zone ("Z" for any zero offset); Time#to_rfc3339 would
-  # convert to UTC.
+  # Time#to_rfc3339 would convert to UTC.
   def self.rfc3339(t : Time) : String
     t.offset == 0 ? t.to_s("%Y-%m-%dT%H:%M:%SZ") : t.to_s("%Y-%m-%dT%H:%M:%S%:z")
   end
