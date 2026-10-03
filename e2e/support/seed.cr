@@ -1,25 +1,15 @@
 require "json"
-require "digest/sha1"
 
 module E2E
-  # The database the read-only crawl runs on: E2E_SEED_DB (e.g. a backup of
-  # a real database, never committed) or e2e/data/seed-*.db, built on first use.
-  def self.seed_db : String
-    if path = ENV["E2E_SEED_DB"]?.presence
-      return path
-    end
-    stamp = Digest::SHA1.hexdigest("#{File.realpath(bin)} #{File.info(bin).modification_time.to_unix_ns}")[0, 12]
-    path = File.join(data_dir, "seed-#{stamp}.db")
-    return path if File.exists?(path)
-    world = World.new("seed-build", now: Seed::PHASE_A)
-    begin
+  @@seeded_world : World?
+
+  # The household of Seed, built once per process on first use and shared by
+  # the read-only scenarios (they must not change it).
+  def self.seeded_world : World
+    @@seeded_world ||= World.new("seed", now: Seed::PHASE_A, setup: ->(world : World) do
       Seed.new(world).run
       world.verify!
-      world.save(path)
-    ensure
-      world.stop
-    end
-    path
+    end)
   end
 
   # Builds a realistic household with every feature of the app, through the
@@ -159,7 +149,7 @@ module E2E
     end
 
     private def newest_expense_id : Int64
-      Snapshot.count(@world.app.db_path, "SELECT max(id) FROM expenses")
+      Database.count(@world.app.db_path, "SELECT max(id) FROM expenses")
     end
 
     def expense_form(title : String, date : Time, cents : Int64, payer : Symbol, whom : Array(Symbol),
@@ -320,7 +310,7 @@ module E2E
       expect(@user.post("/einstellungen/wiederkehrend/#{ids["Fitnessstudio"]}/pausieren"), 303, "pause")
       expect(@user.post("/einstellungen/wiederkehrend/#{ids["Zeitung"]}/loeschen"), 303, "delete rule")
       # The rent goes up: edit the newest instance and take it as template.
-      newest_rent = Snapshot.count(@world.app.db_path, "SELECT max(id) FROM expenses WHERE recurring_id = #{ids["Miete"]}")
+      newest_rent = Database.count(@world.app.db_path, "SELECT max(id) FROM expenses WHERE recurring_id = #{ids["Miete"]}")
       form = rent_form(newest_rent)
       as_person(:anna)
       expect(@user.post("/ausgaben/#{newest_rent}", form), 303, "raise rent")
@@ -332,11 +322,11 @@ module E2E
     end
 
     private def rule_id_of(expense_id : Int64) : Int64
-      Snapshot.count(@world.app.db_path, "SELECT recurring_id FROM expenses WHERE id = #{expense_id}")
+      Database.count(@world.app.db_path, "SELECT recurring_id FROM expenses WHERE id = #{expense_id}")
     end
 
     private def rent_form(id : Int64) : Array({String, String})
-      date = Snapshot.open(@world.app.db_path) { |db| db.scalar("SELECT date FROM expenses WHERE id = #{id}").as(String) }
+      date = Database.open(@world.app.db_path) { |db| db.scalar("SELECT date FROM expenses WHERE id = #{id}").as(String) }
       expense_form("Miete", Time.parse_utc(date, "%Y-%m-%d"), 152000, :anna, household(Time.utc(2026, 10, 1)), "Miete & Nebenkosten")
     end
 
@@ -437,7 +427,7 @@ module E2E
         "title" => JSON::Any.new("pizza <lieferung>"), "amount" => JSON::Any.new("31.5"),
         "paid_by" => JSON::Any.new("Ben"), "date" => JSON::Any.new("2026-10-02"),
       })
-      @expenses.concat(Snapshot.open(@world.app.db_path) { |db| db.query_all("SELECT id FROM expenses WHERE id > #{@expenses.max}", as: Int64) })
+      @expenses.concat(Database.open(@world.app.db_path) { |db| db.query_all("SELECT id FROM expenses WHERE id > #{@expenses.max}", as: Int64) })
     end
 
     private def ynab

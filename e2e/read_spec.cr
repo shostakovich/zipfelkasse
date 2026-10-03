@@ -1,18 +1,22 @@
 require "./e2e_helper"
 
-# Read-only crawl over the seed household (or a real database, see README):
-# every page, every expense, filters, paging, exports, the rate API and the
-# MCP read tools. Pages must render, errors must be answers rather than
-# crashes, and no page may contain injected scripts.
+# Read-only crawl over the seed household: every page, every expense, filters,
+# paging, exports, the rate API and the MCP read tools.
 describe "Read everything" do
-  db = E2E.seed_db
-  world = E2E::World.new("read", seed_db: db)
-  after_all { world.stop }
+  world = E2E.seeded_world
+  people = [] of {Int64, String}
+  categories = [] of {Int64, String}
+  expense_ids = [] of Int64
+  rule_expenses = [] of Int64
 
-  people = E2E::Snapshot.open(db) { |d| d.query_all("SELECT id, name FROM participants WHERE archived_at IS NULL ORDER BY id", as: {Int64, String}) }
-  categories = E2E::Snapshot.open(db) { |d| d.query_all("SELECT id, name FROM categories ORDER BY id", as: {Int64, String}) }
-  expense_ids = E2E::Snapshot.open(db) { |d| d.query_all("SELECT id FROM expenses ORDER BY id", as: Int64) }
-  rule_expenses = E2E::Snapshot.open(db) { |d| d.query_all("SELECT min(id) FROM expenses WHERE deleted_at IS NULL GROUP BY coalesce(recurring_id, -id) ORDER BY 1 LIMIT 25", as: Int64) }
+  before_all do
+    E2E::Database.open(world.app.db_path) do |d|
+      people = d.query_all("SELECT id, name FROM participants WHERE archived_at IS NULL ORDER BY id", as: {Int64, String})
+      categories = d.query_all("SELECT id, name FROM categories ORDER BY id", as: {Int64, String})
+      expense_ids = d.query_all("SELECT id FROM expenses ORDER BY id", as: Int64)
+      rule_expenses = d.query_all("SELECT min(id) FROM expenses WHERE deleted_at IS NULL GROUP BY coalesce(recurring_id, -id) ORDER BY 1 LIMIT 25", as: Int64)
+    end
+  end
 
   scenario "main pages for every person", world do
     people.each do |id, name|

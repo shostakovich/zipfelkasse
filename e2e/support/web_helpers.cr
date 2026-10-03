@@ -168,14 +168,14 @@ module E2E
 
     # Shares of an expense in the primary database: participant → cents.
     def self.shares(world : World, expense_id : Int64) : Hash(Int64, Int64)
-      Snapshot.open(world.app.db_path) do |db|
+      Database.open(world.app.db_path) do |db|
         db.query_all("SELECT participant_id, amount_cents FROM expense_shares WHERE expense_id = ? ORDER BY participant_id",
           expense_id, as: {Int64, Int64}).to_h
       end
     end
 
     def self.count(world : World, sql : String) : Int64
-      Snapshot.count(world.app.db_path, sql)
+      Database.count(world.app.db_path, sql)
     end
 
     def self.newest_expense(world : World) : Int64
@@ -185,7 +185,7 @@ module E2E
     # The "text" of every activity entry in the primary database, oldest first
     # (entries without one, e.g. expense changes, are skipped).
     def self.activity_texts(world : World) : Array(String)
-      Snapshot.open(world.app.db_path) do |db|
+      Database.open(world.app.db_path) do |db|
         db.query_all("SELECT details_json FROM activity ORDER BY id", as: String).compact_map do |j|
           JSON.parse(j)["text"]?.try(&.as_s)
         end

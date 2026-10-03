@@ -607,7 +607,7 @@ describe "MCP tools" do
     MK.decode_fail(user, "create_expense", %({#{x},"currency":"USD","fx_rate":"1.2"}), "fx_rate")
     MK.decode_fail(user, "create_expense", %({#{x},"weights":["Anna"]}), "weights")
 
-    E2E::Snapshot.count(world.app.db_path, "SELECT count(*) FROM expenses").should eq 0
+    E2E::Database.count(world.app.db_path, "SELECT count(*) FROM expenses").should eq 0
   end
 
   scenario "create_reimbursement: every refusal", world do
@@ -635,7 +635,7 @@ describe "MCP tools" do
     MK.decode_fail(user, "create_reimbursement", %({"from":"Ben","to":"Anna","amount":"5","title":"Rückzahlung"}), "title")
     MK.decode_fail(user, "create_reimbursement", %({"from":"Ben","to":"Anna","amount":"5","split":"equal"}), "split")
     MK.decode_fail(user, "create_reimbursement", %({"from":["Ben"],"to":"Anna","amount":"5"}), "from")
-    E2E::Snapshot.count(world.app.db_path, "SELECT count(*) FROM expenses").should eq 0
+    E2E::Database.count(world.app.db_path, "SELECT count(*) FROM expenses").should eq 0
   end
 
   scenario "create_expense and create_reimbursement store entries", world do
@@ -1004,9 +1004,9 @@ describe "MCP tools" do
     # Nothing has changed.
     rows.call("SELECT count(*) FROM expenses")["rows"].should eq MK.json("[[7]]")
     db = world.app.db_path
-    E2E::Snapshot.count(db, "SELECT count(*) FROM expenses").should eq 7
-    E2E::Snapshot.count(db, "SELECT count(*) FROM settings WHERE key = 'a'").should eq 0
-    E2E::Snapshot.count(db, "SELECT count(*) FROM participants WHERE name = 'x'").should eq 0
+    E2E::Database.count(db, "SELECT count(*) FROM expenses").should eq 7
+    E2E::Database.count(db, "SELECT count(*) FROM settings WHERE key = 'a'").should eq 0
+    E2E::Database.count(db, "SELECT count(*) FROM participants WHERE name = 'x'").should eq 0
     MK.decode_fail(user, "sql_query", %({"query":"SELECT 1","limit":5}), "limit")
     MK.decode_fail(user, "sql_query", %({"query":["SELECT 1"]}), "query")
 
@@ -1088,12 +1088,10 @@ describe "MCP tools" do
 end
 
 describe "MCP on the seed household" do
-  db = E2E.seed_db
-  world = E2E::World.new("mcp-seed", seed_db: db)
-  after_all { world.stop }
+  world = E2E.seeded_world
 
   sql = ->(query : String) do
-    E2E::Snapshot.open(world.app.db_path) do |d|
+    E2E::Database.open(world.app.db_path) do |d|
       d.query_all(query) { |rs| Array(DB::Any).new(rs.column_count) { rs.read } }
     end
   end
@@ -1209,7 +1207,7 @@ describe "MCP on the seed household" do
 
   scenario "sql_query on real data hides YNAB", world do
     user = world.user
-    E2E::Snapshot.count(world.app.db_path, "SELECT count(*) FROM ynab_config").should be > 0
+    E2E::Database.count(world.app.db_path, "SELECT count(*) FROM ynab_config").should be > 0
     count = sql.call("SELECT count(*) FROM expenses")[0][0]
     MK.ok(user, "sql_query", %({"query":"SELECT count(*) AS n FROM expenses"}))["rows"].should eq MK.json("[[#{count}]]")
     d = MK.ok(user, "sql_query", %({"query":"SELECT * FROM expenses ORDER BY id"}))

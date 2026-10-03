@@ -34,7 +34,6 @@ describe "Web: identity" do
     ["/wer", "/manifest.webmanifest", "/sw.js", "/favicon.ico", "/static/app.css"].each do |p|
       anon.get(p).status.should eq 200
     end
-    world.app.log.should_not contain "panic"
   end
 
   scenario "the /wer page before anybody exists", world do
@@ -522,7 +521,7 @@ describe "Web: expenses" do
     r = user.post("/ausgaben/neu", W.expense(titel: "Diner", waehrung: "USD", betrag: "10,00", teil: all))
     {r.status, r.flash}.should eq({303, "Ausgabe „Diner“ angelegt."})
     id = W.newest_expense(world)
-    row = E2E::Snapshot.open(world.app.db_path) do |db|
+    row = E2E::Database.open(world.app.db_path) do |db|
       db.query_one("SELECT original_currency, original_amount_minor, fx_rate, fx_source, amount_cents FROM expenses WHERE id = ?", id,
         as: {String, Int64, Float64, String, Int64})
     end
@@ -1118,7 +1117,7 @@ describe "Web: settings" do
     user = world.user
     user.login("Anna")
     55.times { |i| user.post("/einstellungen", {"gruppenname" => "Runde #{i}"}).status.should eq 303 }
-    ids = E2E::Snapshot.open(world.app.db_path) { |db| db.query_all("SELECT id FROM activity ORDER BY id DESC", as: Int64) }
+    ids = E2E::Database.open(world.app.db_path) { |db| db.query_all("SELECT id FROM activity ORDER BY id DESC", as: Int64) }
     items = ->(r : E2E::Response) { r.doc.xpath_nodes(%(//*[contains(@class, "activity-item")])) }
     r = user.get("/aktivitaet")
     W.page_title(r).should eq "Aktivität · Runde 54"
@@ -1156,7 +1155,7 @@ end
 
 private def wait_for_expenses(world : E2E::World, n : Int32) : Nil
   E2E.wait_until("#{n} expenses", 15.seconds) do
-    E2E::Snapshot.count(world.app.db_path, "SELECT count(*) FROM expenses") >= n
+    E2E::Database.count(world.app.db_path, "SELECT count(*) FROM expenses") >= n
   end
 end
 

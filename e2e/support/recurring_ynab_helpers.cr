@@ -25,7 +25,7 @@ module E2E
     def create(world : World, user : User, form : Array({String, String})) : Int64
       r = user.post("/ausgaben/neu", form)
       raise "create #{form.to_h["titel"]}: #{r.status} #{r.error_message}" unless r.status == 303
-      Snapshot.count(world.app.db_path, "SELECT max(id) FROM expenses")
+      Database.count(world.app.db_path, "SELECT max(id) FROM expenses")
     end
 
     # Changes an expense through the form (same fields as when creating).
@@ -36,14 +36,14 @@ module E2E
     end
 
     def person(world : World, name : String) : Int64
-      Snapshot.open(world.app.db_path) do |db|
+      Database.open(world.app.db_path) do |db|
         db.query_one("SELECT id FROM participants WHERE name = ?", name, as: Int64)
       end
     end
 
     # Rows of a query on the database, every value as text.
     def rows(world : World, sql : String) : Array(Array(String))
-      Snapshot.open(world.app.db_path) do |db|
+      Database.open(world.app.db_path) do |db|
         out = [] of Array(String)
         db.query(sql) do |rs|
           rs.each do
@@ -65,7 +65,7 @@ module E2E
     # Waits until a count query gives *expected* (background work such as
     # the recurring job at startup).
     def wait_count(world : World, sql : String, expected : Int64) : Nil
-      E2E.wait_until("#{sql} = #{expected}", 15.seconds) { Snapshot.count(world.app.db_path, sql) == expected }
+      E2E.wait_until("#{sql} = #{expected}", 15.seconds) { Database.count(world.app.db_path, sql) == expected }
     end
 
     # Runs the block and returns the requests the YNAB fake received

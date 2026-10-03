@@ -96,18 +96,18 @@ module E2E
 
     # The ID of a row of `table` by name (participants, categories).
     def id_of(world : World, table : String, name : String) : Int64
-      Snapshot.open(world.app.db_path) do |db|
+      Database.open(world.app.db_path) do |db|
         db.scalar("SELECT id FROM #{table} WHERE name = ?", name).as(Int64)
       end
     end
 
     def newest_expense_id(world : World) : Int64
-      Snapshot.count(world.app.db_path, "SELECT max(id) FROM expenses")
+      Database.count(world.app.db_path, "SELECT max(id) FROM expenses")
     end
 
     # One row of the expenses table as strings.
     def expense_row(world : World, id : Int64) : Hash(String, String)
-      Snapshot.open(world.app.db_path) do |db|
+      Database.open(world.app.db_path) do |db|
         db.query_one("SELECT amount_cents, original_amount_minor, original_currency, fx_rate, fx_source, date FROM expenses WHERE id = ?", id) do |rs|
           {
             "amount_cents" => rs.read(Int64).to_s, "original_amount_minor" => rs.read(Int64).to_s,

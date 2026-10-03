@@ -65,19 +65,6 @@ module E2E
       @mutex.synchronize { @txns.values.sort_by { |t| t.id[1..].to_i } }
     end
 
-    # State as JSON, to continue later with a copied database.
-    def dump : String
-      @mutex.synchronize { {next_id: @next_id, txns: @txns.values}.to_json }
-    end
-
-    def load(json : String) : Nil
-      data = JSON.parse(json)
-      @mutex.synchronize do
-        @next_id = data["next_id"].as_i
-        @txns = Array(Txn).from_json(data["txns"].to_json).to_h { |t| {t.id, t} }
-      end
-    end
-
     def fail(*statuses : Int32) : Nil
       @mutex.synchronize { @fail_next.concat(statuses.to_a) }
     end

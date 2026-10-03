@@ -59,7 +59,7 @@ describe "Recurring expenses" do
         RY.h1(r).should eq "Wiederkehrende Ausgabe nicht gefunden."
       end
     end
-    E2E::Snapshot.count(world.app.db_path, "SELECT count(*) FROM recurring").should eq 0
+    E2E::Database.count(world.app.db_path, "SELECT count(*) FROM recurring").should eq 0
   end
 
   scenario "monthly rule from an old expense: preview, validation, catch-up with end-of-month clamping", world do
@@ -126,7 +126,7 @@ describe "Recurring expenses" do
     r.doc.xpath_nodes(%(//input[@name="haeufigkeit"])).size.should eq 0
     r.error_message.should be_nil
     user.post(neu, {"ausgabe" => instance.to_s, "haeufigkeit" => "yearly"}).status.should eq 422
-    E2E::Snapshot.count(world.app.db_path, "SELECT count(*) FROM recurring").should eq 1
+    E2E::Database.count(world.app.db_path, "SELECT count(*) FROM recurring").should eq 1
   end
 
   scenario "weekly rule, leap-day yearly rule, a rule without missed dates and long previews", world do
@@ -204,7 +204,7 @@ describe "Recurring expenses" do
     dates_of.call(rules["zeitung"]).should eq %w(2026-07-10 2026-08-10)
     rule_row.call(rules["zeitung"]).should eq ["monthly", "2026-07-10", "2026-10-10", "1"]
     RY.value(world, "SELECT coalesce(recurring_id, 'NULL') FROM expenses WHERE id = #{manual}").should eq "NULL"
-    E2E::Snapshot.count(world.app.db_path, "SELECT count(*) FROM expenses WHERE title = 'Zeitung' AND deleted_at IS NULL").should eq 5
+    E2E::Database.count(world.app.db_path, "SELECT count(*) FROM expenses WHERE title = 'Zeitung' AND deleted_at IS NULL").should eq 5
 
     # A rule whose next occurrence is entered by hand in advance (see the
     # restart below).
@@ -268,7 +268,7 @@ describe "Recurring expenses" do
     r = user.post("#{list}/#{rules["zeitung"]}/loeschen")
     r.status.should eq 303
     r.flash.should eq "Wiederholung gelöscht. Bereits angelegte Ausgaben bleiben erhalten."
-    E2E::Snapshot.count(world.app.db_path, "SELECT count(*) FROM recurring WHERE id = #{rules["zeitung"]}").should eq 0
+    E2E::Database.count(world.app.db_path, "SELECT count(*) FROM recurring WHERE id = #{rules["zeitung"]}").should eq 0
     RY.rows(world, "SELECT id, coalesce(recurring_id, 'NULL'), coalesce(deleted_at, 'NULL') FROM expenses WHERE id IN (#{zeitung_ids.join(",")}) ORDER BY id")
       .should eq zeitung_ids.map { |i| [i, "NULL", "NULL"] }
     RY.rows(world, "SELECT actor_id, coalesce(expense_id, 'NULL'), details_json FROM activity WHERE action = 'recurring_deleted'")
@@ -328,7 +328,7 @@ describe "Recurring expenses" do
     # The electricity bill entered by hand is not doubled.
     dates_of.call(rules["strom"]).should eq %w(2026-08-31 2026-09-30)
     rule_row.call(rules["strom"]).should eq ["monthly", "2026-08-31", "2026-11-30", "1"]
-    E2E::Snapshot.count(world.app.db_path, "SELECT count(*) FROM expenses WHERE title = 'Strom' AND deleted_at IS NULL").should eq 3
+    E2E::Database.count(world.app.db_path, "SELECT count(*) FROM expenses WHERE title = 'Strom' AND deleted_at IS NULL").should eq 3
     # Paused: nothing happened.
     dates_of.call(rules["gemuese"]).should eq %w(2026-09-19 2026-09-26 2026-10-03)
     rule_row.call(rules["haft"]).should eq ["yearly", "2020-02-29", "2027-02-28", "1"]
@@ -352,7 +352,7 @@ describe "Recurring expenses" do
 
     blumen = RY.column(world, "SELECT id FROM expenses WHERE recurring_id = #{rules["blumen"]} ORDER BY id")
     user.post("#{list}/#{rules["blumen"]}/loeschen").status.should eq 303
-    E2E::Snapshot.count(world.app.db_path, "SELECT count(*) FROM expenses WHERE id IN (#{blumen.join(",")}) AND deleted_at IS NULL AND recurring_id IS NULL").should eq 4
+    E2E::Database.count(world.app.db_path, "SELECT count(*) FROM expenses WHERE id IN (#{blumen.join(",")}) AND deleted_at IS NULL AND recurring_id IS NULL").should eq 4
     r = user.get(list)
     RY.texts(r, "//tbody/tr//strong").should eq ["Gemüsekiste", "Miete", "Strom", "Haftpflicht"]
   end
@@ -426,14 +426,14 @@ describe "YNAB sync" do
       r.error_message.should eq "YNAB kennt diesen Token nicht. Bitte prüfen und neu kopieren."
     end
     calls.should(eq [get_plans])
-    E2E::Snapshot.count(world.app.db_path, "SELECT count(*) FROM ynab_config").should eq 0
+    E2E::Database.count(world.app.db_path, "SELECT count(*) FROM ynab_config").should eq 0
 
     fail.call(503)
     r = user.post("#{page}/token", {"token" => "  #{token}  "})
     r.status.should eq 422
     r.error_message.should eq "YNAB ist gerade nicht erreichbar: YNAB-Fehler 503: Fehler 503 mit •••"
     r.body.should_not contain token
-    E2E::Snapshot.count(world.app.db_path, "SELECT count(*) FROM ynab_config").should eq 0
+    E2E::Database.count(world.app.db_path, "SELECT count(*) FROM ynab_config").should eq 0
 
     r = user.post("#{page}/token", {"token" => "  #{token}  "})
     r.status.should eq 303
@@ -544,7 +544,7 @@ describe "YNAB sync" do
       r.error_message.should eq "Unbekannte Kategorie."
     end
     calls.should(be_empty)
-    E2E::Snapshot.count(world.app.db_path, "SELECT count(*) FROM ynab_category_map").should eq 0
+    E2E::Database.count(world.app.db_path, "SELECT count(*) FROM ynab_category_map").should eq 0
 
     calls = RY.ynab_calls(world, 1) do
       r = user.post("#{page}/kategorien", {"kat-1" => "c-food", "kat-2" => "c-out", "kat-3" => "", "kat-x" => "c-rent", "andere" => "c-rent"})
@@ -845,7 +845,7 @@ describe "YNAB sync" do
       ["2026-10-04", -25000, "Wocheneinkauf", "Gesamt 50,00 € · bezahlt von Anna · #{marker.call(oct)}"],
     ]
     config.call("summary, last_sync").should eq ["2 neu · 0 geändert · 0 gelöscht", "2026-10-04T10:00:00Z"]
-    E2E::Snapshot.count(world.app.db_path, "SELECT count(*) FROM ynab_sync WHERE ynab_txn_id != ''").should eq 11
+    E2E::Database.count(world.app.db_path, "SELECT count(*) FROM ynab_sync WHERE ynab_txn_id != ''").should eq 11
   end
 
   scenario "transactions deleted by hand in YNAB", world do
@@ -871,7 +871,7 @@ describe "YNAB sync" do
       user.post("/ausgaben/#{ids["kino"]}/loeschen").status.should eq 303
     end
     calls.should(eq ["DELETE /v1/plans/plan-1/transactions/#{kino}", "GET /v1/plans/plan-1/accounts/acc-geteilt"])
-    E2E::Snapshot.count(world.app.db_path, "SELECT count(*) FROM ynab_sync WHERE expense_id = #{ids["kino"]}").should eq 0
+    E2E::Database.count(world.app.db_path, "SELECT count(*) FROM ynab_sync WHERE expense_id = #{ids["kino"]}").should eq 0
     config.call("summary, error").should eq ["0 neu · 0 geändert · 1 gelöscht", ""]
   end
 end
