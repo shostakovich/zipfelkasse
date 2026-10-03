@@ -86,7 +86,7 @@ module Zipfelkasse::YNAB
 
     private def show(env : HTTP::Server::Context, status : Int32, error : String?, refresh : Bool) : String
       me = env.me
-      config = @d.store.get_ynab_config?(me.id) || YNAB.empty_config(me.id)
+      config = @d.store.get_ynab_config?(me.id) || Store::YNABConfig.new(me.id, nil, nil, nil, nil, nil)
       token = config.token
       state = @service.load_status(me.id)
       token_invalid = !token.nil? && state.token_invalid?

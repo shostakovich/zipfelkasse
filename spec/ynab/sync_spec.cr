@@ -713,8 +713,7 @@ describe YNAB::Service do
       (Time.instant - started).should be < 1.second
 
       hold.close
-      service.wait_background
-      fake.live.size.should eq 1
+      eventually { fake.live.size == 1 }
     end
 
     it "never blocks when it is triggered" do

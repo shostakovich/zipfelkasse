@@ -11,7 +11,6 @@ module Zipfelkasse::YNAB
   CACHE_TTL           = 10.minutes
 
   class Service
-    getter d : Web::Deps
     property base_url : String
     property debounce : Time::Span
     property start_delay : Time::Span
@@ -96,10 +95,6 @@ module Zipfelkasse::YNAB
       @bg_wait.wait
     end
 
-    def wait_background : Nil
-      @bg_wait.wait
-    end
-
     def plans(token : String, refresh : Bool) : Array(APIPlan)
       cached(@plans_cache, "plans:" + token, refresh) { client(token).plans }
     end
@@ -118,10 +113,6 @@ module Zipfelkasse::YNAB
       cache[key] = {@d.now, v}
       v
     end
-  end
-
-  protected def self.empty_config(participant_id : Int64) : Store::YNABConfig
-    Store::YNABConfig.new(participant_id, nil, nil, nil, nil, nil)
   end
 
   def self.redact(msg : String, token : String?) : String
