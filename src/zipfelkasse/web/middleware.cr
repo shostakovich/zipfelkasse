@@ -75,6 +75,18 @@ module Zipfelkasse::Web
       else
         r.error(413, "Die gesendeten Daten sind zu groß. Bitte kürze die Eingaben und versuche es noch einmal.")
       end
+      drain(body)
+    end
+
+    # Closing while the client is still sending makes it see a connection
+    # reset instead of the 413; reading the rest (bounded) avoids that.
+    private def drain(body : IO) : Nil
+      buf = Bytes.new(64 * 1024)
+      left = 16 * MAX_BODY_BYTES
+      while left > 0 && (n = body.read(buf[0, Math.min(buf.size, left)])) > 0
+        left -= n
+      end
+    rescue IO::Error
     end
   end
 
