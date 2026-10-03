@@ -107,7 +107,7 @@ module Zipfelkasse::MCP
     sign = f < 0 ? "-" : ""
     if exp10 < -6 || exp10 >= 21
       rest = digits.size > 1 ? ".#{digits[1..]}" : ""
-      "#{sign}#{digits[0]}#{rest}e#{exp10 < 0 ? "-" : "+"}#{exp10.abs.to_s.rjust(exp10 < 0 ? 1 : 2, '0')}"
+      "#{sign}#{digits[0]}#{rest}e#{exp10 < 0 ? "-" : "+"}#{exp10.abs}"
     elsif exp10 < 0
       "#{sign}0.#{"0" * (-exp10 - 1)}#{digits}"
     elsif digits.size <= exp10 + 1
