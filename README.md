@@ -1,7 +1,7 @@
 # Zipfelkasse
 
 Zipfelkasse is a port of [Spliit](https://github.com/spliit-app/spliit): a slimmed-down, single-group
-rewrite in Go + SQLite for sharing expenses within a household. **The user interface is German.**
+rewrite in Crystal + SQLite for sharing expenses within a household. **The user interface is German.**
 
 ## Before you use this
 
@@ -27,11 +27,13 @@ One group, no login ("Wer bist du?" – who are you?), SQLite, a single binary.
 
 ## Quick start
 
-Locally (Go 1.26):
+Locally (Crystal 1.21, SQLite 3.46 or newer):
 
 ```sh
-go run .                 # = go run . serve, listens on :8080, DB in ./data/zipfelkasse.db
-go test ./... && go vet ./...
+shards install
+crystal run src/zipfelkasse.cr   # = serve, listens on :8080, DB in ./data/zipfelkasse.db
+crystal spec                     # unit specs
+crystal build src/zipfelkasse.cr -o bin/zipfelkasse && E2E_BIN=bin/zipfelkasse crystal spec e2e/  # black-box suite
 ```
 
 With Docker:
