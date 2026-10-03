@@ -25,7 +25,7 @@ module Zipfelkasse::YNAB
     property? ready = false
     property status = Status.new
     property retry_at : Time? = nil # only if in the future
-    property synced = 0_i64
+    property synced = 0
     property problems = [] of Store::YNABSyncProblem
     property balance = 0_i64 # own balance in the app
   end
@@ -102,8 +102,7 @@ module Zipfelkasse::YNAB
       data.status = load_status(me.id)
       data.token_invalid = data.token_set? && data.status.token_invalid?
       data.retry_at = data.status.retry_at.try { |t| t if t > @now.call }
-      synced, data.problems = @d.store.ynab_sync_summary(me.id)
-      data.synced = synced.to_i64
+      data.synced, data.problems = @d.store.ynab_sync_summary(me.id)
       data.balance = @d.store.balances[me.id]? || 0_i64
 
       if data.token_set? && !data.token_invalid?
