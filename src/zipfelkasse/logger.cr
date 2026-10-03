@@ -1,5 +1,5 @@
 module Zipfelkasse
-  # A small structured logger writing lines like Go's slog TextHandler:
+  # A small structured logger writing logfmt lines:
   #
   #     time=2026-10-03T08:13:21.123+02:00 level=INFO msg="Zipfelkasse running" addr=:8080
   #
@@ -51,7 +51,6 @@ module Zipfelkasse
       @io.flush
     end
 
-    # Writes a value, quoted like slog when it needs quoting.
     def self.value(io : IO, v) : Nil
       text = case v
              when Exception    then v.message || v.class.name

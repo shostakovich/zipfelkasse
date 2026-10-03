@@ -1,25 +1,24 @@
 require "socket"
 
 module Zipfelkasse
-  # The complete runtime configuration, read from environment variables.
   struct Config
     # Anthropic's address range.
     DEFAULT_MCP_ALLOWED_CIDRS = "160.79.104.0/21"
 
-    property addr : String = ":8080"                       # ZIPFELKASSE_ADDR
-    property db_path : String = "./data/zipfelkasse.db"    # ZIPFELKASSE_DB (container: /data/zipfelkasse.db)
-    property backup_dir : String = "data/backups"          # ZIPFELKASSE_BACKUP_DIR, default <directory of the DB>/backups
-    property mcp_secret : String = ""                      # MCP_SECRET; empty = MCP disabled
-    property mcp_allowed_cidrs = [] of Prefix              # MCP_ALLOWED_CIDRS, default 160.79.104.0/21
-    property trusted_proxies = [] of Prefix                # TRUSTED_PROXIES (IPs or CIDRs), default empty
+    property addr : String = ":8080"                          # ZIPFELKASSE_ADDR
+    property db_path : String = "./data/zipfelkasse.db"       # ZIPFELKASSE_DB (container: /data/zipfelkasse.db)
+    property backup_dir : String = "data/backups"             # ZIPFELKASSE_BACKUP_DIR, default <directory of the DB>/backups
+    property mcp_secret : String = ""                         # MCP_SECRET; empty = MCP disabled
+    property mcp_allowed_cidrs = [] of Prefix                 # MCP_ALLOWED_CIDRS, default 160.79.104.0/21
+    property trusted_proxies = [] of Prefix                   # TRUSTED_PROXIES (IPs or CIDRs), default empty
     property location : Time::Location = Time::Location.local # from TZ
 
     # Test-only overrides for the black-box E2E suite (e2e/). Never set them
     # in production.
-    property now : Time? = nil                  # ZIPFELKASSE_TEST_NOW (RFC 3339): frozen clock
-    property ecb_base_url : String = ""         # ZIPFELKASSE_TEST_ECB_URL
-    property ynab_base_url : String = ""        # ZIPFELKASSE_TEST_YNAB_URL
-    property ynab_delay : Time::Span? = nil     # ZIPFELKASSE_TEST_YNAB_DELAY
+    property now : Time? = nil              # ZIPFELKASSE_TEST_NOW (RFC 3339): frozen clock
+    property ecb_base_url : String = ""     # ZIPFELKASSE_TEST_ECB_URL
+    property ynab_base_url : String = ""    # ZIPFELKASSE_TEST_YNAB_URL
+    property ynab_delay : Time::Span? = nil # ZIPFELKASSE_TEST_YNAB_DELAY
 
     class Error < Exception
     end
@@ -27,7 +26,6 @@ module Zipfelkasse
     def initialize
     end
 
-    # The current time: the frozen test clock or the real one.
     def now : Time
       @now || Time.utc
     end
@@ -36,7 +34,6 @@ module Zipfelkasse
       @now
     end
 
-    # Today's calendar date in the configured time zone (UTC midnight).
     def today : Time
       t = now.in(location)
       Time.utc(t.year, t.month, t.day)
@@ -68,7 +65,7 @@ module Zipfelkasse
       end
     end
 
-    # Name of the time zone as Go prints it ("Local" without TZ).
+    # "Local" without TZ.
     def location_name : String
       location.name
     end
@@ -83,13 +80,10 @@ module Zipfelkasse
       raise Error.new("#{name}: #{ex.message}")
     end
 
-    # filepath.Join + Clean for the two-element case used here.
     protected def self.clean_join(dir : String, name : String) : String
       Path.new(dir, name).normalize.to_s
     end
 
-    # Go durations as used in tests: a number with unit ns, us, ms, s, m, h
-    # (also combined, e.g. "1m30s").
     def self.parse_duration(s : String) : Time::Span
       raise ArgumentError.new("time: invalid duration #{s.inspect}") unless s.matches?(/\A(\d+(\.\d+)?(ns|us|µs|ms|s|m|h))+\z/)
       total = Time::Span.zero
@@ -107,7 +101,7 @@ module Zipfelkasse
       total
     end
 
-    # An IP network (CIDR) like Go's netip.Prefix, always masked.
+    # An IP network (CIDR), always masked.
     struct Prefix
       getter bytes : Bytes
       getter bits : Int32
@@ -115,8 +109,7 @@ module Zipfelkasse
       def initialize(@bytes, @bits)
       end
 
-      # Parses a comma- or whitespace-separated list of CIDRs or single IP
-      # addresses (which become /32 or /128).
+      # Comma- or whitespace-separated; single IP addresses become /32 or /128.
       def self.parse_list(s : String) : Array(Prefix)
         s.split(/[, \t\n]/, remove_empty: true).map { |f| parse(f) }
       end
@@ -160,11 +153,10 @@ module Zipfelkasse
         io << '/' << @bits
       end
 
-      # The 4 or 16 bytes of an IP address, nil if it is none.
       def self.addr_bytes(s : String) : Bytes?
-        return nil if s.includes?('%') # zones are not supported (like netip prefixes)
+        return nil if s.includes?('%') # zones are not supported
         if s.matches?(/\A\d{1,3}(\.\d{1,3}){3}\z/)
-          return nil if s.split('.').any? { |p| p.size > 1 && p.starts_with?('0') } # Go rejects leading zeros
+          return nil if s.split('.').any? { |p| p.size > 1 && p.starts_with?('0') } # leading zeros would be ambiguous (octal)
           fields = Socket::IPAddress.parse_v4_fields?(s) || return nil
           Bytes.new(4) { |i| fields[i] }
         elsif s.includes?(':')
@@ -194,7 +186,6 @@ module Zipfelkasse
       end
     end
 
-    # Whether addr lies in one of the prefixes (IPv4-mapped IPv6 is unmapped).
     def self.contains_addr?(prefixes : Array(Prefix), addr : String) : Bool
       prefixes.any?(&.contains?(addr))
     end

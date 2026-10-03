@@ -27,7 +27,7 @@ module E2E
             db.query("SELECT * FROM \"#{t}\"") do |rs|
               rows = [] of String
               rs.each do
-                rows << (0...rs.column_count).map { |i| "#{rs.column_name(i)}=#{value(rs.read)}" }.join(" | ")
+                rows << (0...rs.column_count).map { |i| column(rs.column_name(i), rs.read) }.join(" | ")
               end
               rows.sort!.each { |row| io << row << "\n" }
             end
@@ -49,6 +49,17 @@ module E2E
           end
         end
       end
+    end
+
+    # *_json columns are compared by content, not by bytes.
+    private def self.column(name : String, v) : String
+      if name.ends_with?("_json") && v.is_a?(String)
+        begin
+          return "#{name}=json:#{Compare.json(JSON.parse(v)).gsub(/\n\s*/, " ")}"
+        rescue JSON::ParseException
+        end
+      end
+      "#{name}=#{value(v)}"
     end
 
     private def self.value(v) : String

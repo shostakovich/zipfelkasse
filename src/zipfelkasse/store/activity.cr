@@ -20,15 +20,14 @@ module Zipfelkasse
     # formatted values).
     record FieldChange, field : String, old : String, new : String
 
-    # The content of activity.details_json. Written like Go's encoding/json
-    # with omitempty on every field.
+    # The content of activity.details_json. Empty fields are left out.
     record ActivityDetails,
-      title : String = "",          # expense title (as of after the action)
-      amount_cents : Int64 = 0_i64, # expense amount
+      title : String = "",                              # expense title (as of after the action)
+      amount_cents : Int64 = 0_i64,                     # expense amount
       changes : Array(FieldChange) = [] of FieldChange, # for expense_updated
-      text : String = "" do         # free-form description for other actions
-      def to_go_json : String
-        GoCompat::JSON.build do |j|
+      text : String = "" do                             # free-form description for other actions
+      def to_json_string : String
+        ::JSON.build do |j|
           j.object do
             j.field "title", title unless title.empty?
             j.field "amount_cents", amount_cents unless amount_cents == 0
@@ -50,7 +49,7 @@ module Zipfelkasse
         end
       end
 
-      # Reads details_json leniently like Go's json.Unmarshal (keys match
+      # Reads details_json leniently (keys match
       # case-insensitively; broken JSON gives empty details).
       def self.parse(json : String) : ActivityDetails
         h = ::JSON.parse(json).as_h? || return new
@@ -71,17 +70,15 @@ module Zipfelkasse
       end
     end
 
-    # An entry in the activity log.
     record Activity,
       id : Int64,
       at : Time?,
-      actor_id : Int64,   # 0 = system
+      actor_id : Int64,    # 0 = system
       actor_name : String, # "" for system
       action : String,
       expense_id : Int64, # 0 = not related to an expense
       details : ActivityDetails
 
-    # Narrows `list_activity`.
     record ActivityFilter,
       expense_id : Int64 = 0_i64, # only entries for this expense
       actor_id : Int64 = 0_i64,   # only entries by this person
@@ -94,15 +91,13 @@ module Zipfelkasse
     # Writes an activity entry in the transaction of the change it describes.
     def insert_activity(tx : DB::Connection, actor_id : Int64, action : String, expense_id : Int64, details : ActivityDetails) : Nil
       tx.exec("INSERT INTO activity (at, actor_id, action, expense_id, details_json) VALUES (?, ?, ?, ?, ?)",
-        now_string, Store.null_int(actor_id), action, Store.null_int(expense_id), details.to_go_json)
+        now_string, Store.null_int(actor_id), action, Store.null_int(expense_id), details.to_json_string)
     end
 
-    # Writes an ACTION_SETTINGS_UPDATED entry with text.
     def log_settings(tx : DB::Connection, actor_id : Int64, text : String) : Nil
       insert_activity(tx, actor_id, ACTION_SETTINGS_UPDATED, 0_i64, ActivityDetails.new(text: text))
     end
 
-    # The newest entries first.
     def list_activity(f : ActivityFilter = ActivityFilter.new) : Array(Activity)
       where = [] of String
       args = [] of DB::Any
@@ -154,7 +149,6 @@ module Zipfelkasse
       out
     end
 
-    # 0 → NULL (IDs).
     def self.null_int(v : Int64) : Int64?
       v == 0 ? nil : v
     end

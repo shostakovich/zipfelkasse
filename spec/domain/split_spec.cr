@@ -161,7 +161,7 @@ describe Zipfelkasse::Domain do
 
   # Not in the Go tests; produced with Go.
   it "parses weights like Go (ParseWeight, WeightDecimals)" do
-    {"5" => 5, " 5 " => 5, "+5" => 5, "-3" => -3, "\u{85}5" => 5}.each do |v, want|
+    {"5" => 5, " 5 " => 5, "+5" => 5, "-3" => -3, "\t5" => 5}.each do |v, want|
       D.parse_weight(D::SPLIT_SHARES, "EUR", v).should eq want
     end
     {"1.5", "", "x", "\xff"}.each do |v|

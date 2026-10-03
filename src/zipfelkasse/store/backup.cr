@@ -3,9 +3,6 @@ module Zipfelkasse
     BACKUP_PREFIX = "zipfelkasse-"
     BACKUP_SUFFIX = ".db"
 
-    # Writes a consistent copy of the database (VACUUM INTO) to
-    # dir/zipfelkasse-YYYYMMDD-HHMMSS.db (UTC) and keeps the newest keep
-    # backups. Returns the path of the new backup.
     def backup(dir : String, keep : Int32) : String
       begin
         Dir.mkdir_p(dir)
@@ -23,7 +20,6 @@ module Zipfelkasse
       path
     end
 
-    # Deletes all backup files in dir except the newest keep.
     def self.rotate_backups(dir : String, keep : Int32) : Nil
       names = Dir.children(dir).select do |n|
         n.starts_with?(BACKUP_PREFIX) && n.ends_with?(BACKUP_SUFFIX) && File.file?(File.join(dir, n))

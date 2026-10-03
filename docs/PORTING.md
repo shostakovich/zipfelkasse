@@ -91,6 +91,12 @@ package.
 
 ## Conventions
 
+### Comments (Robert)
+
+Few comments in code: only where they are really needed (a non-obvious why, a pitfall, a
+constraint). No comments that restate the code, the method name or the Go original, no doc comments
+on every method, no section banners.
+
 ### Layout and names
 
 | Go | Crystal |

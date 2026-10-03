@@ -1,6 +1,6 @@
 module Zipfelkasse
-  # Shutdown signal for background jobs (Go's context cancellation):
-  # `wait(span)` sleeps but returns early (false) once `stop` was called.
+  # Shutdown signal for background jobs: `wait(span)` sleeps but returns
+  # early (false) once `stop` was called.
   class Stopper
     @channel = Channel(Nil).new
 
@@ -12,7 +12,6 @@ module Zipfelkasse
       @channel.closed?
     end
 
-    # Sleeps for span; true if the time passed, false if stopped meanwhile.
     def wait(span : Time::Span) : Bool
       return false if stopped?
       select
@@ -23,7 +22,6 @@ module Zipfelkasse
       end
     end
 
-    # A channel that is closed on stop (for selects of the jobs).
     def done : Channel(Nil)
       @channel
     end

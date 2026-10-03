@@ -1,5 +1,4 @@
 module Zipfelkasse::Domain
-  # An exchange rate in ECB format: `rate` units of the currency equal 1 EUR.
   # `date` is the day the rate applies to (for ECB rates possibly the last
   # banking day before the requested date).
   record FXRate,

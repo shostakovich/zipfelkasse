@@ -2,14 +2,11 @@ require "http/client"
 require "wait_group"
 
 module Zipfelkasse
-  # Number of nightly backups kept.
   BACKUP_KEEP = 7
 
-  # The fully wired application: Deps, the services with background jobs and
-  # the HTTP handler chain.
   class App
     getter d : Web::Deps
-    getter handlers : Array(HTTP::Handler)
+    getter handlers = [] of HTTP::Handler
     # Background jobs: each runs in its own fiber until the stopper fires.
     getter jobs = [] of Proc(Stopper, Nil)
 
@@ -24,8 +21,8 @@ module Zipfelkasse
 
     # Feature packages (fx, recurring, ynab, export, mcp) hook in here:
     # each defines `App.wire_<name>(app, d, mcp)`, which registers routes and
-    # background jobs. Order like Go: fx first (it becomes d.fx), then
-    # recurring, ynab, export, mcp.
+    # background jobs. Order: fx first (it becomes d.fx), then recurring, ynab,
+    # export, mcp.
     def self.wire_features(app : App, d : Web::Deps, mcp : Web::MCPMount) : Nil
       {% for name in %w(fx recurring ynab export mcp) %}
         {% if App.class.has_method?("wire_#{name.id}") %}
@@ -87,8 +84,8 @@ module Zipfelkasse
         log.info("Zipfelkasse running", addr: config.addr, db: config.db_path, tz: config.location_name)
 
         select
-        when ex = served.receive
-          raise ex if ex
+        when err = served.receive
+          raise err if err
         when shutdown.receive?
           log.info("shutting down")
           server.close
@@ -100,8 +97,7 @@ module Zipfelkasse
       end
     end
 
-    # Binds like Go's net.Listen("tcp", addr): ":8080" listens on all
-    # interfaces.
+    # ":8080" listens on all interfaces.
     private def self.listen(server : HTTP::Server, addr : String) : Nil
       host, _, port = addr.rpartition(':')
       host = host.lchop('[').rchop(']')
@@ -119,8 +115,6 @@ module Zipfelkasse
       raise Exception.new("listen tcp #{addr}: #{ex.message}")
     end
 
-    # Writes a backup every night at 03:00 (local time) and keeps the last
-    # BACKUP_KEEP.
     def self.backup_loop(stopper : Stopper, store : Store, config : Config, log : Logger) : Nil
       loop do
         now = Time.local(config.location)
@@ -134,7 +128,6 @@ module Zipfelkasse
       end
     end
 
-    # The next 03:00 after now (in now's zone).
     def self.next_backup(now : Time) : Time
       t = Time.local(now.year, now.month, now.day, 3, 0, 0, location: now.location)
       return t if t > now
@@ -142,7 +135,6 @@ module Zipfelkasse
       Time.local(n.year, n.month, n.day, 3, 0, 0, location: now.location)
     end
 
-    # GET /healthz on the local port.
     def self.healthcheck(addr : String) : Nil
       url = health_url(addr)
       uri = URI.parse(url)

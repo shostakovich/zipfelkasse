@@ -1,20 +1,11 @@
 require "json"
 
-# Go name (package domain) → Crystal name
-# SplitMode (string type)  → Domain::SplitMode (struct wrapping the string; `#value`, `#to_s`)
-# SplitEqual … SplitAmount → Domain::SPLIT_EQUAL … SPLIT_AMOUNT
-# SplitModes               → Domain::SPLIT_MODES
-# SplitMode.Valid          → SplitMode#valid?
 module Zipfelkasse::Domain
-  # Determines how an expense is divided among the participants and what
-  # `Part#weight` means. Any string can be wrapped (unknown modes are invalid,
-  # as in Go).
   record SplitMode, value : String do
     def valid? : Bool
       self.in?(SPLIT_MODES)
     end
 
-    # Returns the German display name.
     def label : String
       case self
       when SPLIT_EQUAL   then "Gleichmäßig"
@@ -46,9 +37,6 @@ module Zipfelkasse::Domain
   # Caps shares so that total * weight cannot overflow.
   private MAX_SHARE_WEIGHT = 1_000_000
 
-  # Parses a person's value for mode as `Part#weight`: shares as an integer,
-  # percent as basis points, amount in the smallest unit of currency; 0 for
-  # equal.
   def parse_weight(mode : SplitMode, currency : String, v : String) : Int64
     case mode
     when SPLIT_SHARES
@@ -63,9 +51,6 @@ module Zipfelkasse::Domain
     end
   end
 
-  # The number of decimal places a value for mode has before it becomes
-  # `Part#weight` (see `parse_weight`): 0 for shares and equal, 2 for percent
-  # (basis points), the currency's decimals for amount.
   def weight_decimals(mode : SplitMode, currency : String) : Int32
     case mode
     when SPLIT_PERCENT then 2
@@ -74,18 +59,14 @@ module Zipfelkasse::Domain
     end
   end
 
-  # An input to `split`: who takes part, with which weight.
   record Part, participant_id : Int64 = 0_i64, weight : Int64 = 0_i64 do
     include JSON::Serializable
   end
 
-  # A person's computed share of an expense.
   record Share, participant_id : Int64 = 0_i64, weight : Int64 = 0_i64, amount_cents : Int64 = 0_i64 do
     include JSON::Serializable
   end
 
-  # Divides total (euro cents, > 0) of an expense entered in euros among parts
-  # according to mode; see `split_converted`.
   def split(mode : SplitMode, total : Int64, parts : Array(Part), rotation : Int64) : Array(Share)
     split_converted(mode, total, total, "EUR", parts, rotation)
   end
@@ -96,10 +77,6 @@ module Zipfelkasse::Domain
   # weights are amounts in currency and must add up to original; total is
   # distributed in proportion to them (for euros the shares are exactly the
   # weights).
-  #
-  # The result is sorted by participant ID and sums to exactly total; the
-  # cents are distributed by `allocate` with rotation (the expense ID).
-  # Raises `ValidationError` for invalid input.
   def split_converted(mode : SplitMode, total : Int64, original : Int64, currency : String,
                       parts : Array(Part), rotation : Int64) : Array(Share)
     raise ValidationError.new("Unbekannte Aufteilungsart „#{mode}“.") unless mode.valid?
@@ -131,8 +108,6 @@ module Zipfelkasse::Domain
         raise ValidationError.new("Die Prozente müssen zusammen 100 % ergeben (aktuell #{format_basis_points(sum)}).")
       end
     when SPLIT_AMOUNT
-      # The weights are >= 0 here; Go checks the running uint64 sum for
-      # overflow past MaxInt64.
       wide = 0_i128
       ps.each do |p|
         wide += p.weight
@@ -160,7 +135,7 @@ module Zipfelkasse::Domain
   # with 128-bit products, so that total · weight cannot overflow. The JS
   # preview (static/expense-form.js) computes the same way.
   def allocate(total : Int64, weights : Array(Int64), rotation : Int64) : Array(Int64)
-    # Go computes in uint64 (wrapping); weights are >= 0 by contract.
+    # Weights are >= 0 by contract.
     sum = weights.reduce(0_u64) { |acc, w| acc &+ w.to_u64! }
     result = Array.new(weights.size, 0_i64)
     return result if sum == 0

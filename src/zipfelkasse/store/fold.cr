@@ -11,8 +11,6 @@ module Zipfelkasse
       s.downcase.gsub("ß", "ss")
     end
 
-    # Registers zipfelkasse_fold on a raw SQLite handle: text and blobs are
-    # folded (and returned as text), NULL stays NULL, numbers pass through.
     def self.register_fold(handle : LibSQLite3::SQLite3) : Nil
       fn = ->(ctx : LibSQLite3::SQLite3Context, _argc : Int32, argv : LibSQLite3::SQLite3Value*) do
         arg = argv[0]

@@ -1,6 +1,6 @@
 module Zipfelkasse
   class Store
-    # A person in the group. People are never deleted, only archived.
+    # People are never deleted, only archived.
     record Participant, id : Int64, name : String, created_at : Time?, archived_at : Time? do
       def archived? : Bool
         !archived_at.nil?
@@ -13,7 +13,6 @@ module Zipfelkasse
       Participant.new(rs.read(Int64), rs.read(String), parse_time(rs.read(String?)), parse_time(rs.read(String?)))
     end
 
-    # People alphabetically, archived ones only on request.
     def list_participants(include_archived = false) : Array(Participant)
       q = "SELECT #{PARTICIPANT_COLS} FROM participants"
       q += " WHERE archived_at IS NULL" unless include_archived
@@ -23,12 +22,11 @@ module Zipfelkasse
       out
     end
 
-    # A person (archived ones too); raises NotFound.
+    # Archived people too; raises NotFound.
     def get_participant(id : Int64) : Participant
       Store.get_participant(@db, id)
     end
 
-    # Reads a person on db or inside a transaction.
     def self.get_participant(db : DB::QueryMethods, id : Int64) : Participant
       db.query("SELECT #{PARTICIPANT_COLS} FROM participants WHERE id = ?", id) do |rs|
         rs.each { return read_participant(rs) }
@@ -36,7 +34,6 @@ module Zipfelkasse
       raise NotFound.new
     end
 
-    # Creates a person, with actor_id as the actor of the activity entry.
     # Duplicate names (case-insensitive) raise a ValidationError.
     def create_participant(actor_id : Int64, name : String) : Int64
       create_participant(actor_id, false, name)
@@ -62,7 +59,6 @@ module Zipfelkasse
       end
     end
 
-    # Renames a person. Only an actual change of the name is logged.
     def rename_participant(actor_id : Int64, id : Int64, name : String) : Nil
       name = Store.clean_name(name, "die Person")
       transaction do |tx|
@@ -100,7 +96,6 @@ module Zipfelkasse
       end
     end
 
-    # Raises NotFound when an UPDATE/DELETE changed no row.
     def self.check_affected(result : DB::ExecResult) : Nil
       raise NotFound.new if result.rows_affected == 0
     end

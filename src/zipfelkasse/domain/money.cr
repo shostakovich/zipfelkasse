@@ -1,10 +1,4 @@
-# Zipfelkasse's pure business logic: money, splitting, balances, settlement
-# and recurrence rules. No IO, no dependencies.
-#
-# Go name (package domain) → Crystal name (module Zipfelkasse::Domain)
-# ValidCurrencyCode        → valid_currency_code?
-# IsEUR                    → eur?
-# (value, error) results   → value, raising ValidationError
+# Pure business logic: no IO, no dependencies.
 module Zipfelkasse::Domain
   extend self
 
@@ -14,8 +8,7 @@ module Zipfelkasse::Domain
   # (10 billion €).
   MAX_AMOUNT_CENTS = 1_000_000_000_000_i64
 
-  # An input error with a German, user-readable message. Handlers show the
-  # message directly in the form.
+  # The German message is shown to the user directly in the form.
   class ValidationError < Exception
     getter msg : String
 
@@ -24,36 +17,28 @@ module Zipfelkasse::Domain
     end
   end
 
-  # Formats cents as a German euro amount: 123456 → "1.234,56 €".
   def format_cents(c : Int64) : String
     format_fixed(c, 2, true) + " €"
   end
 
-  # Formats cents for an input field, without thousands separators and
-  # without currency symbol: 123456 → "1234,56".
   def format_cents_input(c : Int64) : String
     format_fixed(c, 2, false)
   end
 
-  # Formats an amount given in the currency's smallest unit:
-  # (1234, "USD") → "12,34 USD", EUR or "" → "12,34 €".
   def format_money(minor : Int64, currency : String) : String
     return format_cents(minor) if eur?(currency)
     currency = currency.strip.upcase
     format_fixed(minor, currency_decimals(currency), true) + " " + currency
   end
 
-  # Formats basis points as a percentage: 3333 → "33,33 %".
   def format_basis_points(bp : Int64) : String
     format_fixed(bp, 2, false) + " %"
   end
 
-  # Parses a euro amount such as "12,34", "12.34", "1.234,56 €".
   def parse_cents(s : String) : Int64
     parse_minor(s, 2)
   end
 
-  # Parses a percentage such as "33,33" or "50 %" as basis points.
   def parse_basis_points(s : String) : Int64
     s = s.strip.rchop("%").strip
     begin
@@ -63,9 +48,6 @@ module Zipfelkasse::Domain
     end
   end
 
-  # Parses an amount with the given number of decimal places and returns it
-  # in the smallest unit. Both comma and dot are accepted as decimal
-  # separator; thousands separators are recognized.
   def parse_minor(s : String, decimals : Int32) : Int64
     s = s.strip.rchop("€").strip
     raise ValidationError.new("Bitte einen Betrag eingeben.") if s.empty?
@@ -124,7 +106,6 @@ module Zipfelkasse::Domain
       end
       int_part, frac = s[0, dec], s[dec + 1..]
     elsif dots + commas > 1
-      # Only one kind of separator, repeated: thousands separators.
       thousands = commas > 0 ? ',' : '.'
     elsif dots + commas == 1
       pos = Math.max(last_dot, last_comma)
@@ -148,12 +129,7 @@ module Zipfelkasse::Domain
     {neg, int_part, frac}
   end
 
-  # Parses an exchange rate (units of the currency per 1 €) such as "1,0857",
-  # "1.0857", "17000", "17.000,5" or "17,000.5". Separators work as for
-  # amounts (`parse_minor`): a single dot before exactly three digits is a
-  # thousands separator ("17.000" = 17000, "1.085" = 1085), except after a
-  # leading zero ("0.856" = 0,856); otherwise decimals must be given with a
-  # comma or with more/fewer than three digits. Rates ≤ 0 are invalid.
+  # Exchange rate in units of the currency per 1 €; separators as in split_number.
   def parse_rate(s : String) : Float64
     s = s.strip.gsub(' ', "").gsub('\u{A0}', "")
     bad = ValidationError.new("Ungültiger Wechselkurs „#{s}“ – bitte eine Zahl größer als 0 angeben (Einheiten der Währung pro 1 €).")
@@ -166,34 +142,39 @@ module Zipfelkasse::Domain
     v
   end
 
-  # Formats v with the given number of decimals, a comma as decimal separator
-  # and optionally dots as thousands separators.
   private def format_fixed(v : Int64, decimals : Int32, group : Bool) : String
     format_sep(v, decimals, ',', group)
   end
 
-  # Formats v (in units of 10^-decimals) without thousands separators and with
-  # sep as decimal separator: (123456, 2, ',') → "1234,56",
-  # (-5, 2, '.') → "-0.05", (7, 0, '.') → "7".
   def format_decimal(v : Int64, decimals : Int32, sep : Char) : String
     format_sep(v, decimals, sep, false)
   end
 
-  # Formats an amount in the currency's smallest unit for an input field:
-  # (123456, "USD") → "1234,56", (500, "JPY") → "500".
   def format_minor_input(minor : Int64, currency : String) : String
     format_decimal(minor, currency_decimals(currency), ',')
   end
 
-  # Formats an exchange rate with a comma as decimal separator and without
-  # superfluous zeros: 1.0876 → "1,0876". Rates <= 0 (and NaN) yield "".
   def format_rate(rate : Float64) : String
-    return "" unless rate > 0
+    return "" unless rate > 0 && rate.finite?
     plain_decimal(rate).sub('.', ',')
   end
 
-  # Formats v with the given number of decimals and sep as decimal separator;
-  # with group, thousands are separated by dots.
+  # Shortest digits that read back as v, without exponent: 1.0e-7 → "0.0000001".
+  private def plain_decimal(v : Float64) : String
+    mantissa, _, exp = v.to_s.partition('e')
+    int_part, _, frac = mantissa.partition('.')
+    frac = "" if frac == "0"
+    digits = int_part + frac
+    point = int_part.size + (exp.empty? ? 0 : exp.to_i)
+    if point <= 0
+      "0." + "0" * -point + digits
+    elsif point >= digits.size
+      digits + "0" * (point - digits.size)
+    else
+      "#{digits[0, point]}.#{digits[point..]}"
+    end
+  end
+
   private def format_sep(v : Int64, decimals : Int32, sep : Char, group : Bool) : String
     neg = v < 0
     u = neg ? 0_u64 &- v.to_u64! : v.to_u64 # Int64::MIN-safe
@@ -210,20 +191,15 @@ module Zipfelkasse::Domain
     neg ? "-" + str : str
   end
 
-  # Reports whether s is a three-letter upper-case code (ISO 4217 format;
-  # whether the currency exists is not checked).
+  # Format only; whether the currency exists is not checked.
   def valid_currency_code?(s : String) : Bool
     s.bytesize == 3 && s.each_byte.all? { |b| 'A'.ord <= b <= 'Z'.ord }
   end
 
-  # Reports whether currency means euros, i.e. no foreign currency: "" or
-  # "EUR" (case and surrounding spaces ignored).
   def eur?(currency : String) : Bool
     currency.strip.upcase.in?("", "EUR")
   end
 
-  # Returns the number of decimal places of a currency (ISO 4217). Unknown
-  # currencies have 2.
   def currency_decimals(currency : String) : Int32
     case currency.upcase
     when "JPY", "KRW", "ISK", "HUF", "CLP", "VND", "XAF", "XOF", "PYG", "UGX", "IDR"
@@ -235,14 +211,11 @@ module Zipfelkasse::Domain
     end
   end
 
-  # Converts a foreign-currency amount (smallest unit) to euro cents. rate is
-  # given in ECB format: units of foreign currency per 1 EUR. Rounds half away
-  # from zero. For an invalid rate (<= 0, NaN, infinite) the result is 0.
+  # rate is in ECB format: units of foreign currency per 1 EUR.
   def to_eur_cents(minor : Int64, currency : String, rate : Float64) : Int64
     return 0_i64 if rate <= 0 || rate.nan? || rate.infinite?
     scale = 10.0 ** currency_decimals(currency)
     eur = (minor.to_f / scale / rate * 100).round(:ties_away)
-    # Go's int64(float) yields MinInt64 for values out of range (amd64).
     -9.223372036854775808e18 <= eur < 9.223372036854775808e18 ? eur.to_i64 : Int64::MIN
   end
 end

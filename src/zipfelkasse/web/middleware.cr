@@ -7,18 +7,18 @@ module Zipfelkasse::Web
   # Request bodies are limited (forms are a few KB).
   MAX_BODY_BYTES = 1 << 20
 
-  # Standard security headers. CSP: scripts only from /static (no inline
-  # scripts!), inline styles are allowed.
+  # CSP: scripts only from /static (no inline scripts!), inline styles are
+  # allowed.
   class SecurityHeaders
     include HTTP::Handler
 
-    def call(ctx : HTTP::Server::Context)
-      h = ctx.response.headers
+    def call(context : HTTP::Server::Context)
+      h = context.response.headers
       h["X-Content-Type-Options"] = "nosniff"
       h["Referrer-Policy"] = "same-origin"
       h["X-Frame-Options"] = "DENY"
       h["Content-Security-Policy"] = CSP
-      call_next(ctx)
+      call_next(context)
     end
   end
 
@@ -30,12 +30,12 @@ module Zipfelkasse::Web
 
     property endpoint : (HTTP::Server::Context -> Nil)? = nil
 
-    def call(ctx : HTTP::Server::Context)
-      return call_next(ctx) unless ctx.request.path.starts_with?("/mcp/")
+    def call(context : HTTP::Server::Context)
+      return call_next(context) unless context.request.path.starts_with?("/mcp/")
       if ep = @endpoint
-        ep.call(ctx)
+        ep.call(context)
       else
-        Web.text_error(ctx, 404, "404 page not found")
+        Web.text_error(context, 404, "404 page not found")
       end
     end
   end
@@ -49,10 +49,10 @@ module Zipfelkasse::Web
     def initialize(@d : Deps)
     end
 
-    def call(ctx : HTTP::Server::Context)
-      req = ctx.request
+    def call(context : HTTP::Server::Context)
+      req = context.request
       body = req.body
-      return call_next(ctx) if body.nil?
+      return call_next(context) if body.nil?
       length = req.content_length
       too_large = false
       if length
@@ -66,10 +66,10 @@ module Zipfelkasse::Web
         too_large = n > MAX_BODY_BYTES
         req.body = IO::Memory.new(data[0, n]) unless too_large
       end
-      return call_next(ctx) unless too_large
+      return call_next(context) unless too_large
       @d.log.warn("request body too large", method: req.method, path: Web.log_path(req.path), content_length: length || -1)
-      ctx.response.headers["Connection"] = "close"
-      r = Request.new(ctx, @d)
+      context.response.headers["Connection"] = "close"
+      r = Request.new(context, @d)
       if req.path.starts_with?("/api/")
         r.json_error(413, "Die Anfrage ist zu groß.")
       else
@@ -80,19 +80,18 @@ module Zipfelkasse::Web
 
   # Rejects POSTs and the like that a browser sends from a foreign site
   # (Sec-Fetch-Site, or Origin ≠ Host). Requests without these headers (curl)
-  # pass, since they carry no victim's cookie. Same rules as Go's
-  # http.CrossOriginProtection.
+  # pass, since they carry no victim's cookie.
   class CrossOrigin
     include HTTP::Handler
 
     def initialize(@d : Deps)
     end
 
-    def call(ctx : HTTP::Server::Context)
-      return call_next(ctx) if allowed?(ctx.request)
-      req = ctx.request
+    def call(context : HTTP::Server::Context)
+      return call_next(context) if allowed?(context.request)
+      req = context.request
       @d.log.warn("cross-origin request rejected", method: req.method, path: Web.log_path(req.path), origin: req.headers["Origin"]? || "")
-      r = Request.new(ctx, @d)
+      r = Request.new(context, @d)
       if req.path.starts_with?("/api/")
         r.json_error(403, "Anfrage von einer fremden Seite abgelehnt.")
       else
@@ -112,8 +111,6 @@ module Zipfelkasse::Web
     end
   end
 
-  # Reads the identity cookie and puts the person into the context; visitors
-  # without a (valid) person go to /wer, /api/… gets a 401.
   class Identity
     include HTTP::Handler
 
@@ -122,27 +119,27 @@ module Zipfelkasse::Web
     def initialize(@d : Deps)
     end
 
-    def call(ctx : HTTP::Server::Context)
-      req = ctx.request
+    def call(context : HTTP::Server::Context)
+      req = context.request
       if (c = req.cookies[IDENTITY_COOKIE]?) && (id = c.value.to_i64?)
         begin
           p = @d.store.get_participant(id)
           unless p.archived?
-            ctx.zk_me = p
-            return call_next(ctx)
+            context.zk_me = p
+            return call_next(context)
           end
         rescue Store::NotFound
         end
       end
-      return call_next(ctx) if public?(req.path)
+      return call_next(context) if public?(req.path)
       if req.path.starts_with?("/api/")
-        return Request.new(ctx, @d).json_error(401, "Bitte zuerst auswählen, wer du bist.")
+        return Request.new(context, @d).json_error(401, "Bitte zuerst auswählen, wer du bist.")
       end
       target = "/wer"
       if req.method == "GET" && req.path != "/"
         target += "?zurueck=" + URI.encode_www_form(req.resource)
       end
-      Web.redirect(ctx, target, 303)
+      Web.redirect(context, target, 303)
     end
 
     private def public?(path : String) : Bool
@@ -161,7 +158,7 @@ module Zipfelkasse::Web
     decoded = URI.decode(path)
     return "/" if !decoded.starts_with?('/') || decoded.starts_with?("//") || decoded.each_char.any? { |c| unsafe_char?(c) }
     return "/" if decoded.starts_with?("/wer")
-    return "/" unless path.matches?(/\A[^%]*(%[0-9A-Fa-f]{2}[^%]*)*\z/) # url.Parse rejects broken escapes
+    return "/" unless path.matches?(/\A[^%]*(%[0-9A-Fa-f]{2}[^%]*)*\z/) # reject broken escapes
     s
   end
 

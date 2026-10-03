@@ -3,52 +3,40 @@ require "sqlite3"
 require "./lib_sqlite"
 
 module Zipfelkasse
-  # Zipfelkasse's database: schema/migrations, queries, activity log, backup
-  # and the change hook for expenses.
-  #
-  # Feature packages put their queries in src/zipfelkasse/store/<package>.cr
+  # Feature files put their queries in src/zipfelkasse/store/<name>.cr
   # (reopening this class) and use `db` (reads) or `transaction` (writes).
   #
   # Concurrency: all fibers share one Store. Reads go through the connection
-  # pool. Writes go through `transaction`: BEGIN IMMEDIATE like Go, plus a
+  # pool. Writes go through `transaction`: BEGIN IMMEDIATE plus a
   # fiber-aware mutex, because SQLite's busy handler sleeps inside C and would
   # block the only thread while another fiber holds the write lock.
   class Store
-    # A record does not exist (or, for expenses, is already deleted where that
-    # matters).
+    # Also raised for expenses that are already deleted, where that matters.
     class NotFound < Exception
       def initialize(message = "not found")
         super
       end
     end
 
-    # Time format of timestamps in the database (RFC 3339, UTC, seconds).
     TIME_FORMAT = "%Y-%m-%dT%H:%M:%SZ"
 
-    # The migrations/*.sql files, embedded: {number, file name, SQL}.
+    # Embedded at compile time: {number, file name, SQL}.
     MIGRATION_FILES = [] of {Int32, String, String}
     {% for name in system("ls #{__DIR__}/../../../internal/store/migrations").lines.sort %}
       MIGRATION_FILES << Tuple.new({{ name.split("_")[0].to_i }}, {{ name }}, {{ read_file("#{__DIR__}/../../../internal/store/migrations/#{name.id}") }})
     {% end %}
 
-    # Migrations written in Crystal (Go in the original) for data fixes that
-    # SQL alone cannot do. They share the numbering with the SQL files and
-    # register themselves here (see resplit.cr, amountweights.cr,
-    # ynabstate.cr).
+    # Migrations written in Crystal for data fixes that SQL alone cannot do.
+    # They share the numbering with the SQL files and register themselves here.
     GO_MIGRATIONS = {} of Int32 => Proc(Store, DB::Connection, Nil)
 
     getter db : DB::Database
     getter path : String
-    # The clock for timestamps such as created_at (tests replace it).
-    property clock : Proc(Time) = ->{ Time.utc }
+    property clock : Proc(Time) = -> { Time.utc }
 
     @write_lock = Mutex.new # :checked: a nested transaction raises instead of deadlocking
     @hooks = [] of ExpenseChange -> Nil
 
-    # Opens (or creates) the database at path and applies missing
-    # migrations. ":memory:" creates an ephemeral database (tests).
-    # Settings: WAL, foreign_keys=ON, busy_timeout=5s, synchronous=NORMAL,
-    # transactions with BEGIN IMMEDIATE.
     def self.open(path : String) : Store
       memory = path == ":memory:"
       unless memory
@@ -97,7 +85,6 @@ module Zipfelkasse
       @db.close
     end
 
-    # Checks whether the database is reachable (health check).
     def ping : Nil
       @db.scalar("SELECT 1")
     end
@@ -106,8 +93,6 @@ module Zipfelkasse
       @db.scalar("PRAGMA user_version").as(Int64).to_i32
     end
 
-    # Runs the block in a write transaction (BEGIN IMMEDIATE); commits when
-    # it returns, rolls back when it raises.
     def transaction(& : DB::Connection -> T) : T forall T
       @write_lock.synchronize do
         @db.using_connection do |conn|
@@ -124,8 +109,6 @@ module Zipfelkasse
       end
     end
 
-    # Applies all migrations (SQL files and GO_MIGRATIONS) whose number is
-    # greater than PRAGMA user_version, each in its own transaction.
     def migrate : Nil
       migrations = MIGRATION_FILES.map { |n, name, sql| {n, name, sql.as(String?)} }
       GO_MIGRATIONS.each_key { |n| migrations << {n, "%03d (Go)" % n, nil} }
@@ -160,7 +143,6 @@ module Zipfelkasse
       end
     end
 
-    # The current time as stored in the database.
     def now_string : String
       @clock.call.to_utc.to_s(TIME_FORMAT)
     end
@@ -173,25 +155,20 @@ module Zipfelkasse
       Time.parse(s, "%Y-%m-%d", Time::Location::UTC)
     end
 
-    # Timestamp from the database; nil when NULL, empty or unreadable.
     def self.parse_time(s : String?) : Time?
       return nil if s.nil? || s.empty?
       Time.parse_rfc3339(s) rescue nil
     end
 
-    # Whether an error is a UNIQUE or PRIMARY KEY violation.
     def self.unique_violation?(ex : Exception) : Bool
       ex.is_a?(SQLite3::Exception) && ex.code.in?(2067, 1555) # SQLITE_CONSTRAINT_UNIQUE, _PRIMARYKEY
     end
 
-    # --- change hook -----------------------------------------------------------
-
-    # A successfully stored change to an expense. action is
-    # ACTION_EXPENSE_CREATED, ACTION_EXPENSE_UPDATED or ACTION_EXPENSE_DELETED.
+    # action is ACTION_EXPENSE_CREATED, _UPDATED or _DELETED.
     record ExpenseChange, expense_id : Int64, action : String
 
-    # Registers a callback that runs after every successful commit of an
-    # expense change, in the caller's fiber. It must not block.
+    # Runs after every successful commit of an expense change, in the caller's
+    # fiber; it must not block.
     def on_expense_change(&block : ExpenseChange -> Nil) : Nil
       @hooks << block
     end
@@ -200,15 +177,10 @@ module Zipfelkasse
       @hooks.dup.each(&.call(change))
     end
 
-    # --- names -----------------------------------------------------------------
-
-    # A person's or category's name as stored: surrounding spaces removed,
-    # inner runs of whitespace collapsed to one.
     def self.normalize_name(name : String) : String
       name.split.join(" ")
     end
 
-    # Validates and normalizes names of people/categories.
     def self.clean_name(name : String, what : String) : String
       name = normalize_name(name)
       raise Domain::ValidationError.new("Bitte einen Namen für #{what} angeben.") if name.empty?

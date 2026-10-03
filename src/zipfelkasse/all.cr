@@ -1,5 +1,5 @@
 # Everything except the entry point; specs require this file.
-require "./go_compat/*"
+require "json"
 require "./domain/*"
 require "./config/*"
 require "./logger"

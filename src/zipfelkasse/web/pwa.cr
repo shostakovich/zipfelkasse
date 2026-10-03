@@ -7,13 +7,12 @@ module Zipfelkasse::Web
 
   class Handlers
     # The web app manifest (public, so that installing works even before a
-    # person is selected). The name is the group name. Keys sorted like Go's
-    # map encoding, icon objects in struct order.
+    # person is selected). The name is the group name.
     def manifest(r : Request) : Nil
       name = @d.store.group_name
       r.response.headers["Content-Type"] = "application/manifest+json; charset=utf-8"
       r.response.headers["Cache-Control"] = "no-cache"
-      GoCompat::JSON.encode(r.response) do |j|
+      JSON.build(r.response) do |j|
         j.object do
           j.field "background_color", "#ffffff"
           j.field "description", "Gemeinsame Ausgaben teilen"

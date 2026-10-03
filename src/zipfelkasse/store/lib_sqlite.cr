@@ -2,7 +2,7 @@ require "sqlite3"
 
 # C functions of SQLite that crystal-sqlite3 does not bind.
 lib LibSQLite3
-  SQLITE_UTF8          = 1
+  SQLITE_UTF8          =     1
   SQLITE_DETERMINISTIC = 0x800
 
   SQLITE_INTEGER = 1

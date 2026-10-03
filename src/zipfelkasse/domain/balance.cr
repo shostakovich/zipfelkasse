@@ -3,8 +3,7 @@ module Zipfelkasse::Domain
   # entries: payer = whoever pays back, single share = recipient.
   record Entry, paid_by : Int64, amount_cents : Int64, shares : Array(Share)
 
-  # Computes each person's balance in cents: positive = is owed money,
-  # negative = owes money. All balances sum to 0.
+  # Positive = is owed money, negative = owes money. All balances sum to 0.
   def balances(entries : Array(Entry)) : Hash(Int64, Int64)
     entries.each_with_object({} of Int64 => Int64) do |e, b|
       b[e.paid_by] = b.fetch(e.paid_by, 0_i64) + e.amount_cents
@@ -12,13 +11,11 @@ module Zipfelkasse::Domain
     end
   end
 
-  # A suggested payment: `from` pays `amount_cents` to `to`.
   record Transfer, from : Int64, to : Int64, amount_cents : Int64
 
-  # Returns a settlement suggestion (greedy): the largest debtor pays the
-  # largest creditor until everything is settled. Ties are broken by the
-  # smaller ID, so the result is deterministic. The input is not modified.
-  # IDs must be > 0 (0 means "none", as in Go).
+  # Greedy: the largest debtor pays the largest creditor until everything is
+  # settled. Ties are broken by the smaller ID, so the result is deterministic.
+  # IDs must be > 0 (0 means "none").
   def settle(balances : Hash(Int64, Int64)) : Array(Transfer)
     b = balances.reject { |_, v| v == 0 }
     transfers = [] of Transfer

@@ -3,7 +3,7 @@ require "uri"
 require "base64"
 
 class HTTP::Server::Context
-  # The selected person (set by the identity middleware).
+  # Set by the identity middleware.
   property zk_me : Zipfelkasse::Store::Participant? = nil
 end
 
@@ -25,19 +25,17 @@ module Zipfelkasse::Web
     abstract def rate(currency : String, date : Time) : Domain::FXRate
   end
 
-  # The shared dependencies of all HTTP packages.
   class Deps
     getter config : Config
     getter store : Store
     getter render : Renderer
     getter log : Logger
-    # Exchange rates (FX::Service); nil until main has created it.
+    # nil until the fx feature is wired.
     property fx : FXRater? = nil
 
     def initialize(@config, @store, @render, @log)
     end
 
-    # Today's date in the configured time zone.
     def today : Time
       @config.today
     end
@@ -60,7 +58,6 @@ module Zipfelkasse::Web
     end
   end
 
-  # A request with the helpers handlers need.
   class Request
     getter ctx : HTTP::Server::Context
     getter d : Deps
@@ -88,7 +85,7 @@ module Zipfelkasse::Web
       @ctx.zk_me
     end
 
-    # The path parameter :id (Go's PathID): invalid or <= 0 gives 0.
+    # Invalid or <= 0 gives 0.
     def path_id : Int64
       Web.form_id(@ctx.params.url["id"]? || "", trim: false)
     end
@@ -101,34 +98,28 @@ module Zipfelkasse::Web
       @ctx.params.query
     end
 
-    # Go's PostFormValue: the first value from the request body.
+    # The first value from the request body only.
     def post_form_value(name : String) : String
       body_params[name]? || ""
     end
 
-    # All values of a field from the request body (e.g. several "teil").
     def post_form_values(name : String) : Array(String)
       body_params.fetch_all(name)
     end
 
-    # The urlencoded (or multipart) form in the request body.
     def body_params : URI::Params
       @ctx.params.body
     end
 
-    # Go's FormValue: body first, then the URL query.
+    # Body first, then the URL query.
     def form_value(name : String) : String
       body_params[name]? || query(name)
     end
 
-    # --- responses ---------------------------------------------------------------
-
-    # Renders a page in the layout (see Renderer#page).
     def page(status : Int32, page : Page, & : IO ->) : Nil
       @d.render.page(self, status, page) { |io| yield io }
     end
 
-    # The German error page with status.
     def error(status : Int32, message : String) : Nil
       @d.render.error(self, status, message)
     end
@@ -137,32 +128,27 @@ module Zipfelkasse::Web
       error(404, message)
     end
 
-    # Logs err and renders the 500 page.
     def server_error(ex : Exception) : Nil
       @d.log.error("request", method: method, path: Web.log_path(path), err: ex)
       error(500, "Da ist etwas schiefgegangen.")
     end
 
-    # A redirect like Go's http.Redirect (303 unless given): the path is
-    # cleaned; GET and HEAD get a tiny HTML body.
+    # The path is cleaned; GET and HEAD get a tiny HTML body.
     def redirect(url : String, status = 303) : Nil
       Web.redirect(@ctx, url, status)
     end
 
-    # JSON written like Go's json.NewEncoder(w).Encode (HTML characters
-    # escaped, trailing newline).
-    def json(status : Int32, & : GoCompat::JSON::Builder ->) : Nil
+    def json(status : Int32, & : JSON::Builder ->) : Nil
       response.content_type = "application/json; charset=utf-8"
       response.status_code = status
-      GoCompat::JSON.encode(response) { |j| yield j }
+      JSON.build(response) { |j| yield j }
+      response.puts
     end
 
-    # {"error": message}
     def json_error(status : Int32, message : String) : Nil
       json(status) { |j| j.object { j.field "error", message } }
     end
 
-    # Plain text like Go's http.Error.
     def text_error(status : Int32, message : String) : Nil
       Web.text_error(@ctx, status, message)
     end
@@ -185,7 +171,6 @@ module Zipfelkasse::Web
       end
     end
 
-    # Sets the identity cookie for person id (valid for 1 year).
     def set_identity(id : Int64) : Nil
       secure = request.headers["X-Forwarded-Proto"]? == "https"
       response.cookies << HTTP::Cookie.new(IDENTITY_COOKIE, id.to_s, path: "/", max_age: (365 * 24 * 3600).seconds,
@@ -193,8 +178,7 @@ module Zipfelkasse::Web
     end
   end
 
-  # An ID from a form or query value (Go's formID): invalid or <= 0 gives 0.
-  # Like strconv.ParseInt it accepts a leading sign and leading zeros.
+  # Invalid or <= 0 gives 0.
   def self.form_id(v : String, trim = true) : Int64
     v = v.strip if trim
     return 0_i64 unless v.matches?(/\A[+-]?\d+\z/)
@@ -207,7 +191,6 @@ module Zipfelkasse::Web
     p.starts_with?("/mcp/") ? "/mcp/***" : p
   end
 
-  # Plain text like Go's http.Error.
   def self.text_error(ctx : HTTP::Server::Context, status : Int32, message : String) : Nil
     res = ctx.response
     res.headers.delete("Content-Length")
@@ -228,8 +211,7 @@ module Zipfelkasse::Web
     end
   end
 
-  # path.Clean of the path part, like Go's http.Redirect (query and fragment
-  # are kept, a trailing slash too).
+  # Normalizes the path part; query, fragment and a trailing slash are kept.
   def self.clean_redirect(url : String) : String
     return url unless url.starts_with?('/')
     cut = url.index(/[?#]/) || url.size

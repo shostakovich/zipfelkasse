@@ -130,7 +130,7 @@ describe Zipfelkasse::Domain do
       "2026-00-10"              => "Ungültiges Datum „2026-00-10“.",
       "2026-13-01"              => "Ungültiges Datum „2026-13-01“.",
       "00.01.2026"              => "Ungültiges Datum „00.01.2026“.",
-      "\u{85}2026-10-02\u{a0}"  => "2026-10-02",
+      "\t2026-10-02\u{a0}"      => "2026-10-02",
       "123.1.2026"              => "Ungültiges Datum „123.1.2026“.",
       "2026-10-02x"             => "Ungültiges Datum „2026-10-02x“.",
       "\u{ff11}\u{ff12}.1.2026" => "Ungültiges Datum „\u{ff11}\u{ff12}.1.2026“.",
