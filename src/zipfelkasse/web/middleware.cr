@@ -116,7 +116,7 @@ module Zipfelkasse::Web
       if site = req.headers["Sec-Fetch-Site"]?.presence
         return site.in?("same-origin", "none")
       end
-      origin = req.headers["Origin"]? || return true
+      origin = req.headers["Origin"]?.presence || return true
       URI.parse(origin).authority == req.headers["Host"]?
     rescue URI::Error
       false

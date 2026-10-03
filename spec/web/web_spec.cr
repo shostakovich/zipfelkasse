@@ -121,6 +121,7 @@ describe Zipfelkasse::Web do
       post.call(HTTP::Headers{"Origin" => "https://evil.example"}).status_code.should eq 403
       post.call(HTTP::Headers{"Sec-Fetch-Site" => "same-origin", "Origin" => "http://example.com"}).status_code.should eq 303
       post.call(HTTP::Headers.new).status_code.should eq 303
+      post.call(HTTP::Headers{"Origin" => ""}).status_code.should eq 303
     end
   end
 
