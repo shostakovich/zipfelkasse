@@ -2,8 +2,8 @@ module Zipfelkasse::FX
   record RateRow,
     currency : String,
     date : Time,
-    rate : String,      # German format, e.g. "1,1298"
-    source : String,    # display label: "EZB", "manuell", …
+    rate : String,       # German format, e.g. "1,1298"
+    source : String,     # display label: "EZB", "manuell", …
     title : String = "", # used rates: title of the expense
     id : Int64 = 0_i64   # used rates: the expense
 
