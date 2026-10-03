@@ -6,29 +6,26 @@ module Zipfelkasse::YNAB
   record CategoryOption, id : String, name : String
   record GroupOption, name : String, categories : Array(CategoryOption)
   record CategoryRow, id : Int64, name : String, archived : Bool,
-    selected : String, # YNAB category ID or ""
-    missing : Bool     # the mapped YNAB category no longer exists
+    selected : String?, # YNAB category ID
+    missing : Bool      # the mapped YNAB category no longer exists
 
   # What the page shows. It deliberately never contains the token.
-  class PageData
-    property? token_set = false
-    property? token_invalid = false
-    property api_error = "" # YNAB unreachable or similar (the page stays usable)
-    property plans = [] of PlanOption
-    property plan_name = ""
-    property account_name = ""
-    property currency = "" # of the selected plan, if not EUR
-    property? has_target = false
-    property start_date : Time? = nil
-    property categories = [] of CategoryRow
-    property groups = [] of GroupOption
-    property? ready = false
-    property status = Status.new
-    property retry_at : Time? = nil # only if in the future
-    property synced = 0
-    property problems = [] of Store::YNABSyncProblem
-    property balance = 0_i64 # own balance in the app
-  end
+  record PageData,
+    token_set : Bool,
+    token_invalid : Bool,
+    api_error : String?, # YNAB unreachable or similar (the page stays usable)
+    plans : Array(PlanOption),
+    currency : String?, # of the selected plan, if not EUR
+    has_target : Bool,
+    start_date : String,
+    categories : Array(CategoryRow),
+    groups : Array(GroupOption),
+    ready : Bool,
+    status : Status,
+    retry_at : Time?, # only if in the future
+    synced : Int32,
+    problems : Array(Store::YNABSyncProblem),
+    balance : Int64 # own balance in the app
 
   # Open, non-deleted on-budget accounts (only there can expenses be
   # categorized).
@@ -72,79 +69,83 @@ module Zipfelkasse::YNAB
     names
   end
 
-  class Service
-    include Web::Helpers
+  module Views
+    record Index, data : PageData do
+      Web.view "ynab/index.ecr"
+    end
+  end
 
-    def register : Nil
-      Web.route(@d, "GET", PAGE_PATH) { |r| render(r, 200, "", r.query("neu") == "1") }
-      Web.route(@d, "POST", PAGE_PATH + "/token") { |r| save_token(r) }
-      Web.route(@d, "POST", PAGE_PATH + "/trennen") { |r| disconnect(r) }
-      Web.route(@d, "POST", PAGE_PATH + "/konto") { |r| save_target(r) }
-      Web.route(@d, "POST", PAGE_PATH + "/kategorien") { |r| save_categories(r) }
-      Web.route(@d, "POST", PAGE_PATH + "/sync") { |r| sync_now(r) }
+  class Handlers < Web::Controller
+    def initialize(deps : Web::Deps, @service : Service)
+      super(deps)
     end
 
-    private def config_of(participant_id : Int64) : Store::YNABConfig?
-      @d.store.get_ynab_config?(participant_id)
+    def register : Nil
+      get(PAGE_PATH) { |env| show(env, 200, nil, env.query("neu") == "1") }
+      post(PAGE_PATH + "/token") { |env| save_token(env) }
+      post(PAGE_PATH + "/trennen") { |env| disconnect(env) }
+      post(PAGE_PATH + "/konto") { |env| save_target(env) }
+      post(PAGE_PATH + "/kategorien") { |env| save_categories(env) }
+      post(PAGE_PATH + "/sync") { |env| sync_now(env) }
     end
 
     # refresh reloads plans and categories from YNAB instead of the cache.
-    private def render(r : Web::Request, status : Int32, error : String, refresh : Bool) : Nil
-      me = r.me
-      cfg = config_of(me.id) || YNAB.empty_config(me.id)
-      data = PageData.new
-      data.token_set = !cfg.token.empty?
-      data.start_date = cfg.start_date || today
-      data.ready = cfg.ready?
-      data.has_target = !cfg.account_id.empty?
-      data.status = load_status(me.id)
-      data.token_invalid = data.token_set? && data.status.token_invalid?
-      data.retry_at = data.status.retry_at.try { |t| t if t > @now.call }
-      data.synced, data.problems = @d.store.ynab_sync_summary(me.id)
-      data.balance = @d.store.balances[me.id]? || 0_i64
-
-      if data.token_set? && !data.token_invalid?
+    private def show(env : HTTP::Server::Context, status : Int32, error : String?, refresh : Bool) : String
+      me = env.me
+      config = @d.store.get_ynab_config?(me.id) || YNAB.empty_config(me.id)
+      token_set = !config.token.empty?
+      state = @service.load_status(me.id)
+      token_invalid = token_set && state.token_invalid?
+      plans = [] of PlanOption
+      groups = [] of GroupOption
+      currency = api_error = nil
+      if token_set && !token_invalid
         begin
-          fill_plans(data, plans(cfg.token, refresh), cfg)
+          plans, currency = plan_options(@service.plans(config.token, refresh), config)
         rescue ex
-          data.api_error = api_message(ex, cfg.token)
+          api_error = api_message(ex, config.token)
         end
-        if !cfg.plan_id.empty? && data.api_error.empty?
+        if !config.plan_id.empty? && api_error.nil?
           begin
-            data.groups = YNAB.usable_groups(categories(cfg.token, cfg.plan_id, refresh))
+            groups = YNAB.usable_groups(@service.categories(config.token, config.plan_id, refresh))
           rescue ex
-            data.api_error = api_message(ex, cfg.token)
+            api_error = api_message(ex, config.token)
           end
         end
       end
-      data.categories = category_rows(me.id, data.groups) if data.has_target?
-      r.page(status, Web::Page.new(title: "YNAB", nav: Web::NAV_SETTINGS, error: error)) do |__io__|
-        Web.template __io__, "ynab/ynab.ecr"
-      end
+      has_target = !config.account_id.empty?
+      synced, problems = @d.store.ynab_sync_summary(me.id)
+      data = PageData.new(token_set: token_set, token_invalid: token_invalid, api_error: api_error, plans: plans,
+        currency: currency, has_target: has_target, start_date: Store.format_date(config.start_date || @service.today),
+        categories: has_target ? category_rows(me.id, groups) : [] of CategoryRow, groups: groups, ready: config.ready?,
+        status: state, retry_at: state.retry_at.try { |t| t if t > @service.now.call }, synced: synced, problems: problems,
+        balance: @d.store.balances[me.id]? || 0_i64)
+      page(env, Views::Index.new(data), "YNAB", Web::Nav::Settings, status, error)
     end
 
-    private def fill_plans(data : PageData, plans : Array(APIPlan), cfg : Store::YNABConfig) : Nil
-      plans.each do |p|
-        accounts = YNAB.usable_accounts(p).map do |a|
-          selected = p.id == cfg.plan_id && a.id == cfg.account_id
-          if selected
-            data.plan_name, data.account_name = p.name, a.name
-            data.currency = p.currency unless p.currency.empty? || p.currency == "EUR"
-          end
-          AccountOption.new(p.id + "|" + a.id, a.name, selected)
+    # The selectable accounts per plan, and the currency of the selected plan
+    # if it is not EUR.
+    private def plan_options(plans : Array(APIPlan), config : Store::YNABConfig) : {Array(PlanOption), String?}
+      currency = nil
+      options = plans.compact_map do |plan|
+        accounts = YNAB.usable_accounts(plan).map do |account|
+          selected = plan.id == config.plan_id && account.id == config.account_id
+          currency = plan.currency if selected && !plan.currency.empty? && plan.currency != "EUR"
+          AccountOption.new(plan.id + "|" + account.id, account.name, selected)
         end
-        data.plans << PlanOption.new(p.name, accounts) unless accounts.empty?
+        PlanOption.new(plan.name, accounts) unless accounts.empty?
       end
+      {options, currency}
     end
 
     private def category_rows(participant_id : Int64, groups : Array(GroupOption)) : Array(CategoryRow)
-      m = @d.store.ynab_category_map(participant_id)
+      mapping = @d.store.ynab_category_map(participant_id)
       known = YNAB.known_categories(groups)
-      @d.store.list_categories(true).compact_map do |c|
-        selected = m[c.id]? || ""
-        next if c.archived? && selected.empty?
-        CategoryRow.new(c.id, c.name, c.archived?, selected,
-          !selected.empty? && !groups.empty? && !known.includes?(selected))
+      @d.store.list_categories(true).compact_map do |category|
+        selected = mapping[category.id]?.presence
+        next if category.archived? && selected.nil?
+        CategoryRow.new(category.id, category.name, category.archived?, selected,
+          !selected.nil? && !groups.empty? && !known.includes?(selected))
       end
     end
 
@@ -153,110 +154,109 @@ module Zipfelkasse::YNAB
       "YNAB ist gerade nicht erreichbar: " + YNAB.redact(ex.message || "", token)
     end
 
-    private def done(r : Web::Request, message : String) : Nil
-      r.set_flash(message)
-      r.redirect(PAGE_PATH)
+    private def done(env : HTTP::Server::Context, message : String) : String
+      redirect(env, PAGE_PATH, message)
     end
 
     # Checks the token with a request to YNAB and stores it. If the chosen
     # plan is not among the token's plans (token of another YNAB user), plan
     # and account are reset and have to be chosen anew.
-    private def save_token(r : Web::Request) : Nil
-      me = r.me
-      token = r.form_value("token").strip
+    private def save_token(env : HTTP::Server::Context) : String
+      me = env.me
+      token = env.form("token").strip
       if token.empty?
-        return render(r, 422, "Bitte einen Token eingeben.", false)
+        return show(env, 422, "Bitte einen Token eingeben.", false)
       elsif token.bytesize > 200 || token.each_char.any?(&.in?(' ', '\t', '\r', '\n'))
-        return render(r, 422, "Das sieht nicht wie ein YNAB-Token aus.", false)
+        return show(env, 422, "Das sieht nicht wie ein YNAB-Token aus.", false)
       end
       plans = begin
-        plans(token, true)
+        @service.plans(token, true)
       rescue ex
-        msg = YNAB.status_of(ex) == 401 ? "YNAB kennt diesen Token nicht. Bitte prüfen und neu kopieren." : api_message(ex, token)
-        return render(r, 422, msg, false)
+        message = YNAB.status_of(ex) == 401 ? "YNAB kennt diesen Token nicht. Bitte prüfen und neu kopieren." : api_message(ex, token)
+        return show(env, 422, message, false)
       end
       reachable = ->(plan_id : String) { plans.any?(&.id.==(plan_id)) }
       # also resets the rate-limit pause and old errors of the old token
-      reset_target = change_connection { @d.store.set_ynab_token(me.id, token, reachable) }
+      reset_target = @service.change_connection { @d.store.set_ynab_token(me.id, token, reachable) }
       if reset_target
-        return done(r, "Token gespeichert. Der bisher gewählte Plan ist mit diesem Token nicht erreichbar – bitte Plan und Konto neu wählen.")
+        return done(env, "Token gespeichert. Der bisher gewählte Plan ist mit diesem Token nicht erreichbar – bitte Plan und Konto neu wählen.")
       end
-      trigger
-      done(r, "Token gespeichert.")
+      @service.trigger
+      done(env, "Token gespeichert.")
     end
 
-    private def disconnect(r : Web::Request) : Nil
-      me = r.me
-      change_connection { @d.store.set_ynab_token(me.id, "") }
-      done(r, "YNAB-Verbindung getrennt. Die Buchungen in YNAB bleiben erhalten.")
+    private def disconnect(env : HTTP::Server::Context) : String
+      me = env.me
+      @service.change_connection { @d.store.set_ynab_token(me.id, "") }
+      done(env, "YNAB-Verbindung getrennt. Die Buchungen in YNAB bleiben erhalten.")
     end
 
-    private def save_target(r : Web::Request) : Nil
-      me = r.me
-      cfg = config_of(me.id)
-      return render(r, 422, "Bitte zuerst einen Token eingeben.", false) if cfg.nil? || cfg.token.empty?
-      plan_id, _, account_id = r.form_value("ziel").partition('|')
+    private def save_target(env : HTTP::Server::Context) : String
+      me = env.me
+      config = @d.store.get_ynab_config?(me.id)
+      return show(env, 422, "Bitte zuerst einen Token eingeben.", false) if config.nil? || config.token.empty?
+      plan_id, _, account_id = env.form("ziel").partition('|')
       start = begin
-        Domain.parse_date(r.form_value("start"))
+        Domain.parse_date(env.form("start"))
       rescue Domain::ValidationError
-        return render(r, 422, "Bitte ein gültiges Startdatum angeben.", false)
+        return show(env, 422, "Bitte ein gültiges Startdatum angeben.", false)
       end
       plans = begin
-        plans(cfg.token, false)
+        @service.plans(config.token, false)
       rescue ex
-        return render(r, 502, api_message(ex, cfg.token), false)
+        return show(env, 502, api_message(ex, config.token), false)
       end
-      return render(r, 422, "Bitte Plan und Konto auswählen.", false) unless YNAB.account_exists?(plans, plan_id, account_id)
+      return show(env, 422, "Bitte Plan und Konto auswählen.", false) unless YNAB.account_exists?(plans, plan_id, account_id)
       plan_name, account_name = YNAB.target_names(plans, plan_id, account_id)
-      change_connection do
+      @service.change_connection do
         @d.store.set_ynab_target(me.id, Store::YNABTarget.new(plan_id, account_id, plan_name, account_name, start))
       end
-      trigger
-      done(r, "Gespeichert.")
+      @service.trigger
+      done(env, "Gespeichert.")
     end
 
-    private def save_categories(r : Web::Request) : Nil
-      me = r.me
-      cfg = config_of(me.id)
-      if cfg.nil? || cfg.token.empty? || cfg.plan_id.empty?
-        return render(r, 422, "Bitte zuerst Token, Plan und Konto einrichten.", false)
+    private def save_categories(env : HTTP::Server::Context) : String
+      me = env.me
+      config = @d.store.get_ynab_config?(me.id)
+      if config.nil? || config.token.empty? || config.plan_id.empty?
+        return show(env, 422, "Bitte zuerst Token, Plan und Konto einrichten.", false)
       end
       groups = begin
-        categories(cfg.token, cfg.plan_id, false)
+        @service.categories(config.token, config.plan_id, false)
       rescue ex
-        return render(r, 502, api_message(ex, cfg.token), false)
+        return show(env, 502, api_message(ex, config.token), false)
       end
       known = YNAB.known_categories(YNAB.usable_groups(groups))
       old = @d.store.ynab_category_map(me.id)
-      m = {} of Int64 => String
+      mapping = {} of Int64 => String
       seen = Set(String).new
-      r.body_params.each do |key, v|
+      env.params.body.each do |key, value|
         next unless seen.add?(key) && key.starts_with?("kat-")
         id = key.lchop("kat-").to_i64?(whitespace: false) || next
         # Unknown IDs are allowed only if they were mapped already (category
         # deleted or hidden in YNAB: do not silently lose the mapping).
-        if !v.empty? && !known.includes?(v) && old[id]? != v
-          return render(r, 422, "Unbekannte YNAB-Kategorie. Bitte die Seite neu laden.", false)
+        if !value.empty? && !known.includes?(value) && old[id]? != value
+          return show(env, 422, "Unbekannte YNAB-Kategorie. Bitte die Seite neu laden.", false)
         end
-        m[id] = v
+        mapping[id] = value
       end
       begin
-        @d.store.set_ynab_category_map(me.id, m, YNAB.category_names(groups))
+        @d.store.set_ynab_category_map(me.id, mapping, YNAB.category_names(groups))
       rescue ex : Domain::ValidationError
-        return render(r, 422, ex.msg, false)
+        return show(env, 422, ex.msg, false)
       end
-      trigger
-      done(r, "Kategorie-Zuordnung gespeichert.")
+      @service.trigger
+      done(env, "Kategorie-Zuordnung gespeichert.")
     end
 
     # Starts a full sync in the background and redirects right away; the
     # status shows the result after reloading.
-    private def sync_now(r : Web::Request) : Nil
-      me = r.me
-      cfg = config_of(me.id)
-      return render(r, 422, NOT_READY_MESSAGE, false) unless cfg && cfg.ready?
-      sync_in_background(me.id)
-      done(r, "Synchronisierung gestartet – Status unten aktualisiert sich nach dem Neuladen.")
+    private def sync_now(env : HTTP::Server::Context) : String
+      me = env.me
+      config = @d.store.get_ynab_config?(me.id)
+      return show(env, 422, NOT_READY_MESSAGE, false) unless config && config.ready?
+      @service.sync_in_background(me.id)
+      done(env, "Synchronisierung gestartet – Status unten aktualisiert sich nach dem Neuladen.")
     end
   end
 end

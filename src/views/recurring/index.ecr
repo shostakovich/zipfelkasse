@@ -1,9 +1,8 @@
-
 <section class="card">
   <div class="card-header">
     <h1 class="card-title">Wiederkehrende Ausgaben</h1>
     <p class="card-description">Eine wiederkehrende Ausgabe legst du bei einer bestehenden Ausgabe über
-      „Wiederkehrend machen“ an. Fällige Termine werden automatisch als Ausgaben eingetragen – auch verpasste.
+      „Als wiederkehrend einrichten“ an. Fällige Termine werden automatisch als Ausgaben eingetragen – auch verpasste.
       Gibt es an einem Termin schon eine Ausgabe mit gleichem Titel, Betrag und Zahler, wird er übersprungen.
       Pausierte Termine werden beim Fortsetzen nicht nachgeholt.</p>
   </div>
@@ -15,12 +14,13 @@
           <tr><th>Ausgabe</th><th>Betrag</th><th>Nächster Termin</th><th><span class="sr-only">Aktionen</span></th></tr>
         </thead>
         <tbody>
-        <%- rules.each do |rule, paid_by_name| %>
+        <%- rules.each do |row| %>
+          <%- rule = row.rule %>
           <tr>
             <td>
               <div class="stack-sm">
                 <strong><%= rule.template.title %></strong>
-                <span class="muted"><%= Web.frequency_label(rule.frequency) %> seit <%= date rule.start_date %><% unless paid_by_name.empty? %> · zahlt <%= paid_by_name %><% end %></span>
+                <span class="muted"><%= Web.frequency_label(rule.frequency) %> seit <%= date rule.start_date %><% if name = row.paid_by_name %> · zahlt <%= name %><% end %></span>
               </div>
             </td>
             <td class="amount">

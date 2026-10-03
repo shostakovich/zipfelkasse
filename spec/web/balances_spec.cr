@@ -23,7 +23,7 @@ describe "balances page" do
       body.should contain %(<a href="/salden" aria-current="page">)
       body.should contain "<strong>Ben</strong> schuldet <strong>Anna</strong>"
       body.should contain %(href="/ausgaben/neu?an=#{f.anna}&betrag=1000&rueckzahlung=1&von=#{f.ben}")
-      ["20,00 €", "-10,00 €", "width: 100%", "width: 50%"].each { |want| body.should contain want }
+      ["20,00 €", "-10,00 €", %(data-width="100"), %(data-width="50")].each { |want| body.should contain want }
       body.should contain %(<div class="balance-row me">)
       body.should contain %(<div class="balance-row negative-row">)
 

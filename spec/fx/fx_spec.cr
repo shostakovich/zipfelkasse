@@ -20,7 +20,7 @@ end
 
 # Today is Friday, 2026-10-02, 12:00 (the day's rates are not yet published).
 private def new_service(store : Zipfelkasse::Store, fake : FXSpec::FakeECB) : FX::Service
-  d = Zipfelkasse::Web::Deps.new(fx_config(fake), store, Zipfelkasse::Web::Renderer.new(store))
+  d = Zipfelkasse::Web::Deps.new(fx_config(fake), store)
   service = FX::Service.new(d)
   service.clock = -> { at("2026-10-02 12:00") }
   service
@@ -309,10 +309,10 @@ describe "FX handlers" do
   it "answers GET /api/kurs" do
     with_fx_server do |srv, _, me|
       {
-        {"/api/kurs?waehrung=USD&datum=2026-10-01", 200, %({"currency":"USD","date":"2026-10-01","rate":1.1298,"source":"ezb"}\n)},
+        {"/api/kurs?waehrung=USD&datum=2026-10-01", 200, %({"currency":"USD","date":"2026-10-01","rate":1.1298,"source":"ezb"})},
         {"/api/kurs?waehrung=usd&datum=01.10.2026", 200, %("rate":1.1298)},
         {"/api/kurs?waehrung=USD", 200, %("date":"2026-10-01")},
-        {"/api/kurs?waehrung=EUR", 200, %({"currency":"EUR","date":"2026-10-02","rate":1,"source":"fest"}\n)},
+        {"/api/kurs?waehrung=EUR", 200, %({"currency":"EUR","date":"2026-10-02","rate":1.0,"source":"fest"})},
         {"/api/kurs", 400, %("error":"Bitte eine Währung angeben.")},
         {"/api/kurs?waehrung=US1", 400, %({"error":"Ungültige Währung „US1“."})},
         {"/api/kurs?waehrung=USD&datum=gestern", 400, %("error")},

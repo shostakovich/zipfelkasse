@@ -41,7 +41,7 @@ module E2E
     def flash : String?
       c = @cookies["flash"]?
       return nil if c.nil? || c.value.empty?
-      Base64.decode_string(c.value)
+      URI.decode_www_form(c.value)
     end
 
     # The text of the error alert (`role="alert"`), if any.

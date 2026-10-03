@@ -1,5 +1,5 @@
 module Zipfelkasse::Web
-  class Handlers
+  module Views
     record ParticipantRow, participant : Store::Participant, balance : Int64, expenses : Int32 do
       delegate id, name, to: participant
     end
@@ -8,156 +8,148 @@ module Zipfelkasse::Web
       delegate id, name, to: category
     end
 
-    def register_settings : Nil
-      d = @d
-      Web.route(d, "GET", "/einstellungen") { |r| render_settings(r, 200, @d.store.group_name, "") }
-      Web.route(d, "POST", "/einstellungen") { |r| settings_save(r) }
-
-      Web.route(d, "GET", "/einstellungen/teilnehmer") { |r| render_participants(r, 200, "", "") }
-      Web.route(d, "POST", "/einstellungen/teilnehmer") { |r| participant_create(r) }
-      Web.route(d, "POST", "/einstellungen/teilnehmer/:id") { |r| participant_rename(r) }
-      Web.route(d, "POST", "/einstellungen/teilnehmer/:id/archivieren") { |r| participant_archive(r, true) }
-      Web.route(d, "POST", "/einstellungen/teilnehmer/:id/reaktivieren") { |r| participant_archive(r, false) }
-
-      Web.route(d, "GET", "/einstellungen/kategorien") { |r| render_categories(r, 200, "", "") }
-      Web.route(d, "POST", "/einstellungen/kategorien") { |r| category_create(r) }
-      Web.route(d, "POST", "/einstellungen/kategorien/:id") { |r| category_rename(r) }
-      Web.route(d, "POST", "/einstellungen/kategorien/:id/archivieren") { |r| category_archive(r, true) }
-      Web.route(d, "POST", "/einstellungen/kategorien/:id/reaktivieren") { |r| category_archive(r, false) }
-      Web.route(d, "POST", "/einstellungen/kategorien/:id/hoch") { |r| category_move(r, true) }
-      Web.route(d, "POST", "/einstellungen/kategorien/:id/runter") { |r| category_move(r, false) }
-    end
-
     # group_name is the input as entered (after an error).
-    private def render_settings(r : Request, status : Int32, group_name : String, error : String) : Nil
-      r.page(status, Page.new(title: "Einstellungen", nav: NAV_SETTINGS, error: error)) do |__io__|
-        Web.template __io__, "web/settings.ecr"
-      end
-    end
-
-    def settings_save(r : Request) : Nil
-      name = r.form_value("gruppenname")
-      begin
-        @d.store.set_group_name(r.me.id, name)
-      rescue ex : Domain::ValidationError
-        return render_settings(r, 422, name, ex.message || "")
-      end
-      r.set_flash("Gespeichert.")
-      r.redirect("/einstellungen")
+    record Settings, group_name : String do
+      Web.view "web/settings.ecr"
     end
 
     # name is the "new person" input after an error.
-    private def render_participants(r : Request, status : Int32, name : String, error : String) : Nil
-      people = @d.store.list_participants(true)
-      balances = @d.store.balances
-      counts = @d.store.expense_count_by_participant
-      rows = people.map { |p| ParticipantRow.new(p, balances.fetch(p.id, 0_i64), counts.fetch(p.id, 0)) }
-      archived, active = rows.partition(&.participant.archived?)
-      me = r.me?
-      r.page(status, Page.new(title: "Teilnehmer", nav: NAV_SETTINGS, error: error)) do |__io__|
-        Web.template __io__, "web/participants.ecr"
-      end
-    end
-
-    def participant_create(r : Request) : Nil
-      name = r.form_value("name")
-      begin
-        @d.store.create_participant(r.me.id, name)
-      rescue ex : Domain::ValidationError
-        return render_participants(r, 422, name, ex.message || "")
-      end
-      r.set_flash("„#{Store.normalize_name(name)}“ hinzugefügt.")
-      r.redirect("/einstellungen/teilnehmer")
-    end
-
-    def participant_rename(r : Request) : Nil
-      old = load_participant(r)
-      begin
-        @d.store.rename_participant(r.me.id, old.id, r.form_value("name"))
-      rescue ex : Domain::ValidationError
-        return render_participants(r, 422, "", ex.message || "")
-      end
-      r.set_flash("Gespeichert.")
-      r.redirect("/einstellungen/teilnehmer")
-    end
-
-    # The store refuses to archive a person with an open balance.
-    def participant_archive(r : Request, archive : Bool) : Nil
-      p = load_participant(r)
-      begin
-        @d.store.set_participant_archived(r.me.id, p.id, archive)
-      rescue ex : Domain::ValidationError
-        return render_participants(r, 422, "", ex.message || "")
-      rescue Store::NotFound
-        raise HTTPError.not_found("Person nicht gefunden.")
-      end
-      r.set_flash("„#{p.name}“ #{archive ? "archiviert" : "reaktiviert"}.")
-      r.redirect("/einstellungen/teilnehmer")
-    end
-
-    private def load_participant(r : Request) : Store::Participant
-      @d.store.get_participant(r.path_id)
-    rescue Store::NotFound
-      raise HTTPError.not_found("Person nicht gefunden.")
+    record Participants, active : Array(ParticipantRow), archived : Array(ParticipantRow), name : String,
+      me : Store::Participant do
+      Web.view "web/participants.ecr"
     end
 
     # name is the "new category" input after an error.
-    private def render_categories(r : Request, status : Int32, name : String, error : String) : Nil
+    record Categories, active : Array(CategoryRow), archived : Array(CategoryRow), name : String do
+      Web.view "web/categories.ecr"
+    end
+  end
+
+  class SettingsController < Controller
+    def register : Nil
+      get("/einstellungen") { |env| show_settings(env, @d.store.group_name) }
+      post("/einstellungen") { |env| save_settings(env) }
+
+      get("/einstellungen/teilnehmer") { |env| show_participants(env) }
+      post("/einstellungen/teilnehmer") { |env| create_participant(env) }
+      post("/einstellungen/teilnehmer/:id") { |env| rename_participant(env) }
+      post("/einstellungen/teilnehmer/:id/archivieren") { |env| archive_participant(env, true) }
+      post("/einstellungen/teilnehmer/:id/reaktivieren") { |env| archive_participant(env, false) }
+
+      get("/einstellungen/kategorien") { |env| show_categories(env) }
+      post("/einstellungen/kategorien") { |env| create_category(env) }
+      post("/einstellungen/kategorien/:id") { |env| rename_category(env) }
+      post("/einstellungen/kategorien/:id/archivieren") { |env| archive_category(env, true) }
+      post("/einstellungen/kategorien/:id/reaktivieren") { |env| archive_category(env, false) }
+      post("/einstellungen/kategorien/:id/hoch") { |env| move_category(env, true) }
+      post("/einstellungen/kategorien/:id/runter") { |env| move_category(env, false) }
+    end
+
+    private def show_settings(env : HTTP::Server::Context, group_name : String, status = 200, error : String? = nil) : String
+      page(env, Views::Settings.new(group_name), "Einstellungen", Nav::Settings, status, error)
+    end
+
+    private def save_settings(env : HTTP::Server::Context) : String
+      name = env.form("gruppenname")
+      begin
+        @d.store.set_group_name(env.me.id, name)
+      rescue ex : Domain::ValidationError
+        return show_settings(env, name, 422, ex.msg)
+      end
+      redirect(env, "/einstellungen", "Gespeichert.")
+    end
+
+    private def show_participants(env : HTTP::Server::Context, name = "", status = 200, error : String? = nil) : String
+      balances = @d.store.balances
+      counts = @d.store.expense_count_by_participant
+      rows = @d.store.list_participants(true).map do |p|
+        Views::ParticipantRow.new(p, balances.fetch(p.id, 0_i64), counts.fetch(p.id, 0))
+      end
+      archived, active = rows.partition(&.participant.archived?)
+      page(env, Views::Participants.new(active, archived, name, env.me), "Teilnehmer", Nav::Settings, status, error)
+    end
+
+    private def create_participant(env : HTTP::Server::Context) : String
+      name = env.form("name")
+      begin
+        @d.store.create_participant(env.me.id, name)
+      rescue ex : Domain::ValidationError
+        return show_participants(env, name, 422, ex.msg)
+      end
+      redirect(env, "/einstellungen/teilnehmer", "„#{Store.normalize_name(name)}“ hinzugefügt.")
+    end
+
+    private def rename_participant(env : HTTP::Server::Context) : String
+      person = find_participant(env)
+      begin
+        @d.store.rename_participant(env.me.id, person.id, env.form("name"))
+      rescue ex : Domain::ValidationError
+        return show_participants(env, "", 422, ex.msg)
+      end
+      redirect(env, "/einstellungen/teilnehmer", "Gespeichert.")
+    end
+
+    # The store refuses to archive a person with an open balance.
+    private def archive_participant(env : HTTP::Server::Context, archive : Bool) : String
+      person = find_participant(env)
+      begin
+        or_404(env, "Person nicht gefunden.") { @d.store.set_participant_archived(env.me.id, person.id, archive) }
+      rescue ex : Domain::ValidationError
+        return show_participants(env, "", 422, ex.msg)
+      end
+      redirect(env, "/einstellungen/teilnehmer", "„#{person.name}“ #{archive ? "archiviert" : "reaktiviert"}.")
+    end
+
+    private def find_participant(env : HTTP::Server::Context) : Store::Participant
+      id = path_id(env)
+      or_404(env, "Person nicht gefunden.", id && @d.store.get_participant?(id))
+    end
+
+    private def show_categories(env : HTTP::Server::Context, name = "", status = 200, error : String? = nil) : String
       counts = @d.store.expense_count_by_category
-      archived_cats, active_cats = @d.store.list_categories(true).partition(&.archived?)
-      active = active_cats.map_with_index do |c, i|
-        CategoryRow.new(c, counts.fetch(c.id, 0), i == 0, i == active_cats.size - 1)
+      archived, active = @d.store.list_categories(true).partition(&.archived?)
+      active_rows = active.map_with_index do |c, i|
+        Views::CategoryRow.new(c, counts.fetch(c.id, 0), i == 0, i == active.size - 1)
       end
-      archived = archived_cats.map { |c| CategoryRow.new(c, counts.fetch(c.id, 0), false, false) }
-      r.page(status, Page.new(title: "Kategorien", nav: NAV_SETTINGS, error: error)) do |__io__|
-        Web.template __io__, "web/categories.ecr"
-      end
+      archived_rows = archived.map { |c| Views::CategoryRow.new(c, counts.fetch(c.id, 0), false, false) }
+      page(env, Views::Categories.new(active_rows, archived_rows, name), "Kategorien", Nav::Settings, status, error)
     end
 
-    def category_create(r : Request) : Nil
-      name = r.form_value("name")
+    private def create_category(env : HTTP::Server::Context) : String
+      name = env.form("name")
       begin
-        @d.store.create_category(r.me.id, name)
+        @d.store.create_category(env.me.id, name)
       rescue ex : Domain::ValidationError
-        return render_categories(r, 422, name, ex.message || "")
+        return show_categories(env, name, 422, ex.msg)
       end
-      r.set_flash("Kategorie „#{Store.normalize_name(name)}“ hinzugefügt.")
-      r.redirect("/einstellungen/kategorien")
+      redirect(env, "/einstellungen/kategorien", "Kategorie „#{Store.normalize_name(name)}“ hinzugefügt.")
     end
 
-    def category_rename(r : Request) : Nil
-      old = load_category(r)
+    private def rename_category(env : HTTP::Server::Context) : String
+      category = find_category(env)
       begin
-        @d.store.rename_category(r.me.id, old.id, r.form_value("name"))
+        @d.store.rename_category(env.me.id, category.id, env.form("name"))
       rescue ex : Domain::ValidationError
-        return render_categories(r, 422, "", ex.message || "")
+        return show_categories(env, "", 422, ex.msg)
       end
-      r.set_flash("Gespeichert.")
-      r.redirect("/einstellungen/kategorien")
+      redirect(env, "/einstellungen/kategorien", "Gespeichert.")
     end
 
-    # Any store error here is a 500, validation included.
-    def category_archive(r : Request, archive : Bool) : Nil
-      c = load_category(r)
-      @d.store.set_category_archived(r.me.id, c.id, archive)
-      r.set_flash("Kategorie „#{c.name}“ #{archive ? "archiviert" : "reaktiviert"}.")
-      r.redirect("/einstellungen/kategorien")
+    private def archive_category(env : HTTP::Server::Context, archive : Bool) : String
+      category = find_category(env)
+      @d.store.set_category_archived(env.me.id, category.id, archive)
+      redirect(env, "/einstellungen/kategorien", "Kategorie „#{category.name}“ #{archive ? "archiviert" : "reaktiviert"}.")
     end
 
-    def category_move(r : Request, up : Bool) : Nil
-      c = load_category(r)
-      begin
-        @d.store.move_category(r.me.id, c.id, up)
-      rescue Store::NotFound
-        raise HTTPError.not_found("Kategorie nicht gefunden.")
-      end
-      r.redirect("/einstellungen/kategorien#kategorie-#{c.id}")
+    private def move_category(env : HTTP::Server::Context, up : Bool) : String
+      category = find_category(env)
+      or_404(env, "Kategorie nicht gefunden.") { @d.store.move_category(env.me.id, category.id, up) }
+      redirect(env, "/einstellungen/kategorien#kategorie-#{category.id}")
     end
 
-    private def load_category(r : Request) : Store::Category
-      @d.store.get_category(r.path_id)
-    rescue Store::NotFound
-      raise HTTPError.not_found("Kategorie nicht gefunden.")
+    private def find_category(env : HTTP::Server::Context) : Store::Category
+      id = path_id(env)
+      or_404(env, "Kategorie nicht gefunden.", id && @d.store.get_category?(id))
     end
   end
 end

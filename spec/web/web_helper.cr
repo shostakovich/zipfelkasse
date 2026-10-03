@@ -1,6 +1,15 @@
 require "../spec_helper"
 require "../store/expense_fixture"
 
+# Kemal keeps routes, filters and handlers globally; each app starts from
+# scratch, like in Kemal's own specs.
+def reset_kemal : Nil
+  Kemal.config.clear
+  Kemal::FilterHandler::INSTANCE.tree = Radix::Tree(Array(Kemal::FilterHandler::FilterBlock)).new
+  Kemal::RouteHandler::INSTANCE.routes = Radix::Tree(Kemal::Route).new
+  Kemal::RouteHandler::INSTANCE.cached_routes = Kemal::LRUCache(String, Radix::Result(Kemal::Route)).new(Kemal.config.max_route_cache_size)
+end
+
 # Runs the app's full handler chain in memory (no port).
 class TestServer
   getter app : Zipfelkasse::App
@@ -10,12 +19,13 @@ class TestServer
 
   def initialize(config = Zipfelkasse::Config.new, @store = Zipfelkasse::Store.open(":memory:"))
     config.location = Time::Location::UTC
+    reset_kemal
     @app = Zipfelkasse::App.new(config, @store)
     @handler = HTTP::Server.build_middleware(@app.handlers)
   end
 
   def d : Zipfelkasse::Web::Deps
-    @app.d
+    @app.deps
   end
 
   def close : Nil

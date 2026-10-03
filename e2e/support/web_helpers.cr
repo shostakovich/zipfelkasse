@@ -11,7 +11,7 @@ module E2E
       "X-Content-Type-Options"  => "nosniff",
       "Referrer-Policy"         => "same-origin",
       "X-Frame-Options"         => "DENY",
-      "Content-Security-Policy" => "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'",
+      "Content-Security-Policy" => "default-src 'self'; img-src 'self' data:; style-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'",
     }
 
     def self.form_body(form : Enumerable({String, String})) : String

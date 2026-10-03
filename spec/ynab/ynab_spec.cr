@@ -147,7 +147,7 @@ end
 
 private def flash_of(res : HTTP::Client::Response) : String
   c = res.cookies[Zipfelkasse::Web::FLASH_COOKIE]? || return ""
-  Base64.decode_string(c.value)
+  URI.decode_www_form(c.value)
 end
 
 describe "YNAB sync" do

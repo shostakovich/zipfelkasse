@@ -296,7 +296,6 @@ module Zipfelkasse::MCP
     end
 
     private def respond(ctx : HTTP::Server::Context, status : Int32, id : String?, & : JSON::Builder ->) : Nil
-      skip_unread(ctx)
       res = ctx.response
       res.status_code = status
       res.headers["Content-Type"] = "application/json"

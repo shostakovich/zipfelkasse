@@ -2,6 +2,15 @@ require "../spec_helper"
 require "file_utils"
 require "../web/web_helper"
 
+# No exchange rate for any currency.
+class NoRates
+  include Zipfelkasse::Web::FXRater
+
+  def rate(currency : String, date : Time) : Zipfelkasse::Domain::FXRate
+    raise "no rate"
+  end
+end
+
 module MCPSpec
   SECRET    = "s3cr3t-0123456789abcdef"
   PATH      = "/mcp/#{SECRET}"
@@ -39,7 +48,8 @@ module MCPSpec
       @store = Zipfelkasse::Store.open(File.join(@dir, "zipfelkasse.db"))
       config = Zipfelkasse::Config.from_env({"MCP_SECRET" => SECRET, "TRUSTED_PROXIES" => "10.0.0.1"})
       config.location = location
-      @deps = Zipfelkasse::Web::Deps.new(config, @store, Zipfelkasse::Web::Renderer.new(@store))
+      @deps = Zipfelkasse::Web::Deps.new(config, @store)
+      @deps.fx = NoRates.new
       @server = Zipfelkasse::MCP::Server.new(@deps)
       %w(Anna Ben Cleo).each { |n| @ids[n] = @store.create_participant(nil, n) }
       @store.list_categories(include_archived: true).each { |c| @cats[c.name] = c.id }

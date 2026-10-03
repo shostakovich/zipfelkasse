@@ -19,7 +19,6 @@ module Zipfelkasse::FX
 
   class Service
     include Web::FXRater
-    include Web::Helpers
 
     property clock : Proc(Time)
     @berlin : Time::Location
@@ -33,11 +32,7 @@ module Zipfelkasse::FX
     def initialize(@d : Web::Deps)
       d = @d
       @clock = -> { d.now }
-      @berlin = begin
-        Time::Location.load("Europe/Berlin")
-      rescue Time::Location::InvalidLocationNameError
-        Time::Location.fixed("CET", 3600)
-      end
+      @berlin = Time::Location.load("Europe/Berlin")
       @base_url = d.config.ecb_base_url.presence || DEFAULT_BASE_URL
     end
 
@@ -192,11 +187,4 @@ module Zipfelkasse::FX
       [FILE_HIST]
     end
   end
-end
-
-def Zipfelkasse::App.wire_fx(app : App, d : Web::Deps, mcp : Web::MCPMount) : Nil
-  service = FX::Service.new(d)
-  d.fx = service
-  service.register
-  app.jobs << ->(s : Stopper) { service.run(s) }
 end

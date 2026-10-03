@@ -27,7 +27,7 @@ end
 
 private def flash_of(res : HTTP::Client::Response) : String?
   c = res.cookies[Zipfelkasse::Web::FLASH_COOKIE]? || return nil
-  String.new(Base64.decode(c.value))
+  URI.decode_www_form(c.value)
 end
 
 private def error_of(body : String) : String

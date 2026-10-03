@@ -1,4 +1,3 @@
-
 <div class="stack">
   <section class="card">
     <div class="card-header">
@@ -20,7 +19,7 @@
           </form>
           <p class="row-meta">
             <%= row.expenses %> <% if row.expenses == 1 %>Ausgabe<% else %>Ausgaben<% end %> · Saldo <span class="amount <%= sign_class row.balance %>"><%= eur row.balance %></span>
-            <%- if me && me.id == row.id %> · <strong>das bist du</strong><% end %>
+            <%- if me.id == row.id %> · <strong>das bist du</strong><% end %>
           </p>
         </li>
         <%- end %>

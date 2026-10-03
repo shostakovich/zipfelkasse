@@ -37,7 +37,7 @@ describe "Recurring expenses" do
     r = user.get(neu)
     r.status.should eq 200
     RY.h1(r).should eq "Wiederkehrende Ausgabe anlegen"
-    r.text.should contain "Öffne zuerst die Ausgabe, die sich wiederholen soll, und wähle dort „Wiederkehrend machen“."
+    r.text.should contain "Öffne zuerst die Ausgabe, die sich wiederholen soll, und wähle dort „Als wiederkehrend einrichten“."
     RY.attr(r, %(//a[normalize-space()="Zu den Ausgaben"]/@href)).should eq ["/"]
     r.doc.xpath_nodes(%(//input[@name="haeufigkeit"])).size.should eq 0
     user.get(neu + "?ausgabe=").status.should eq 200

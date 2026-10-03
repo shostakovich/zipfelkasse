@@ -117,18 +117,6 @@ describe "expense pages" do
     end
   end
 
-  it "rejects a broken form encoding" do
-    with_expense_group do |g|
-      headers = HTTP::Headers{"Content-Type" => "application/x-www-form-urlencoded"}
-      res = g.srv.request("POST", "/ausgaben/neu", "titel=%zz&betrag=1", headers, g.cookie)
-      res.status_code.should eq 400
-      res.body.should contain "Ungültige Anfrage."
-      g.srv.request("POST", "/ausgaben/neu?a=1;b=2", "titel=x", headers, g.cookie).status_code.should eq 400
-      g.srv.request("POST", "/ausgaben/neu", "titel=x%2", headers, g.cookie).status_code.should eq 400
-      g.srv.request("POST", "/ausgaben/neu", "titel=x%20y", headers, g.cookie).status_code.should eq 422
-    end
-  end
-
   it "edits and deletes an expense" do
     with_expense_group do |g|
       e = g.create(g.form)

@@ -1,10 +1,10 @@
 module Zipfelkasse::Web
   ACTIVITY_PAGE_SIZE = 50
 
-  # An activity entry prepared for display. verb is "" for actions other
+  # An activity entry prepared for display. verb is nil for actions other
   # than expense changes (shown with details.text); show_amount is set for
   # created and deleted expenses (amount changes are listed in the changes).
-  record ActivityItem, activity : Store::Activity, verb : String, show_amount : Bool do
+  record ActivityItem, activity : Store::Activity, verb : String?, show_amount : Bool do
     delegate id, at, action, expense_id, details, to: @activity
 
     def actor : String
@@ -24,37 +24,44 @@ module Zipfelkasse::Web
                           in .expense_updated? then {"geändert", false}
                           in .expense_deleted? then {"gelöscht", has_amount}
                           in .settings_updated?, .recurring_created?, .recurring_deleted?
-                            {"", false}
+                            {nil, false}
                           end
       ActivityItem.new(a, verb, show_amount)
     end
   end
 
-  class Handlers
-    def register_activity : Nil
-      Web.route(@d, "GET", "/aktivitaet") { |r| activity(r) }
+  module Views
+    # linked: the entry links to its expense (if it has one).
+    record ActivityEntry, a : ActivityItem, linked : Bool do
+      Web.view "web/activity_entry.ecr"
+
+      def link : Bool
+        linked && !a.expense_id.nil?
+      end
     end
 
-    def activity(r : Request) : Nil
-      before = Web.form_id?(r.query("vor"))
+    record Activity, groups : Array({String, Array(ActivityItem)}), more : String? do
+      Web.view "web/activity.ecr"
+    end
+  end
+
+  class ActivityController < Controller
+    def register : Nil
+      get("/aktivitaet") { |env| list(env) }
+    end
+
+    private def list(env : HTTP::Server::Context) : String
+      before = Web.positive_id?(env.query("vor"), trim: true)
       acts = @d.store.list_activity(Store::ActivityFilter.new(before_id: before, limit: ACTIVITY_PAGE_SIZE + 1))
-      more = ""
+      more = nil
       if acts.size > ACTIVITY_PAGE_SIZE
         acts = acts[0, ACTIVITY_PAGE_SIZE]
         more = "/aktivitaet?vor=#{acts.last.id}"
       end
       today = @d.today
-      loc = @d.config.location
-      groups = Web.activity_items(acts).chunks { |item| Web.activity_period(Domain.date_of(item.at.in(loc)), today) }
-      r.page(200, Page.new(title: "Aktivität", nav: NAV_ACTIVITY)) do |__io__|
-        Web.template __io__, "web/activity.ecr"
-      end
-    end
-
-    # The activity-item partial; link makes the entry a link to its expense.
-    private def activity_item(__io__ : IO, a : ActivityItem, link : Bool) : Nil
-      link &&= !a.expense_id.nil?
-      Web.template __io__, "web/_activity.ecr"
+      location = @d.config.location
+      groups = Web.activity_items(acts).chunks { |item| Web.activity_period(Domain.date_of(item.at.in(location)), today) }
+      page(env, Views::Activity.new(groups, more), "Aktivität", Nav::Activity)
     end
   end
 end

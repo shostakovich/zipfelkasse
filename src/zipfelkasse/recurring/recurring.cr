@@ -4,6 +4,10 @@
 module Zipfelkasse::Recurring
   Log = ::Log.for(self)
 
+  # The preview counts missed occurrences up to this, beyond it says
+  # "mehr als 1000".
+  MAX_MISSED_COUNT = 1000
+
   # Occurrences created per rule and run (e.g. for a very old start date);
   # the hourly runs catch up on the rest.
   MAX_INSTANCES_PER_RUN = 400
@@ -18,9 +22,12 @@ module Zipfelkasse::Recurring
     end
   end
 
-  class Service
-    include Web::Helpers
+  # What a frequency would do for an expense: the first occurrence after it
+  # and how many missed occurrences up to today would be created (counted up
+  # to MAX_MISSED_COUNT + 1) or skipped since an equal expense exists.
+  record Preview, frequency : Domain::Frequency, next_date : Time, missed : Int32, existing : Int32
 
+  class Service
     getter d : Web::Deps
     @mutex = Mutex.new
 
@@ -67,6 +74,25 @@ module Zipfelkasse::Recurring
         n, err = catch_up(r, today)
         raise Error.new(Service.rule_error(r, err), n) if err
         n
+      end
+    end
+
+    def previews(expense : Store::Expense) : Array(Preview)
+      today = self.today
+      existing = Set(Time).new
+      if expense.date < today
+        existing = @d.store.expense_dates_like(expense.to_input, expense.date.shift(days: 1), today)
+      end
+      Domain::Frequency.values.map do |frequency|
+        first = Domain.next_date(frequency, expense.date, expense.date)
+        missed = skipped = 0
+        date = first
+        while date <= today && missed <= MAX_MISSED_COUNT
+          missed += 1
+          skipped += 1 if existing.includes?(date)
+          date = Domain.next_date(frequency, expense.date, date)
+        end
+        Preview.new(frequency, first, missed, skipped)
       end
     end
 
@@ -124,10 +150,9 @@ module Zipfelkasse::Recurring
       input.date = date
       input.recurring_id = r.id
       cur = input.original_currency
-      fx = @d.fx
-      return input if Domain.eur?(cur) || fx.nil?
+      return input if Domain.eur?(cur)
       rate = begin
-        fx.rate(cur, date)
+        @d.fx.rate(cur, date)
       rescue ex : Domain::ValidationError
         Log.warn(exception: ex, &.emit("recurring expense: no rate for the date, using the template's rate", rule: r.id, currency: cur, date: Store.format_date(date)))
         return input
@@ -166,16 +191,6 @@ module Zipfelkasse::Recurring
           tick += every
         end
       end
-    end
-  end
-end
-
-module Zipfelkasse
-  class App
-    def self.wire_recurring(app : App, d : Web::Deps, mcp : Web::MCPMount) : Nil
-      service = Recurring::Service.new(d)
-      service.register
-      app.jobs << ->(s : Stopper) { service.run(s) }
     end
   end
 end

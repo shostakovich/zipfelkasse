@@ -5,7 +5,7 @@
 <%- end %>
   <div class="activity-main">
     <div>
-      <%- unless a.verb.empty? -%>
+      <%- if a.verb -%>
       <strong><%= a.actor %></strong> hat <em>„<%= a.details.title %>“</em> <%= a.verb %><% if a.show_amount %> <span class="amount muted">(<%= eur a.amount_cents %>)</span><% end %>.
       <%- else -%>
       <strong><%= a.actor %></strong>: <%= a.details.text || a.action.key %>

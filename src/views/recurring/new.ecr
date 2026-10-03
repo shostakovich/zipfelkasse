@@ -1,4 +1,3 @@
-
 <section class="card">
   <div class="card-header">
     <h1 class="card-title">Wiederkehrende Ausgabe anlegen</h1>
@@ -27,29 +26,31 @@
   </div>
   <%- end %>
   <div class="card-content">
-  <%- if expense.nil? %>
-    <p class="muted">Öffne zuerst die Ausgabe, die sich wiederholen soll, und wähle dort „Wiederkehrend machen“.</p>
-    <p><a href="/">Zu den Ausgaben</a></p>
-  <%- elsif existing %>
+  <%- if e = expense %>
+    <%- if existing %>
     <p>Diese Ausgabe gehört schon zu einer wiederkehrenden Ausgabe.</p>
     <p><a href="/einstellungen/wiederkehrend">Zu den wiederkehrenden Ausgaben</a></p>
-  <%- else %>
+    <%- else %>
     <form class="form" method="post" action="/einstellungen/wiederkehrend/neu">
-      <input type="hidden" name="ausgabe" value="<%= expense.id %>">
+      <input type="hidden" name="ausgabe" value="<%= e.id %>">
       <fieldset class="stack-sm">
         <legend>Wie oft?</legend>
         <%- options.each do |o| %>
         <label class="row">
-          <input type="radio" name="haeufigkeit" value="<%= o.value.key %>" required<% if o.checked? %> checked<% end %>>
+          <input type="radio" name="haeufigkeit" value="<%= o.value.key %>" required<% if o.checked %> checked<% end %>>
           <span><%= o.label %> <span class="muted">– nächster Termin <%= date o.next_date %><% unless (note = o.note).empty? %>; <%= note %><% end %></span></span>
         </label>
         <%- end %>
       </fieldset>
       <div class="row">
-        <button class="btn btn-primary" type="submit">Wiederkehrend machen</button>
-        <a class="btn btn-ghost" href="/ausgaben/<%= expense.id %>">Abbrechen</a>
+        <button class="btn btn-primary" type="submit">Als wiederkehrend einrichten</button>
+        <a class="btn btn-ghost" href="/ausgaben/<%= e.id %>">Abbrechen</a>
       </div>
     </form>
+    <%- end %>
+  <%- else %>
+    <p class="muted">Öffne zuerst die Ausgabe, die sich wiederholen soll, und wähle dort „Als wiederkehrend einrichten“.</p>
+    <p><a href="/">Zu den Ausgaben</a></p>
   <%- end %>
   </div>
 </section>

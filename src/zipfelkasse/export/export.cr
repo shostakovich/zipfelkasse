@@ -4,9 +4,9 @@
 module Zipfelkasse::Export
   # The optional date range (?von=…&bis=…, both inclusive).
   record Period, from : Time? = nil, to : Time? = nil do
-    def self.parse(r : Web::Request) : Period
-      from = date_param(r, "von")
-      to = date_param(r, "bis")
+    def self.parse(query : URI::Params) : Period
+      from = date_param(query, "von")
+      to = date_param(query, "bis")
       if from && to && to < from
         raise Domain::ValidationError.new("„Bis“ liegt vor „Von“.")
       end
@@ -14,9 +14,9 @@ module Zipfelkasse::Export
     end
 
     # Only an empty value means unset; blanks are an invalid date.
-    private def self.date_param(r : Web::Request, name : String) : Time?
-      v = r.query(name)
-      Domain.parse_date(v) unless v.empty?
+    private def self.date_param(query : URI::Params, name : String) : Time?
+      value = query[name]? || ""
+      Domain.parse_date(value) unless value.empty?
     end
 
     # For file names: the date range or today's date.
@@ -34,98 +34,89 @@ module Zipfelkasse::Export
     end
   end
 
-  class Handlers
-    include Web::Helpers
+  record Download, name : String, content_type : String, body : String
 
+  class Service
     def initialize(@d : Web::Deps)
     end
 
-    def register : Nil
-      Web.route(@d, "GET", "/export") { |r| page(r) }
-      Web.route(@d, "GET", "/export/ausgaben.csv") { |r| expenses_csv(r) }
-      Web.route(@d, "GET", "/export/ausgaben.json") { |r| expenses_json(r) }
-      Web.route(@d, "GET", "/export/ynab.ofx") { |r| ynab_ofx(r) }
-      Web.route(@d, "GET", "/export/ynab.csv") { |r| ynab_csv(r) }
+    def expenses_csv(period : Period) : Download
+      body = String.build { |io| Export.write_expenses_csv(io, @d.store.list_participants(true), expenses(period)) }
+      Download.new("zipfelkasse-ausgaben-#{period.suffix(@d.today)}.csv", "text/csv; charset=utf-8", body)
     end
 
-    private def render(r : Web::Request, status : Int32, error : String, period : Period) : Nil
-      r.page(status, Web::Page.new(title: "Export", nav: Web::NAV_SETTINGS, error: error)) do |__io__|
-        Web.template __io__, "export/export.ecr"
+    def expenses_json(period : Period) : Download
+      body = String.build do |io|
+        Export.write_expenses_json(io, @d.store.group_name, @d.now, period, @d.store.list_participants(true), expenses(period))
       end
+      Download.new("zipfelkasse-ausgaben-#{period.suffix(@d.today)}.json", "application/json; charset=utf-8", body)
     end
 
-    # Every route answers an invalid range with the page (422, empty fields).
-    private def period(r : Web::Request) : Period?
-      Period.parse(r)
-    rescue ex : Domain::ValidationError
-      render(r, 422, ex.msg, Period.new)
-      nil
+    def ynab_ofx(participant : Store::Participant, period : Period) : Download
+      body = String.build do |io|
+        Export.write_ofx(io, postings(participant.id, period), "ZIPFELKASSE-#{participant.id}", period.from, period.to,
+          @d.now.in(@d.config.location))
+      end
+      Download.new("zipfelkasse-ynab-#{period.suffix(@d.today)}.ofx", "application/x-ofx", body)
     end
 
-    private def page(r : Web::Request) : Nil
-      p = period(r) || return
-      render(r, 200, "", p)
+    def ynab_csv(participant : Store::Participant, period : Period) : Download
+      body = String.build { |io| Export.write_ynab_csv(io, postings(participant.id, period)) }
+      Download.new("zipfelkasse-ynab-#{period.suffix(@d.today)}.csv", "text/csv; charset=utf-8", body)
     end
 
     # Non-deleted expenses in the range, oldest first.
-    private def expenses(p : Period, participant_id : Int64?) : Array(Store::Expense)
-      @d.store.list_expenses(Store::ExpenseFilter.new(from: p.from, to: p.to, participant_id: participant_id)).reverse!
+    private def expenses(period : Period, participant_id : Int64? = nil) : Array(Store::Expense)
+      @d.store.list_expenses(Store::ExpenseFilter.new(from: period.from, to: period.to, participant_id: participant_id)).reverse!
     end
 
-    private def send(r : Web::Request, content_type : String, filename : String, body : String) : Nil
-      res = r.response
-      res.headers["Content-Type"] = content_type
-      res.headers["Content-Disposition"] = %(attachment; filename="#{filename}")
-      res.headers["Cache-Control"] = "no-store"
-      res.content_length = body.bytesize
-      res.print body
-    end
-
-    private def expenses_csv(r : Web::Request) : Nil
-      p = period(r) || return
-      es = expenses(p, nil)
-      body = String.build { |io| Export.write_expenses_csv(io, @d.store.list_participants(true), es) }
-      send(r, "text/csv; charset=utf-8", "zipfelkasse-ausgaben-#{p.suffix(@d.today)}.csv", body)
-    end
-
-    private def expenses_json(r : Web::Request) : Nil
-      p = period(r) || return
-      es = expenses(p, nil)
-      body = String.build do |io|
-        Export.write_expenses_json(io, @d.store.group_name, @d.now, p, @d.store.list_participants(true), es)
-      end
-      send(r, "application/json; charset=utf-8", "zipfelkasse-ausgaben-#{p.suffix(@d.today)}.json", body)
-    end
-
-    # My postings in the range, selected like the YNAB sync does (start date,
-    # entered later, already transferred, nothing in the future).
-    private def postings(r : Web::Request, p : Period) : Array(YNAB::Posting)
-      me = r.me.id
-      sel = YNAB::Selection.for_participant(@d.store, me, YNAB.today(@d.now, @d.config.location))
-      sel.postings(expenses(p, me), me)
-    end
-
-    private def ynab_ofx(r : Web::Request) : Nil
-      p = period(r) || return
-      ps = postings(r, p)
-      body = String.build do |io|
-        Export.write_ofx(io, ps, "ZIPFELKASSE-#{r.me.id}", p.from, p.to, @d.now.in(@d.config.location))
-      end
-      send(r, "application/x-ofx", "zipfelkasse-ynab-#{p.suffix(@d.today)}.ofx", body)
-    end
-
-    private def ynab_csv(r : Web::Request) : Nil
-      p = period(r) || return
-      body = String.build { |io| Export.write_ynab_csv(io, postings(r, p)) }
-      send(r, "text/csv; charset=utf-8", "zipfelkasse-ynab-#{p.suffix(@d.today)}.csv", body)
+    # The participant's postings in the range, selected like the YNAB sync
+    # does (start date, entered later, already transferred, nothing in the
+    # future).
+    private def postings(participant_id : Int64, period : Period) : Array(YNAB::Posting)
+      selection = YNAB::Selection.for_participant(@d.store, participant_id, YNAB.today(@d.now, @d.config.location))
+      selection.postings(expenses(period, participant_id), participant_id)
     end
   end
-end
 
-module Zipfelkasse
-  class App
-    def self.wire_export(app : App, d : Web::Deps, mcp : Web::MCPMount) : Nil
-      Export::Handlers.new(d).register
+  module Views
+    record Index, from : String, to : String do
+      Web.view "export/index.ecr"
+    end
+  end
+
+  class Handlers < Web::Controller
+    def initialize(deps : Web::Deps, @service : Service)
+      super(deps)
+    end
+
+    def register : Nil
+      get("/export") { |env| with_period(env) { |period| show(env, 200, period) } }
+      get("/export/ausgaben.csv") { |env| with_period(env) { |period| download(env, @service.expenses_csv(period)) } }
+      get("/export/ausgaben.json") { |env| with_period(env) { |period| download(env, @service.expenses_json(period)) } }
+      get("/export/ynab.ofx") { |env| with_period(env) { |period| download(env, @service.ynab_ofx(env.me, period)) } }
+      get("/export/ynab.csv") { |env| with_period(env) { |period| download(env, @service.ynab_csv(env.me, period)) } }
+    end
+
+    # Every route answers an invalid range with the page (422, empty fields).
+    private def with_period(env : HTTP::Server::Context, & : Period -> String) : String
+      yield Period.parse(env.params.query)
+    rescue ex : Domain::ValidationError
+      show(env, 422, Period.new, ex.msg)
+    end
+
+    private def show(env : HTTP::Server::Context, status : Int32, period : Period, error : String? = nil) : String
+      view = Views::Index.new(period.from.try { |t| Store.format_date(t) } || "", period.to.try { |t| Store.format_date(t) } || "")
+      page(env, view, "Export", Web::Nav::Settings, status, error)
+    end
+
+    private def download(env : HTTP::Server::Context, file : Download) : String
+      response = env.response
+      response.content_type = file.content_type
+      response.headers["Content-Disposition"] = %(attachment; filename="#{file.name}")
+      response.headers["Cache-Control"] = "no-store"
+      response.content_length = file.body.bytesize
+      file.body
     end
   end
 end
