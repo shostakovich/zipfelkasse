@@ -177,7 +177,7 @@ module Zipfelkasse::YNAB
         ex
       end
       # Aborted by the shutdown: no error and no pause for the next start.
-      return {res, st, err} if err && @connections.stopped?
+      return {res, st, err} if err && @http.stopped?
       if err
         if err.is_a?(APIError) && err.status == 401
           st.token_invalid = true

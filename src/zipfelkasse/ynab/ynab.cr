@@ -31,7 +31,7 @@ module Zipfelkasse::YNAB
     # At most one sync at a time (worker or button); changes of token or
     # target wait for it (see change_connection).
     @sync_mutex = Mutex.new
-    @connections = Connections.new
+    @http = OutboundHTTP.new(HTTP_TIMEOUT, MAX_BODY)
     # Background syncs via "Jetzt synchronisieren"; run stops them on
     # shutdown and waits for them.
     @bg_busy = Set(Int64).new
@@ -49,7 +49,7 @@ module Zipfelkasse::YNAB
     end
 
     def client(token : String) : Client
-      Client.new(@base_url, token, @connections)
+      Client.new(@base_url, token, @http)
     end
 
     def location : Time::Location
@@ -71,7 +71,7 @@ module Zipfelkasse::YNAB
     def run(stopper : Stopper) : Nil
       spawn do
         stopper.done.receive?
-        @connections.stop
+        @http.stop
       end
       deadline = Time.instant + @start_delay
       last_full = nil.as(Time::Instant?)
@@ -107,7 +107,7 @@ module Zipfelkasse::YNAB
         return RETRY_DELAY
       end
       cfgs.each do |c|
-        return next_run if @connections.stopped?
+        return next_run if @http.stopped?
         next unless c.ready?
         cfg, res, st, err = sync_person(c.participant_id, full)
         next if err.is_a?(NotReadyError) # changed in the meantime
@@ -167,7 +167,7 @@ module Zipfelkasse::YNAB
     # does not wait for YNAB. Nothing happens if one is already running for
     # the person or run has ended; the result ends up in the status.
     def sync_in_background(participant_id : Int64) : Nil
-      return if @connections.stopped? || @bg_busy.includes?(participant_id)
+      return if @http.stopped? || @bg_busy.includes?(participant_id)
       @bg_busy << participant_id
       @bg_wait.spawn do
         cfg, res, _, err = sync_person(participant_id, true)
@@ -180,7 +180,7 @@ module Zipfelkasse::YNAB
     # Aborts running requests, refuses new ones and waits for the background
     # syncs.
     def stop : Nil
-      @connections.stop
+      @http.stop
       @bg_wait.wait
     end
 

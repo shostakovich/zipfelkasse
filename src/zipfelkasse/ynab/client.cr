@@ -1,6 +1,4 @@
-require "http/client"
 require "json"
-require "uri"
 
 module Zipfelkasse::YNAB
   # Budgets are called "plans" since API v1.79.
@@ -174,40 +172,12 @@ module Zipfelkasse::YNAB
     getter detail : String = ""
   end
 
-  # The open connections of a service. Stopping closes them, so that the
-  # shutdown does not wait for a slow YNAB, and refuses new ones.
-  class Connections
-    getter? stopped = false
-    @open = Set(HTTP::Client).new
-
-    def open(uri : URI) : HTTP::Client
-      raise UnclearError.new("YNAB nicht erreichbar: shutting down") if @stopped
-      # No proxy support (HTTPS_PROXY) and no redirects, as in fx/ecb.cr.
-      client = HTTP::Client.new(uri)
-      client.connect_timeout = HTTP_TIMEOUT
-      client.read_timeout = HTTP_TIMEOUT
-      client.write_timeout = HTTP_TIMEOUT
-      @open << client
-      client
-    end
-
-    def close(client : HTTP::Client) : Nil
-      @open.delete(client)
-      client.close
-    end
-
-    def stop : Nil
-      @stopped = true
-      @open.each(&.close)
-    end
-  end
-
   # Talks to the YNAB API on behalf of a token.
   class Client
     # Plan and account confirmed in this sync run (see Service#confirm_target).
     property? target_ok = false
 
-    def initialize(@base_url : String, @token : String, @connections : Connections)
+    def initialize(@base_url : String, @token : String, @http : OutboundHTTP)
     end
 
     def plans : Array(APIPlan)
@@ -264,35 +234,16 @@ module Zipfelkasse::YNAB
 
     # The error messages end up on the settings page, hence German.
     private def request(method : String, path : String, body : String? = nil) : String
-      uri = URI.parse(@base_url + path)
       headers = HTTP::Headers{"Authorization" => "Bearer #{@token}", "Accept" => "application/json"}
       headers["Content-Type"] = "application/json" if body
-      status, retry_after, data = 0, nil.as(String?), ""
-      client = @connections.open(uri)
-      begin
-        client.exec(method, uri.request_target, headers, body) do |res|
-          status, retry_after = res.status_code, res.headers["Retry-After"]?
-          data = begin
-            read_limited(res.body_io)
-          rescue ex
-            raise UnclearError.new("YNAB-Antwort unvollständig: #{ex.message}")
-          end
-        end
-      rescue ex : UnclearError
-        raise ex
+      res = begin
+        @http.request(method, @base_url + path, headers, body)
       rescue ex
         raise UnclearError.new("YNAB nicht erreichbar: #{ex.message}")
-      ensure
-        @connections.close(client)
       end
-      raise api_error(status, data, retry_after) unless 200 <= status <= 299
+      data = String.new(res.body)
+      raise api_error(res.status, data, res.headers["Retry-After"]?) unless 200 <= res.status <= 299
       data
-    end
-
-    private def read_limited(io : IO) : String
-      buf = IO::Memory.new
-      IO.copy(io, buf, MAX_BODY)
-      buf.to_s
     end
 
     private def api_error(status : Int32, data : String, retry_after : String?) : APIError

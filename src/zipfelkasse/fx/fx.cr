@@ -26,9 +26,8 @@ module Zipfelkasse::FX
     @base_url : String
     @mutex = Mutex.new
     @loads = {} of String => Load
-    @clients = Set(HTTP::Client).new
+    @http = OutboundHTTP.new(60.seconds, MAX_BODY_SIZE)
     @bg = WaitGroup.new
-    @stopped = false
 
     def initialize(@d : Web::Deps)
       d = @d
@@ -135,7 +134,7 @@ module Zipfelkasse::FX
     def run(stopper : Stopper) : Nil
       spawn do
         stopper.done.receive?
-        abort_downloads
+        @http.stop
       end
       stats = @d.store.ecb_cache_stats rescue nil
       if stats && ((to = stats.to).nil? || to < expected_date(today))
@@ -167,16 +166,8 @@ module Zipfelkasse::FX
       nil
     end
 
-    # Aborts running downloads and refuses new ones.
-    private def abort_downloads : Nil
-      @mutex.synchronize do
-        @stopped = true
-        @clients.each(&.close)
-      end
-    end
-
     private def stop : Nil
-      abort_downloads
+      @http.stop
       @bg.wait
     end
   end

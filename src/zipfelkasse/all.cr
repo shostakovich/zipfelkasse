@@ -3,6 +3,7 @@ require "./domain/*"
 require "./config/*"
 require "./logfmt"
 require "./stopper"
+require "./outbound_http"
 require "./store/store"
 require "./store/*"
 # web/ecr_process.cr is a compile-time program, not part of the app.
