@@ -32,13 +32,6 @@ module Zipfelkasse::Web
     id if id && id > 0
   end
 
-  def self.text_error(ctx : HTTP::Server::Context, status : Int32, message : String) : Nil
-    ctx.response.status_code = status
-    ctx.response.content_type = "text/plain; charset=utf-8"
-    ctx.response.headers["X-Content-Type-Options"] = "nosniff"
-    ctx.response.print message, '\n'
-  end
-
   # Only local paths: browsers strip tabs and read "\" as "/", so "/\t/evil"
   # would become "//evil"; "//" is refused even after decoding.
   def self.safe_return(target : String) : String

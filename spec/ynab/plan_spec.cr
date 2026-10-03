@@ -62,7 +62,7 @@ describe YNAB::Plan do
   end
 
   it "retries a failed delete only in the full sync" do
-    failed = synced(want(1), "t1").delete_failed("broken")
+    failed = synced(want(1), "t1").copy_with(state: Store::YNABSyncState::DeleteFailed, last_error: "broken")
     YNAB::Plan.build({} of Int64 => YNAB::Want, rows(failed), false).deletes.should be_empty
     YNAB::Plan.build({} of Int64 => YNAB::Want, rows(failed), true).deletes.should eq [failed]
   end

@@ -164,10 +164,14 @@ module E2E
       @jar["wer"]?.try(&.value.to_i64?)
     end
 
-    # Calls an MCP tool via JSON-RPC (legacy protocol, no headers needed).
+    # An MCP request of protocol 2026-07-28 with the headers that match it.
     def mcp(method : String, params = {} of String => JSON::Any, id = 1) : Response
+      version = "2026-07-28"
+      params = params.merge({"_meta" => JSON.parse({"io.modelcontextprotocol/protocolVersion" => version}.to_json)})
+      headers = HTTP::Headers{"Cookie" => "", "MCP-Protocol-Version" => version, "Mcp-Method" => method}
+      params["name"]?.try { |name| headers["Mcp-Name"] = name.as_s }
       body = {jsonrpc: "2.0", id: id, method: method, params: params}.to_json
-      post_raw("/mcp/#{MCP_SECRET}", body, "application/json", HTTP::Headers{"Cookie" => ""})
+      post_raw("/mcp/#{MCP_SECRET}", body, "application/json", headers)
     end
 
     def tool(name : String, arguments = {} of String => JSON::Any) : Response

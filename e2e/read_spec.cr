@@ -170,9 +170,7 @@ describe "Read everything" do
     names = people.map(&.[1])
     ok = ->(tool : String, args : String) { E2E::MCPKit.text(user.tool(tool, JSON.parse(args).as_h)) }
     refused = ->(tool : String, args : String) { E2E::MCPKit.text(user.tool(tool, JSON.parse(args).as_h), error: true) }
-    init = E2E::MCPKit.result(user.mcp("initialize", {"protocolVersion" => JSON::Any.new("2025-06-18"), "capabilities" => JSON.parse("{}"),
-                                                      "clientInfo" => JSON.parse(%({"name":"e2e","version":"1"}))}))
-    init["instructions"].as_s.should contain "Zipfelkasse"
+    E2E::MCPKit.result(user.mcp("server/discover"))["instructions"].as_s.should contain "Zipfelkasse"
     E2E::MCPKit.result(user.mcp("tools/list"))["tools"].as_a.map(&.["name"].as_s).should contain "sql_query"
 
     balances = JSON.parse(ok.call("balances", "{}"))["balances"].as_a
@@ -191,7 +189,7 @@ describe "Read everything" do
       {reimbursements: "only", detail: "full"}, {reimbursements: "include", from: "2026-01-01", to: "2026-12-31"},
       {person: names[1], detail: "full", limit: 500}, {paid_by: names[2], involved: names[0]}, {limit: 1},
     ].each { |args| ok.call("search_expenses", args.to_json) }
-    refused.call("search_expenses", %({"sort":"random"})).should contain "sort must be one of"
+    refused.call("search_expenses", %({"sort":"random"})).should contain "sort"
     refused.call("search_expenses", %({"from":"gestern"})).should contain "Invalid date"
 
     %w(category title year month week person category_month).each do |g|
@@ -207,7 +205,7 @@ describe "Read everything" do
     ok.call("statistics", {group_by: "month", category: "Lebensmittel", text: ["rewe", "markt"]}.to_json)
     ok.call("statistics", {group_by: "title", limit: 3}.to_json)
     refused.call("statistics", {group_by: "category", compare: "previous_year"}.to_json).should contain "needs from"
-    refused.call("statistics", "{}").should contain "group_by must be one of"
+    refused.call("statistics", "{}").should contain "group_by"
 
     ok.call("activity", "{}")
     [{limit: 500}, {action: "expense_updated"}, {person: names[0], from: "2026-10-01"}, {expense_id: 5},

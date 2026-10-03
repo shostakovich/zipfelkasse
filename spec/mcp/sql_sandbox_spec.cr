@@ -1,37 +1,34 @@
 require "../spec_helper"
 
 describe MCP::SQLSandbox do
-  describe ".check_select" do
-    {
-      "SELECT 1"                                                  => "SELECT 1",
-      "  select 1 ;  "                                            => "  select 1 ",
-      "-- comment\nWITH x AS (SELECT 1) SELECT * FROM x;; -- end" => "-- comment\nWITH x AS (SELECT 1) SELECT * FROM x",
-      "/* a; b */ SELECT ';' AS x"                                => "/* a; b */ SELECT ';' AS x",
-      %(SELECT "a;b", [c;d], `e;f`)                               => %(SELECT "a;b", [c;d], `e;f`),
-      "SELECT 'it''s; fine'"                                      => "SELECT 'it''s; fine'",
-    }.each do |query, checked|
-      it "accepts #{query.inspect}" do
-        MCP::SQLSandbox.check_select(query).should eq checked
+  describe "#query" do
+    around_each do |example|
+      with_temp_dir do |dir|
+        Household.within(Store.open(File.join(dir, "zipfelkasse.db"))) { example.run }
       end
     end
 
-    [
-      "", "   ", "-- only a comment",
-      "DELETE FROM expenses",
-      "PRAGMA query_only = OFF",
-      "ATTACH 'x.db' AS x",
-      "VACUUM INTO '/tmp/x.db'",
-      "SELECT 1; DELETE FROM expenses",
-      "SELECT 1; ATTACH DATABASE 'file:x' AS y",
-      "SELECT 'a'; PRAGMA query_only=0",
-      "SELECT 1 /* ; */; SELECT 2",
-      "SELECT 1\0; DROP TABLE expenses",
-      "(SELECT 1)",
-      "EXPLAIN SELECT 1",
-    ].each do |query|
-      it "rejects #{query.inspect}" do
-        expect_raises(Domain::ValidationError) { MCP::SQLSandbox.check_select(query) }
+    {
+      "  select 1 AS x ;  "                       => [[1_i64]],
+      "SELECT 1 AS x;;"                           => [[1_i64]],
+      "SELECT 1 AS x -- end"                      => [[1_i64]],
+      "/* a; b */ SELECT ';' AS x"                => [[";"]],
+      "WITH y AS (SELECT 2 AS x) SELECT * FROM y" => [[2_i64]],
+    }.each do |query, rows|
+      it "runs #{query.inspect}" do
+        MCP::SQLSandbox.new(store.path).query(query).rows.should eq rows
       end
+    end
+
+    ["DELETE FROM expenses", "PRAGMA query_only = OFF", "ATTACH 'x.db' AS x", "VACUUM INTO '/tmp/x.db'",
+     "SELECT 1; DELETE FROM expenses", "SELECT 1 /* ; */; SELECT 2", "EXPLAIN SELECT 1", "-- only a comment"].each do |query|
+      it "refuses #{query.inspect} with SQLite's error" do
+        expect_raises(Domain::ValidationError, "SQL error: ") { MCP::SQLSandbox.new(store.path).query(query) }
+      end
+    end
+
+    it "refuses a NUL character" do
+      expect_invalid("The query contains a NUL character.") { MCP::SQLSandbox.new(store.path).query("SELECT 1\0; DROP TABLE expenses") }
     end
   end
 
@@ -39,7 +36,7 @@ describe MCP::SQLSandbox do
     expect_raises(Domain::ValidationError, ":memory:") { MCP::SQLSandbox.new(":memory:").query("SELECT 1") }
   end
 
-  describe "below the lexical check" do
+  describe "the sandbox connection" do
     around_each do |example|
       with_temp_dir do |dir|
         Household.within(Store.open(File.join(dir, "zipfelkasse.db"))) { example.run }

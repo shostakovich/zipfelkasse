@@ -5,8 +5,7 @@ require "json"
 module Zipfelkasse::Export
   BOM = '\u{FEFF}'
 
-  # German Excel format: UTF-8 with BOM, semicolon, decimal comma, one column
-  # "Anteil <Name>" per involved person. es is sorted chronologically.
+  # For German Excel: UTF-8 with BOM, semicolons and decimal commas.
   def self.write_expenses_csv(io : IO, people : Array(Store::Participant), es : Array(Store::Expense)) : Nil
     io << BOM
     people = involved(people, es)
@@ -73,7 +72,7 @@ module Zipfelkasse::Export
       paid_by_name:          e.paid_by_name,
       amount_cents:          e.amount_cents,
       is_reimbursement:      e.reimbursement?,
-      split_mode:            e.split_mode.key,
+      split_mode:            e.split_mode.to_s.underscore,
       original_amount_minor: e.original_amount_minor,
       original_currency:     e.original_currency,
       fx_rate:               e.fx_rate,
@@ -88,9 +87,7 @@ module Zipfelkasse::Export
     }
   end
 
-  # OFX 1.02 (SGML): a statement of the clearing account, UTF-8, CRLF. FITID
-  # is stable per expense. Without from or to, the range comes from the
-  # postings (or now, in its own time zone).
+  # OFX 1.02 (SGML) with CRLF line ends; without from or to, the range comes from the postings or now.
   def self.write_ofx(io : IO, ps : Array(YNAB::Posting), account_id : String, from : Time?, to : Time?, now : Time) : Nil
     from ||= ps.first?.try(&.date) || now
     to ||= ps.last?.try(&.date) || now

@@ -1,21 +1,14 @@
 module Zipfelkasse::MCP
-  class DecimalError < Exception
+  # Unlike the form, no thousands separators: "1.234" is never 1234.
+  def self.parse_decimal(text : String, decimals : Int32) : Int64?
+    whole, _, fraction = text.strip.partition('.')
+    fraction = fraction.rstrip('0')
+    return unless whole.matches?(/\A[0-9]{1,15}\z/) && fraction.matches?(/\A[0-9]*\z/) && fraction.size <= decimals
+    (whole + fraction.ljust(decimals, '0')).to_i64
   end
 
-  STRICT_DECIMAL = /\A[0-9]+(\.[0-9]*)?\z/
-
-  # Unlike the form, no thousands separators: "1.234" is never 1234.
-  def self.parse_decimal(text : String, decimals : Int32) : Int64
-    text = text.strip
-    unless STRICT_DECIMAL.matches?(text)
-      raise DecimalError.new("use digits with a dot as decimal separator and no thousands separator, e.g. 1234.50")
-    end
-    whole, _, fraction = text.partition('.')
-    if fraction.rstrip('0').size > decimals
-      raise DecimalError.new(decimals == 0 ? "must be a whole number" : "at most #{decimals} decimal places")
-    end
-    raise DecimalError.new("too large") if whole.size > 15
-    Domain.parse_minor(text.rchop('.').tr(".", ","), decimals)
+  def self.decimal_rule(decimals : Int32) : String
+    "expected digits with at most #{decimals} decimal places after a dot and no thousands separator"
   end
 
   def self.split_parts(directory : Directory, mode : Domain::SplitMode, currency : String, participants : Array(String),
@@ -38,12 +31,10 @@ module Zipfelkasse::MCP
     key = mode.to_s.underscore
     raise invalid("With split=#{key}, weights name the participants; leave participants out.") unless participants.empty?
     raise invalid("split=#{key} needs weights (person name → value).") if weights.empty?
+    decimals = Domain.weight_decimals(mode, currency)
     weights.keys.sort!.each do |name|
-      weight = begin
-        parse_decimal(weights[name], Domain.weight_decimals(mode, currency))
-      rescue ex : DecimalError
-        raise invalid("Invalid value #{weights[name].inspect} for #{name} in weights: #{ex.message}.")
-      end
+      weight = parse_decimal(weights[name], decimals) ||
+               raise invalid("Invalid value #{weights[name].inspect} for #{name} in weights: #{decimal_rule(decimals)}.")
       add.call(name, weight)
     end
     parts
@@ -98,89 +89,67 @@ module Zipfelkasse::MCP
 
     private def create_expense(a : ExpenseArgs) : CreatedOut
       title = MCP.given(a.title) || raise MCP.invalid("Parameter title is missing.")
-      raise MCP.invalid("title must be at most #{Store::MAX_TITLE_LEN} characters.") if title.size > Store::MAX_TITLE_LEN
       mode = a.split || Domain::SplitMode::Equal
       date = date_or_today(a.date)
-      input = Store::ExpenseInput.new(title: title, notes: notes(a.notes), split_mode: mode, date: date)
-      input = set_money(input, a, date)
+      money = money(a, date)
       directory = self.directory
       payer = directory.active("paid_by", a.paid_by)
-      input.paid_by = payer.id
-      MCP.given(a.category).try do |name|
-        category = find_category(name)
-        raise MCP.invalid("Category #{category.name} is archived.") if category.archived?
-        input.category_id = category.id
+      category = MCP.given(a.category).try do |name|
+        find_category(name).tap { |found| raise MCP.invalid("Category #{found.name} is archived.") if found.archived? }
       end
-      input.parts = MCP.split_parts(directory, mode, input.original_currency, a.participants, a.weights)
+      parts = MCP.split_parts(directory, mode, money[:original_currency], a.participants, a.weights)
+      input = Store::ExpenseInput.new(**money, title: title, notes: a.notes.to_s, date: date, paid_by: payer.id,
+        category_id: category.try(&.id), split_mode: mode, parts: parts)
       create(input, payer, directory, a.allow_duplicate)
     end
 
     private def create_reimbursement(a : ReimbursementArgs) : CreatedOut
       date = date_or_today(a.date)
-      input = Store::ExpenseInput.new(title: Domain::REIMBURSEMENT_TITLE, notes: notes(a.notes), reimbursement: true, date: date)
-      input = set_money(input, a, date)
+      money = money(a, date)
       directory = self.directory
       from = directory.active("from", a.from)
       to = directory.active("to", a.to)
-      raise MCP.invalid("from and to must be different people.") if from.id == to.id
-      input.paid_by = from.id
-      input.parts = [Domain::Part.new(to.id)]
+      input = Store::ExpenseInput.new(**money, title: Domain::REIMBURSEMENT_TITLE, notes: a.notes.to_s, date: date,
+        paid_by: from.id, reimbursement: true, parts: [Domain::Part.new(to.id)])
       create(input, from, directory, a.allow_duplicate)
-    end
-
-    private def notes(value : String?) : String
-      text = value.try(&.strip) || ""
-      if text.gsub("\r\n", "\n").size > Store::MAX_NOTES_LEN
-        raise MCP.invalid("notes must be at most #{Store::MAX_NOTES_LEN} characters.")
-      end
-      text
     end
 
     private def date_or_today(value : String?) : Time
       MCP.parse_date_arg("date", value) || today
     end
 
-    private def set_money(input : Store::ExpenseInput, a : MoneyArgs, date : Time) : Store::ExpenseInput
+    # amount_cents is 0 if the rate is unusable; the store refuses the entry then.
+    private def money(a : MoneyArgs, date : Time)
       currency = (MCP.given(a.currency) || "EUR").upcase
       unless Domain.valid_currency_code?(currency)
         raise MCP.invalid("currency must be a three-letter ISO code such as USD, not #{a.currency.inspect}.")
       end
       amount = MCP.given(a.amount) || raise MCP.invalid("Parameter amount is missing.")
-      minor = begin
-        MCP.parse_decimal(amount, Domain.currency_decimals(currency))
-      rescue ex : DecimalError
-        raise MCP.invalid("Invalid amount #{a.amount.inspect} for #{currency}: #{ex.message}")
-      end
-      raise MCP.invalid("amount must be greater than 0.") if minor <= 0
-      rate = a.fx_rate
+      decimals = Domain.currency_decimals(currency)
+      minor = MCP.parse_decimal(amount, decimals) ||
+              raise MCP.invalid("Invalid amount #{amount.inspect} for #{currency}: #{MCP.decimal_rule(decimals)}.")
+      rate, source = a.fx_rate.try { |r| {r, Domain::FXSource::Manual} } || {nil, nil}
       if currency == "EUR"
         raise MCP.invalid("fx_rate is only for foreign currencies.") if rate
-        input.amount_cents = minor
-        return input
+        cents = minor
+      else
+        rate, source = ecb_rate(currency, date) unless rate
+        cents = Domain.to_eur_cents(minor, currency, rate) rescue 0_i64
       end
-      input.original_amount_minor, input.original_currency = minor, currency
-      if rate
-        raise MCP.invalid("fx_rate must be greater than 0.") if rate <= 0
-        input.fx_rate, input.fx_source = rate, Domain::FXSource::Manual
-        return input
-      end
-      no_rate = MCP.invalid("There is no exchange rate for #{currency} on #{Store.format_date(date)}. Ask the user for the rate and pass it as fx_rate.")
-      fx = @d.fx || raise no_rate
-      found = begin
-        fx.rate(currency, date)
-      rescue ex
-        Log.info(exception: ex, &.emit("mcp: rate not available", currency: currency, date: Store.format_date(date)))
-        raise no_rate
-      end
-      raise no_rate unless found.rate > 0
-      input.fx_rate, input.fx_source = found.rate, found.source
-      input
+      {amount_cents: cents, original_amount_minor: minor, original_currency: currency, fx_rate: rate, fx_source: source}
+    end
+
+    private def ecb_rate(currency : String, date : Time) : {Float64, Domain::FXSource}
+      found = @d.fx.rate(currency, date)
+      {found.rate, found.source}
+    rescue ex
+      Log.info(exception: ex, &.emit("mcp: rate not available", currency: currency, date: Store.format_date(date)))
+      raise MCP.invalid("There is no exchange rate for #{currency} on #{Store.format_date(date)}. Ask the user for the rate and pass it as fx_rate.")
     end
 
     private def create(input : Store::ExpenseInput, payer : Store::Participant, directory : Directory,
                        allow_duplicate : Bool) : CreatedOut
-      cents = euro_cents(input)
-      if !allow_duplicate && cents > 0 && (same = duplicate_of(input, cents))
+      if !allow_duplicate && input.amount_cents > 0 && (same = duplicate_of(input))
         raise MCP.invalid("This looks like a duplicate of entry #{same.id} (#{Store.format_date(same.date)}, #{same.title}, " \
                           "#{MCP.eur(same.amount_cents)} EUR, paid by #{same.paid_by_name}). " \
                           "Ask the user; if it really is a second one, call again with allow_duplicate=true.")
@@ -188,7 +157,6 @@ module Zipfelkasse::MCP
       id = begin
         @d.store.create_expense(payer.id, input, text: "Über MCP angelegt")
       rescue ex : Domain::ValidationError
-        # The app's own rules (e.g. sum of the split) answer in German.
         raise MCP.invalid("The app refused the entry (message in German): #{ex.message}")
       end
       Log.info(&.emit("mcp: entry created", id: id, reimbursement: input.reimbursement?))
@@ -196,14 +164,8 @@ module Zipfelkasse::MCP
         "Created as entry #{id} with #{payer.name} as author. Changing or deleting it is only possible in the app.")
     end
 
-    private def euro_cents(input : Store::ExpenseInput) : Int64
-      return input.amount_cents if Domain.eur?(input.original_currency)
-      Domain.to_eur_cents(input.original_amount_minor, input.original_currency, input.fx_rate.not_nil!)
-    rescue Domain::ValidationError
-      0_i64
-    end
-
-    private def duplicate_of(input : Store::ExpenseInput, cents : Int64) : Store::Expense?
+    private def duplicate_of(input : Store::ExpenseInput) : Store::Expense?
+      cents = input.amount_cents
       filter = Store::ExpenseFilter.new(from: input.date, to: input.date, paid_by: input.paid_by, min_cents: cents, max_cents: cents)
       @d.store.list_expenses(filter).find do |e|
         next false if e.reimbursement? != input.reimbursement?

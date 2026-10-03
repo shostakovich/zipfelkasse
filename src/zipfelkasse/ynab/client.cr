@@ -11,35 +11,23 @@ module Zipfelkasse::YNAB
 
   class APIError < Exception
     getter status : Int32
-    getter id : String
-    getter name : String
-    getter detail : String
-    getter retry_after : Time::Span # on 429, if given
+    getter retry_after : Time::Span
 
-    def initialize(@status, @id = "", @name = "", @detail = "", @retry_after = Time::Span.zero)
-      super(APIError.text(@status, @name, @detail))
-    end
-
-    protected def self.text(status : Int32, name : String, detail : String) : String
-      case status
-      when 401 then return "YNAB: Token ungültig oder abgelaufen"
-      when 429 then return "YNAB: Anfragelimit erreicht (200 pro Stunde)"
-      end
-      msg = "YNAB-Fehler #{status}"
-      if !detail.empty?
-        msg += ": " + detail
-      elsif !name.empty?
-        msg += ": " + name
-      end
-      msg
+    def initialize(@status, detail : String? = nil, @retry_after = Time::Span.zero)
+      super(case status
+      when 401 then "YNAB: Token ungültig oder abgelaufen"
+      when 429 then "YNAB: Anfragelimit erreicht (200 pro Stunde)"
+      else          ["YNAB-Fehler #{status}", detail.presence].compact.join(": ")
+      end)
     end
   end
 
+  # Whether YNAB processed the request is unknown.
   class UnclearError < Exception
   end
 
   enum Failure
-    Unclear # whether YNAB processed the request is unknown (network, timeout, 5xx, unreadable answer)
+    Unclear # network, timeout, 5xx or an unreadable answer
     Unauthorized
     Forbidden
     NotFound
@@ -70,62 +58,49 @@ module Zipfelkasse::YNAB
 
   struct APIAccount
     include JSON::Serializable
-    getter id : String = ""
-    getter name : String = ""
-    getter type : String = ""
-    getter on_budget : Bool = false
-    getter closed : Bool = false
-    getter deleted : Bool = false
-  end
-
-  struct APICurrencyFormat
-    include JSON::Serializable
-    getter iso_code : String = ""
+    getter id : String
+    getter name : String
+    getter on_budget : Bool
+    getter closed : Bool
+    getter deleted : Bool
   end
 
   struct APIPlan
     include JSON::Serializable
-    getter id : String = ""
-    getter name : String = ""
-    getter currency_format : APICurrencyFormat? = nil
-    getter accounts : Array(APIAccount) = [] of APIAccount
+    getter id : String
+    getter name : String
+    getter currency_format : NamedTuple(iso_code: String)?
+    getter accounts = [] of APIAccount
 
-    def currency : String
-      currency_format.try(&.iso_code) || ""
+    def currency : String?
+      currency_format.try(&.[:iso_code])
     end
   end
 
   struct APICategory
     include JSON::Serializable
-    getter id : String = ""
-    getter name : String = ""
-    getter hidden : Bool = false
-    getter internal : Bool = false
-    getter deleted : Bool = false
+    getter id : String
+    getter name : String
+    getter hidden : Bool
+    getter deleted : Bool
+    getter internal = false
   end
 
   struct APICategoryGroup
     include JSON::Serializable
-    getter id : String = ""
-    getter name : String = ""
-    getter hidden : Bool = false
-    getter internal : Bool = false
-    getter deleted : Bool = false
-    getter categories : Array(APICategory) = [] of APICategory
+    getter id : String
+    getter name : String
+    getter hidden : Bool
+    getter deleted : Bool
+    getter internal = false
+    getter categories : Array(APICategory)
   end
 
   struct APITxn
     include JSON::Serializable
-    getter id : String = ""
-    getter date : String = ""
-    getter amount : Int64 = 0
-    getter memo : String? = nil
-    getter payee_name : String? = nil
-    getter category_id : String? = nil
-    getter account_id : String = ""
-    getter cleared : String = ""
-    getter approved : Bool = false
-    getter deleted : Bool = false
+    getter id : String
+    getter memo : String?
+    getter deleted : Bool
   end
 
   # Never an import_id: YNAB would merge imported transactions with the
@@ -135,59 +110,23 @@ module Zipfelkasse::YNAB
     include JSON::Serializable
   end
 
-  struct PlansData
-    include JSON::Serializable
-    getter plans : Array(APIPlan)
-  end
-
-  struct CategoriesData
-    include JSON::Serializable
-    getter category_groups : Array(APICategoryGroup)
-  end
-
-  struct AccountData
-    include JSON::Serializable
-    getter account : APIAccount
-  end
-
-  struct TxnsData
-    include JSON::Serializable
-    getter transactions : Array(APITxn)
-  end
-
-  struct Envelope(T)
-    include JSON::Serializable
-    getter data : T
-  end
-
-  struct ErrorBody
-    include JSON::Serializable
-    getter error : ErrorFields = ErrorFields.from_json("{}")
-  end
-
-  struct ErrorFields
-    include JSON::Serializable
-    getter id : String = ""
-    getter name : String = ""
-    getter detail : String = ""
-  end
-
-  # Talks to the YNAB API on behalf of a token. An answer without the
-  # expected data is an unclear outcome, never an empty list.
+  # An answer without the expected data is an unclear outcome, never an empty list.
   class Client
+    alias Transactions = NamedTuple(transactions: Array(APITxn))
+
     def initialize(@base_url : String, @token : String, @http : OutboundHTTP)
     end
 
     def plans : Array(APIPlan)
-      get(PlansData, "/plans?include_accounts=true").plans
+      get(NamedTuple(plans: Array(APIPlan)), "/plans?include_accounts=true")[:plans]
     end
 
     def categories(plan_id : String) : Array(APICategoryGroup)
-      get(CategoriesData, Client.plan_path(plan_id) + "/categories").category_groups
+      get(NamedTuple(category_groups: Array(APICategoryGroup)), Client.plan_path(plan_id) + "/categories")[:category_groups]
     end
 
     def account(plan_id : String, account_id : String) : APIAccount
-      get(AccountData, Client.plan_path(plan_id) + "/accounts/" + URI.encode_path_segment(account_id)).account
+      get(NamedTuple(account: APIAccount), Client.plan_path(plan_id) + "/accounts/" + URI.encode_path_segment(account_id))[:account]
     end
 
     def create_transactions(plan_id : String, txns : Array(SaveTxn)) : Array(APITxn)
@@ -203,7 +142,7 @@ module Zipfelkasse::YNAB
     end
 
     def account_transactions(plan_id : String, account_id : String) : Array(APITxn)
-      get(TxnsData, Client.plan_path(plan_id) + "/accounts/" + URI.encode_path_segment(account_id) + "/transactions").transactions
+      get(Transactions, Client.plan_path(plan_id) + "/accounts/" + URI.encode_path_segment(account_id) + "/transactions")[:transactions]
     end
 
     protected def self.plan_path(plan_id : String) : String
@@ -212,7 +151,7 @@ module Zipfelkasse::YNAB
 
     private def save(method : String, plan_id : String, txns : Array(SaveTxn)) : Array(APITxn)
       body = {transactions: txns}.to_json
-      decode(TxnsData, request(method, Client.plan_path(plan_id) + "/transactions", body)).transactions
+      decode(Transactions, request(method, Client.plan_path(plan_id) + "/transactions", body))[:transactions]
     end
 
     private def get(type : T.class, path : String) : T forall T
@@ -220,7 +159,7 @@ module Zipfelkasse::YNAB
     end
 
     private def decode(type : T.class, data : String) : T forall T
-      Envelope(T).from_json(data).data
+      NamedTuple(data: T).from_json(data)[:data]
     rescue ex : JSON::ParseException | JSON::SerializableError
       raise UnclearError.new("YNAB-Antwort unlesbar: #{ex.message}")
     end
@@ -239,16 +178,9 @@ module Zipfelkasse::YNAB
     end
 
     private def api_error(status : Int32, data : String, retry_after : String?) : APIError
-      fields = begin
-        ErrorBody.from_json(data).error
-      rescue JSON::ParseException | JSON::SerializableError
-        ErrorFields.from_json("{}")
-      end
-      wait = Time::Span.zero
-      if (s = retry_after.try(&.strip.to_i64?)) && s > 0
-        wait = s.seconds
-      end
-      APIError.new(status, fields.id, fields.name, fields.detail, wait)
+      error = NamedTuple(error: NamedTuple(name: String?, detail: String?)).from_json(data)[:error] rescue nil
+      wait = retry_after.try(&.strip.to_i64?).try { |seconds| seconds.seconds if seconds > 0 }
+      APIError.new(status, error.try { |e| e[:detail].presence || e[:name] }, wait || Time::Span.zero)
     end
   end
 end

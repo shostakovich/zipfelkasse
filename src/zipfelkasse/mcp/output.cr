@@ -24,7 +24,6 @@ module Zipfelkasse::MCP
     include JSON::Serializable
   end
 
-  # The period is a field named after the interval ("month", "week", "year").
   record HistoryRow, interval : Domain::PeriodUnit, label : String, balances : Array(BalanceOut) do
     def to_json(json : JSON::Builder) : Nil
       json.object do
@@ -71,13 +70,13 @@ module Zipfelkasse::MCP
       end
       return unless full
       if e.foreign?
-        @original = MCP.money(e.original_amount_minor, e.original_currency)
+        @original = "#{Domain.format_decimal(e.original_amount_minor, Domain.currency_decimals(e.original_currency), '.')} #{e.original_currency}"
         @fx_rate = e.fx_rate unless e.fx_rate == 0
         @fx_source = e.fx_source.try(&.key)
       end
       @notes = e.notes.presence
       return if e.reimbursement?
-      @split = e.split_mode.key
+      @split = e.split_mode.to_s.underscore
       @shares = e.shares.map { |s| ShareOut.new(names[s.participant_id]? || "", MCP.eur(s.amount_cents), s.amount_cents) } unless e.shares.empty?
     end
   end
@@ -156,11 +155,11 @@ module Zipfelkasse::MCP
       @id, @expense_id = a.id, a.expense_id
       @at = MCP.rfc3339(a.at.in(location))
       @actor = a.actor_name.presence || "system"
-      @action = a.action.key
+      @action = a.action.to_s.underscore
       details = a.details
       @title, @text = details.title, details.text
       @amount_cents = details.amount_cents
-      @amount = MCP.eur?(@amount_cents)
+      @amount = @amount_cents.try { |cents| MCP.eur(cents) }
       @changes = details.changes unless details.changes.empty?
     end
   end

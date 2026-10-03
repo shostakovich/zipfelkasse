@@ -1,5 +1,3 @@
-require "socket"
-
 module Zipfelkasse
   class Config
     class Error < Exception
@@ -77,90 +75,6 @@ module Zipfelkasse
       yield
     rescue ex
       raise Error.new("invalid #{name}", cause: ex)
-    end
-
-    # An IP network (CIDR), always masked.
-    struct Prefix
-      getter bytes : Bytes
-      getter bits : Int32
-
-      def initialize(@bytes, @bits)
-      end
-
-      # Comma- or whitespace-separated; single IP addresses become /32 or /128.
-      def self.parse_list(s : String) : Array(Prefix)
-        s.split(/[, \t\n]/, remove_empty: true).map { |f| parse(f) }
-      end
-
-      def self.parse(s : String) : Prefix
-        if s.includes?('/')
-          addr, _, len = s.partition('/')
-          bytes = Prefix.addr_bytes(addr) || raise ArgumentError.new("#{addr.inspect} is not an IP address")
-          n = len.to_i? if len.matches?(/\A\d+\z/)
-          raise ArgumentError.new("#{len.inspect} is not a valid prefix length for #{addr}") if n.nil? || n > bytes.size * 8
-          new(mask(bytes, n), n)
-        else
-          bytes = Prefix.addr_bytes(s) || raise ArgumentError.new("#{s.inspect} is not an IP address or network")
-          bytes = unmap(bytes)
-          new(bytes, bytes.size * 8)
-        end
-      end
-
-      def contains?(addr : String) : Bool
-        if b = Prefix.addr_bytes(addr)
-          contains?(b)
-        else
-          false
-        end
-      end
-
-      def contains?(b : Bytes) : Bool
-        b = Prefix.unmap(b)
-        return false unless b.size == @bytes.size
-        Prefix.mask(b, @bits) == @bytes
-      end
-
-      def to_s(io : IO) : Nil
-        if @bytes.size == 4
-          io << @bytes.join('.')
-        else
-          fields = StaticArray(UInt16, 8).new { |i| (@bytes[2 * i].to_u16 << 8) | @bytes[2 * i + 1] }
-          io << Socket::IPAddress.v6(fields, port: 0_u16).address
-        end
-        io << '/' << @bits
-      end
-
-      def self.addr_bytes(s : String) : Bytes?
-        return nil if s.includes?('%') # zones are not supported
-        if s.matches?(/\A\d{1,3}(\.\d{1,3}){3}\z/)
-          return nil if s.split('.').any? { |p| p.size > 1 && p.starts_with?('0') } # leading zeros would be ambiguous (octal)
-          fields = Socket::IPAddress.parse_v4_fields?(s) || return nil
-          Bytes.new(4) { |i| fields[i] }
-        elsif s.includes?(':')
-          fields = Socket::IPAddress.parse_v6_fields?(s) || return nil
-          Bytes.new(16) { |i| (i.even? ? fields[i // 2] >> 8 : fields[i // 2] & 0xff).to_u8 }
-        end
-      end
-
-      # IPv4-mapped IPv6 (::ffff:a.b.c.d) → IPv4.
-      def self.unmap(b : Bytes) : Bytes
-        if b.size == 16 && b[0, 10].all?(&.zero?) && b[10] == 0xff && b[11] == 0xff
-          b[12, 4].dup
-        else
-          b
-        end
-      end
-
-      def self.mask(b : Bytes, bits : Int32) : Bytes
-        Bytes.new(b.size) do |i|
-          keep = (bits - i * 8).clamp(0, 8)
-          b[i] & (keep == 0 ? 0_u8 : (0xff_u8 << (8 - keep)))
-        end
-      end
-
-      def ==(other : Prefix) : Bool
-        @bits == other.bits && @bytes == other.bytes
-      end
     end
   end
 end
