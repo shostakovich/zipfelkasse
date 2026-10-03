@@ -12,15 +12,16 @@ module Zipfelkasse::Web
 
   # Learned category suggestions for expense-form.js: it looks up the title
   # key in `titles`, otherwise each of its words in `words` (category and
-  # support) and takes the word with the most support. Serialized as
-  # {"t":{key:cat},"w":{word:[cat,support]}}.
-  record CategorySuggestions, titles : Hash(String, Int64), words : Hash(String, {Int64, Int64}) do
-    def to_json(json : JSON::Builder) : Nil
-      json.object do
-        json.field("t") { json.object { titles.keys.sort!.each { |k| json.field(k, titles[k]) } } }
-        json.field("w") { json.object { words.keys.sort!.each { |k| json.field(k) { words[k].to_json(json) } } } }
-      end
-    end
+  # support) and takes the word with the most support.
+  record CategorySuggestions,
+    titles : Hash(String, Int64),
+    words : Hash(String, {Int64, Int64}) do
+    include JSON::Serializable
+
+    @[JSON::Field(key: "t")]
+    @titles : Hash(String, Int64)
+    @[JSON::Field(key: "w")]
+    @words : Hash(String, {Int64, Int64})
   end
 
   # hist is newest first (Store#category_history). Per key the most frequent

@@ -28,6 +28,40 @@ describe "Process: shutdown" do
   end
 end
 
+describe "Process: graceful shutdown" do
+  it "lets a request in flight finish before the process exits" do
+    world = E2E::World.new("shutdown-in-flight")
+    begin
+      user = world.user
+      user.login("Anna").status.should eq 303
+      socket = TCPSocket.new("127.0.0.1", world.app.port)
+      socket.read_timeout = 10.seconds
+      socket << "POST /einstellungen/teilnehmer HTTP/1.1\r\nHost: #{world.app.host}\r\nConnection: close\r\n"
+      socket << "Cookie: wer=#{user.me}\r\nContent-Type: application/x-www-form-urlencoded\r\nContent-Length: 8\r\n\r\nname="
+      socket.flush
+      sleep 200.milliseconds
+
+      exited = Channel(Process::Status?).new
+      spawn { exited.send(world.app.stop(Signal::TERM)) }
+      select
+      when exited.receive
+        fail "the process exited with a request in flight"
+      when timeout(500.milliseconds)
+      end
+
+      socket << "Ben"
+      socket.flush
+      HTTP::Client::Response.from_io(socket).status_code.should eq 303
+      status = exited.receive.not_nil!
+      {status.success?, status.exit_code}.should eq({true, 0})
+      E2E::Database.count(world.app.db_path, "SELECT count(*) FROM participants WHERE name = 'Ben'").should eq 1
+    ensure
+      socket.try &.close
+      world.stop
+    end
+  end
+end
+
 describe "Process: startup errors" do
   world = E2E::World.new("startup-errors")
   after_all { world.stop }
@@ -84,7 +118,7 @@ describe "Process: startup errors" do
 end
 
 describe "Process: nightly backup" do
-  pending "writes a backup shortly after 03:00 and keeps the last seven (the loop ignores the frozen clock)" do
+  it "writes one private backup shortly after 03:00 and keeps the last seven" do
     world = E2E::World.new("backup", now: "2026-10-03T00:59:55Z")
     begin
       user = world.user
@@ -93,11 +127,17 @@ describe "Process: nightly backup" do
       Dir.mkdir_p(dir)
       (1..8).each { |n| File.write(File.join(dir, "zipfelkasse-2026010#{n}-030000.db"), "") }
 
-      E2E.wait_until("nightly backup", 10.seconds) { Dir.children(dir).any?(&.starts_with?("zipfelkasse-20261003-")) }
-      world.app.log.should contain "backup written"
+      E2E.wait_until("nightly backup", 10.seconds) { world.app.log.includes?("backup written") }
       Dir.children(dir).size.should eq 7
+      Dir.children(dir).count(&.starts_with?("zipfelkasse-20261003-")).should eq 1
       newest = File.join(dir, Dir.children(dir).max)
+      File.info(newest).permissions.value.should eq 0o600
       E2E::Database.count(newest, "SELECT count(*) FROM participants").should eq 1
+
+      # The clock stands still: the next run is tomorrow's, not another one right now.
+      sleep 1.5.seconds
+      world.app.log.scan("backup written").size.should eq 1
+      world.app.log.should_not contain "level=ERROR"
     ensure
       world.stop
     end

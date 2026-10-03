@@ -1323,6 +1323,37 @@ describe "Web: security, PWA, static files and CLI" do
     W.count(world, "SELECT count(*) FROM participants").should eq 1
   end
 
+  scenario "requests that cannot be parsed are bad requests", world do
+    user = world.user
+    user.login("Anna")
+    head = "Host: #{world.app.host}\r\nCookie: wer=#{user.me}\r\nConnection: close\r\n"
+    # A method that is no token could address another route than the path says.
+    answer = W.exchange(world.app, "FOO/BAR /salden HTTP/1.1\r\n#{head}\r\n")
+    answer.should start_with "HTTP/1.1 400 Bad Request"
+    answer.should contain "Ungültige Anfrage."
+    # Multipart bodies that are none.
+    body = "this is no multipart body"
+    answer = W.exchange(world.app, "POST /einstellungen/teilnehmer HTTP/1.1\r\n#{head}Content-Type: multipart/form-data; boundary=x\r\n" \
+                                   "Content-Length: #{body.bytesize}\r\n\r\n#{body}")
+    answer.should start_with "HTTP/1.1 400 Bad Request"
+    W.count(world, "SELECT count(*) FROM participants").should eq 1
+  end
+
+  scenario "a connection reset by the client is no server error", world do
+    user = world.user
+    user.login("Anna")
+    socket = TCPSocket.new("127.0.0.1", world.app.port)
+    socket << "POST /einstellungen/teilnehmer HTTP/1.1\r\nHost: #{world.app.host}\r\nCookie: wer=#{user.me}\r\n" \
+              "Content-Type: application/x-www-form-urlencoded\r\nContent-Length: 100\r\n\r\nname=Ben"
+    socket.flush
+    sleep 100.milliseconds
+    socket.linger = 0
+    socket.close
+    sleep 300.milliseconds
+    user.get("/healthz").status.should eq 200
+    W.count(world, "SELECT count(*) FROM participants").should eq 1
+  end
+
   scenario "flash messages are shown once by whatever page comes next", world do
     user = world.user
     user.login("Anna")
@@ -1449,6 +1480,11 @@ describe "Web: security, PWA, static files and CLI" do
       r = user.get("/static/#{file}")
       {file, r.status, r.content_type, r.headers["Cache-Control"]}.should eq({file, 200, type, "public, max-age=300"})
       r.body.bytesize.should eq r.headers["Content-Length"].to_i
+      r.headers["ETag"].should match(/\A"[0-9a-f]{10}"\z/)
+      r.headers["Accept-Ranges"]?.should be_nil
+      r3 = user.get("/static/#{file}", HTTP::Headers{"If-None-Match" => r.headers["ETag"]})
+      {file, r3.status, r3.body}.should eq({file, 304, ""})
+      user.get("/static/#{file}", HTTP::Headers{"If-None-Match" => %("other")}).status.should eq 200
       r2 = user.get("/static/#{file}?v=egal")
       r2.headers["Cache-Control"].should eq "public, max-age=31536000, immutable"
       r2.body.should eq r.body

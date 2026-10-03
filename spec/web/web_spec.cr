@@ -190,10 +190,24 @@ describe Zipfelkasse::Web do
     end
   end
 
+  it "answers with plain text when even the error page cannot be rendered" do
+    with_server do |srv|
+      id = must_participant(srv.store, "Anna")
+      srv.store.close
+      res = srv.get("/salden", who_cookie(id))
+      res.status_code.should eq 500
+      res.headers["Content-Type"].should start_with "text/plain"
+      res.body.should eq "Da ist etwas schiefgegangen.\n"
+    end
+  end
+
   it "answers health checks and unknown paths" do
     with_server do |srv|
       srv.get("/healthz").body.should eq "ok\n"
-      srv.get("/gibtsnicht", who_cookie(must_participant(srv.store, "Anna"))).status_code.should eq 404
+      res = srv.get("/gibtsnicht", who_cookie(must_participant(srv.store, "Anna")))
+      res.status_code.should eq 404
+      res.body.should contain "Seite nicht gefunden."
+      srv.post_form("/healthz", {} of String => String).status_code.should eq 405
     end
   end
 end

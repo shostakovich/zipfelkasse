@@ -32,6 +32,17 @@ module E2E
       user.run { |b| b.request("POST", path, headers, body, chunked) }
     end
 
+    # Sends raw bytes to the app and returns everything it answers until it
+    # closes the connection.
+    def self.exchange(app : App, request : String) : String
+      TCPSocket.open("127.0.0.1", app.port) do |socket|
+        socket.read_timeout = 10.seconds
+        socket << request
+        socket.flush
+        socket.gets_to_end
+      end
+    end
+
     # Puts a cookie into the user's jar.
     def self.set_cookie(user : User, name : String, value : String) : Nil
       user.browser.jar << HTTP::Cookie.new(name, value)
