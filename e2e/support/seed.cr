@@ -1,4 +1,5 @@
 require "json"
+require "digest/sha1"
 
 module E2E
   # The database the read-only crawl runs on: E2E_SEED_DB (e.g. a backup of
@@ -7,9 +8,14 @@ module E2E
     if path = ENV["E2E_SEED_DB"]?.presence
       return path
     end
-    path = File.join(data_dir, "seed.db")
+    # Built by the reference (Go) binary if there is one: then every read of
+    # the seed also shows that the binary under test opens a Go database.
+    builder = ref_bin || bin
+    stamp = Digest::SHA1.hexdigest("#{File.realpath(builder)} #{File.info(builder).modification_time.to_unix_ns}")[0, 12]
+    path = File.join(data_dir, "seed-#{stamp}.db")
     return path if File.exists?(path)
-    world = World.new("seed-build", now: Seed::PHASE_A)
+    bins = [{"app", builder}]
+    world = World.new("seed-build", now: Seed::PHASE_A, bins: bins)
     begin
       Seed.new(world).run
       world.verify!("seed")

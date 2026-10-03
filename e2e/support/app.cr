@@ -20,7 +20,8 @@ module E2E
     getter log_path : String
     @process : Process?
 
-    def initialize(@name, @bin, @dir, @ecb : FakeECB, @ynab : FakeYNAB, @now : String = DEFAULT_NOW)
+    def initialize(@name, @bin, @dir, @ecb : FakeECB, @ynab : FakeYNAB, @now : String = DEFAULT_NOW,
+                   @extra_env = {} of String => String)
       @port = App.free_port
       @log_path = File.join(@dir, "app.log")
     end
@@ -57,7 +58,7 @@ module E2E
         "ZIPFELKASSE_TEST_ECB_URL"    => @ecb.base_url,
         "ZIPFELKASSE_TEST_YNAB_URL"   => @ynab.base_url,
         "ZIPFELKASSE_TEST_YNAB_DELAY" => "300ms",
-      }
+      }.merge(@extra_env)
     end
 
     # Starts the binary and waits until /healthz answers and the startup

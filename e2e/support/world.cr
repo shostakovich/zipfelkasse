@@ -26,7 +26,11 @@ module E2E
     @ecb : FakeECB?
     @dir : String?
 
-    def initialize(@name : String, @seed_db : String? = nil, @now = DEFAULT_NOW)
+    # *seed_db*: start from a copy of this database instead of an empty one.
+    # *env*: extra environment for the apps (e.g. MCP_ALLOWED_CIDRS).
+    # *bins*: the binaries to run; default E2E_BIN and, if set, E2E_REF_BIN.
+    def initialize(@name : String, @seed_db : String? = nil, @now = DEFAULT_NOW,
+                   @env = {} of String => String, @bins : Array({String, String})? = nil)
     end
 
     def apps : Array(App)
@@ -46,13 +50,16 @@ module E2E
     end
 
     private def start : Array(App)
-      bins = [{"app", E2E.bin}]
-      if ref = E2E.ref_bin
-        bins << {"ref", ref}
+      bins = @bins || begin
+        b = [{"app", E2E.bin}]
+        if ref = E2E.ref_bin
+          b << {"ref", ref}
+        end
+        b
       end
       dir = @dir = File.join(E2E.data_dir, "worlds", "#{@name.gsub(/[^a-z0-9]+/i, "-")}-#{Random.new.hex(3)}")
       apps = bins.map do |label, bin|
-        app = App.new(label, bin, File.join(dir, label), ecb, FakeYNAB.new, @now)
+        app = App.new(label, bin, File.join(dir, label), ecb, FakeYNAB.new, @now, @env)
         if seed = @seed_db
           Dir.mkdir_p(app.dir)
           File.copy(seed, app.db_path)

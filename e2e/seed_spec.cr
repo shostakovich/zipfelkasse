@@ -1,7 +1,7 @@
 require "./e2e_helper"
 
-# Builds the shared test household (see E2E::Seed) and keeps the database of
-# the binary under test as e2e/data/seed.db for the read-only comparison.
+# Builds the test household (see E2E::Seed) through every app at once: in
+# diff mode every step of the seed must give the same answers and data.
 describe "Seed" do
   world = E2E::World.new("seed", now: E2E::Seed::PHASE_A)
   after_all { world.stop }
@@ -9,6 +9,5 @@ describe "Seed" do
   scenario "builds a household with every feature", world do
     seed = E2E::Seed.new(world).run
     seed.expenses.size.should be > 500
-    world.save(File.join(E2E.data_dir, "seed.db"))
   end
 end
