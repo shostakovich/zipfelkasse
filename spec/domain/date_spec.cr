@@ -148,7 +148,7 @@ describe Zipfelkasse::Domain do
   it "formats dates" do
     D.format_date(d("2026-10-02")).should eq "02.10.2026"
     D.format_date(nil).should eq ""
-    D.format_date(Time.utc(1, 1, 1)).should eq "" # counts as "not set"
+    D.format_date(D::UNSET_TIME).should eq ""
     D.format_date(Time.utc(26, 10, 2)).should eq "02.10.0026"
   end
 

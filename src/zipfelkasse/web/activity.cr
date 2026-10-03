@@ -8,7 +8,7 @@ module Zipfelkasse::Web
     delegate id, actor_id, action, expense_id, details, to: @activity
 
     def at : Time
-      @activity.at || Time.utc(1, 1, 1)
+      @activity.at || Domain::UNSET_TIME
     end
 
     def actor : String

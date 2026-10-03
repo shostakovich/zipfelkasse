@@ -22,19 +22,16 @@ module Zipfelkasse
       end
     end
 
-    # JSON of a calendar date; nil is stored as 0001-01-01T00:00:00Z, which
-    # older rows contain.
+    # JSON of a calendar date; nil is stored as 0001-01-01T00:00:00Z.
     module DateConverter
-      ZERO = Time.utc(1, 1, 1)
-
       def self.to_json(value : Time?, json : JSON::Builder) : Nil
-        json.string((value || ZERO).to_rfc3339)
+        json.string((value || Domain::UNSET_TIME).to_rfc3339)
       end
 
       def self.from_json(pull : JSON::PullParser) : Time?
         return pull.read_null if pull.kind.null?
         t = Time.parse_rfc3339(pull.read_string)
-        t == ZERO ? nil : Domain.date_of(t)
+        t == Domain::UNSET_TIME ? nil : Domain.date_of(t)
       end
     end
 
@@ -85,7 +82,7 @@ module Zipfelkasse
                      @fx_rate = 0.0, @fx_source = "", @recurring_id = 0_i64)
       end
 
-      # The converter is not called for nil, but templates need the zero date.
+      # The converter is not called for nil, but templates need the unset date.
       protected def on_to_json(json : JSON::Builder)
         json.field("date") { DateConverter.to_json(@date, json) }
       end

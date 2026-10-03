@@ -190,6 +190,7 @@ module Zipfelkasse::FX
 
     private def download(file : String) : LoadResult
       uri = URI.parse(@base_url + file)
+      # Crystal's HTTP::Client ignores HTTPS_PROXY and does not follow redirects.
       client = HTTP::Client.new(uri)
       client.connect_timeout = 60.seconds
       client.read_timeout = 60.seconds

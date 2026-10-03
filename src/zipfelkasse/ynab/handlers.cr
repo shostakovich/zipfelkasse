@@ -19,7 +19,7 @@ module Zipfelkasse::YNAB
     property account_name = ""
     property currency = "" # of the selected plan, if not EUR
     property? has_target = false
-    property start_date : Time = Time.utc(1, 1, 1)
+    property start_date : Time = Domain::UNSET_TIME
     property categories = [] of CategoryRow
     property groups = [] of GroupOption
     property? ready = false

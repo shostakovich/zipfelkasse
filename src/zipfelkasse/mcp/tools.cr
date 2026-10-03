@@ -862,7 +862,7 @@ module Zipfelkasse::MCP
               acts.each do |act|
                 j.object do
                   j.field "id", act.id
-                  j.field "at", MCP.rfc3339((act.at || Time.utc(1, 1, 1)).in(loc))
+                  j.field "at", MCP.rfc3339((act.at || Domain::UNSET_TIME).in(loc))
                   j.field "actor", act.actor_name.presence || "system"
                   j.field "action", act.action
                   j.field "expense_id", act.expense_id unless act.expense_id == 0

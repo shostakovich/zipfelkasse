@@ -299,7 +299,8 @@ module Zipfelkasse
     STATS_BY_PERSON         = "person"
     STATS_BY_CATEGORY_MONTH = "category_month"
 
-    # Periods look like "2026", "2026-09" and ISO week "2026-W40".
+    # Periods look like "2026", "2026-09" and ISO week "2026-W40". The week
+    # format needs SQLite >= 3.46 (3.45 returns NULL).
     STATS_PERIOD = {
       STATS_BY_YEAR           => "substr(e.date, 1, 4)",
       STATS_BY_MONTH          => "substr(e.date, 1, 7)",

@@ -5,6 +5,10 @@ module Zipfelkasse::Domain
   # The storage and HTML <input type=date> format.
   DATE_LAYOUT = "%Y-%m-%d"
 
+  # Stands in where a `Time` is required but none is known; stored and
+  # exported as 0001-01-01T00:00:00Z.
+  UNSET_TIME = Time.utc(1, 1, 1)
+
   # Plausible years for calendar dates. Guards against typos ("0026") and
   # against huge loops for recurrences starting at an absurd date.
   MIN_YEAR = 2000
@@ -41,12 +45,9 @@ module Zipfelkasse::Domain
   end
 
   def format_date(t : Time?) : String
-    return "" if t.nil? || t == ZERO_TIME
+    return "" if t.nil? || t == UNSET_TIME
     t.to_s("%d.%m.%Y")
   end
-
-  # 0001-01-01 counts as "not set".
-  private ZERO_TIME = Time.utc(1, 1, 1)
 
   record Frequency, value : String do
     def valid? : Bool

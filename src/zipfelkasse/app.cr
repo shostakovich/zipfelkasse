@@ -114,7 +114,7 @@ module Zipfelkasse
     private def self.listen(server : HTTP::Server, addr : String) : Nil
       host, _, port = addr.rpartition(':')
       host = host.lchop('[').rchop(']')
-      port_num = port.to_i? || raise Exception.new("listen tcp #{addr}: address #{addr}: missing port in address")
+      port_num = port.to_i? || raise Exception.new("cannot listen on #{addr}: missing port")
       if host.empty?
         begin
           server.bind(TimeoutServer.new("::", port_num))
@@ -125,7 +125,7 @@ module Zipfelkasse
         server.bind(TimeoutServer.new(host, port_num))
       end
     rescue ex : Socket::Error
-      raise Exception.new("listen tcp #{addr}: #{ex.message}")
+      raise Exception.new("cannot listen on #{addr}: #{ex.message}")
     end
 
     def self.backup_loop(stopper : Stopper, store : Store, config : Config, log : Logger) : Nil
@@ -161,7 +161,7 @@ module Zipfelkasse
     def self.health_url(addr : String) : String
       addr = ":8080" if addr.empty?
       host, sep, port = addr.rpartition(':')
-      raise Exception.new("ZIPFELKASSE_ADDR #{addr.inspect}: address #{addr}: missing port in address") if sep.empty?
+      raise Exception.new("ZIPFELKASSE_ADDR #{addr.inspect}: missing port") if sep.empty?
       host = host.lchop('[').rchop(']')
       host = "127.0.0.1" if host.empty? || host == "0.0.0.0" || host == "::"
       host = "[#{host}]" if host.includes?(':')

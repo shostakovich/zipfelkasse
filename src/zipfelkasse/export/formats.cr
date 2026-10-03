@@ -141,10 +141,10 @@ module Zipfelkasse::Export
     end
   end
 
-  # RFC 3339 in UTC with as many fraction digits as needed; nil is the zero
-  # time.
+  # RFC 3339 in UTC with as many fraction digits as needed; nil is
+  # 0001-01-01T00:00:00Z.
   private def self.json_time(t : Time?) : String
-    t = (t || Time.utc(1, 1, 1)).to_utc
+    t = (t || Domain::UNSET_TIME).to_utc
     s = t.to_s("%Y-%m-%dT%H:%M:%S")
     s += "." + t.nanosecond.to_s.rjust(9, '0').rstrip('0') if t.nanosecond > 0
     s + "Z"

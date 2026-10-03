@@ -182,6 +182,7 @@ module Zipfelkasse::YNAB
 
     def open(uri : URI) : HTTP::Client
       raise UnclearError.new("YNAB nicht erreichbar: shutting down") if @stopped
+      # No proxy support (HTTPS_PROXY) and no redirects, as in fx/ecb.cr.
       client = HTTP::Client.new(uri)
       client.connect_timeout = HTTP_TIMEOUT
       client.read_timeout = HTTP_TIMEOUT
