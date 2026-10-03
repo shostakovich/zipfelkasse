@@ -13,16 +13,8 @@ module Zipfelkasse::Web
       Domain.format_cents(cents)
     end
 
-    def amount_input(cents : Int64) : String
-      Domain.format_cents_input(cents)
-    end
-
     def money(minor : Int64, currency : String) : String
       Domain.format_money(minor, currency)
-    end
-
-    def percent(basis_points : Int64) : String
-      Domain.format_basis_points(basis_points)
     end
 
     def date(t : Time?) : String
@@ -51,14 +43,6 @@ module Zipfelkasse::Web
 
     def category_icon(name : String) : String
       Web.category_icon(name)
-    end
-
-    def minor_input(minor : Int64, currency : String) : String
-      Domain.format_minor_input(minor, currency)
-    end
-
-    def rate_input(rate : Float64) : String
-      Domain.format_rate(rate)
     end
   end
 
