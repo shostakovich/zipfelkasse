@@ -3,7 +3,7 @@ require "../spec_helper"
 private alias D = Zipfelkasse::Domain
 
 describe Zipfelkasse::Domain do
-  it "formats cents (TestFormatCents)" do
+  it "formats cents" do
     {
               0_i64 => "0,00 €",
               1_i64 => "0,01 €",
@@ -16,13 +16,13 @@ describe Zipfelkasse::Domain do
     }.each { |cents, want| D.format_cents(cents).should eq want }
   end
 
-  it "formats cents for inputs (TestFormatCentsInput)" do
+  it "formats cents for inputs" do
     {0_i64 => "0,00", 1234_i64 => "12,34", 123456_i64 => "1234,56", -50_i64 => "-0,50"}.each do |cents, want|
       D.format_cents_input(cents).should eq want
     end
   end
 
-  it "parses cents (TestParseCents)" do
+  it "parses cents" do
     {
       "12,34"        => 1234_i64,
       "12.34"        => 1234_i64,
@@ -48,7 +48,7 @@ describe Zipfelkasse::Domain do
     end
   end
 
-  it "parses amounts with other decimals (TestParseMinorDecimals)" do
+  it "parses amounts with other decimals" do
     {
       {"1500", 0}     => 1500_i64,
       {"1.500", 0}    => 1500_i64,
@@ -65,7 +65,7 @@ describe Zipfelkasse::Domain do
     end
   end
 
-  it "parses and formats basis points (TestBasisPoints)" do
+  it "parses and formats basis points" do
     {"50" => 5000_i64, "33,33" => 3333_i64, "33.34" => 3334_i64, "100" => 10000_i64, "12,5 %" => 1250_i64}.each do |input, want|
       D.parse_basis_points(input).should eq want
     end
@@ -73,7 +73,7 @@ describe Zipfelkasse::Domain do
     D.format_basis_points(10000).should eq "100,00 %"
   end
 
-  it "formats money in any currency (TestFormatMoney)" do
+  it "formats money in any currency" do
     {
       {1234_i64, "EUR"}   => "12,34 €",
       {1234_i64, ""}      => "12,34 €",
@@ -83,20 +83,20 @@ describe Zipfelkasse::Domain do
     }.each { |(minor, currency), want| D.format_money(minor, currency).should eq want }
   end
 
-  it "validates currency codes (TestValidCurrencyCode)" do
+  it "validates currency codes" do
     {
       "USD" => true, "EUR" => true, "JPY" => true,
       "usd" => false, "U$D" => false, "US" => false, "USDD" => false, "" => false, " USD" => false, "ÄBC" => false,
     }.each { |code, want| D.valid_currency_code?(code).should eq want }
   end
 
-  it "recognizes euros (TestIsEUR)" do
+  it "recognizes euros" do
     {"" => true, "EUR" => true, "eur" => true, " EUR " => true, "USD" => false, "EU" => false}.each do |currency, want|
       D.eur?(currency).should eq want
     end
   end
 
-  it "converts to euro cents (TestToEURCents)" do
+  it "converts to euro cents" do
     {
       {10000_i64, "USD", 1.0823}  => 9240_i64, # 100 USD / 1.0823 = 92.396... €
       {1000_i64, "JPY", 160.5}    => 623_i64,  # 1000 JPY / 160.5 = 6.2305 €
@@ -106,7 +106,7 @@ describe Zipfelkasse::Domain do
     }.each { |(minor, currency, rate), want| D.to_eur_cents(minor, currency, rate).should eq want }
   end
 
-  it "parses exchange rates (TestParseRate)" do
+  it "parses exchange rates" do
     {
       "1,0857"       => 1.0857,
       "1.0857"       => 1.0857,
@@ -128,7 +128,7 @@ describe Zipfelkasse::Domain do
     end
   end
 
-  it "formats decimals (TestFormatDecimal)" do
+  it "formats decimals" do
     [
       {0_i64, 2, ',', "0,00"}, {5_i64, 2, ',', "0,05"}, {123456_i64, 2, ',', "1234,56"}, {-42_i64, 2, ',', "-0,42"},
       {1500_i64, 0, ',', "1500"}, {1234_i64, 3, ',', "1,234"},
@@ -139,13 +139,12 @@ describe Zipfelkasse::Domain do
     end
   end
 
-  it "formats exchange rates (TestFormatRate)" do
+  it "formats exchange rates" do
     {1.0876 => "1,0876", 17000.0 => "17000", 0.856 => "0,856", 0.0 => "", -1.0 => ""}.each do |rate, want|
       D.format_rate(rate).should eq want
     end
   end
 
-  # Not in the Go tests; expected values produced with Go.
   describe "edge cases" do
     it "formats Int64::MIN and large groups" do
       D.format_cents(Int64::MIN).should eq "-92.233.720.368.547.758,08 €"
@@ -156,7 +155,7 @@ describe Zipfelkasse::Domain do
       D.format_rate(Float64::NAN).should eq ""
     end
 
-    it "parses amounts and reports errors like Go" do
+    it "parses amounts and reports errors" do
       {
         ""               => "Bitte einen Betrag eingeben.",
         " € "            => "Bitte einen Betrag eingeben.",
@@ -194,7 +193,7 @@ describe Zipfelkasse::Domain do
       validation_error { D.parse_minor("1.500,5", 0) }.should eq "Dieser Betrag darf keine Nachkommastellen haben."
     end
 
-    it "parses basis points and rates like Go" do
+    it "parses basis points and rates" do
       validation_error { D.parse_basis_points(" x % ") }.should eq "Ungültige Prozentangabe „x“."
       validation_error { D.parse_basis_points("%") }.should eq "Ungültige Prozentangabe „“."
       validation_error { D.parse_basis_points("50%%") }.should eq "Ungültige Prozentangabe „50%“."
@@ -208,8 +207,8 @@ describe Zipfelkasse::Domain do
       D.parse_rate("0,000000000001").should eq 1e-12
     end
 
-    it "keeps Go's results for absurd rates and rounds half away from zero" do
-      D.to_eur_cents(MAX_CENTS, "USD", 1e-12).should eq Int64::MIN # Go's int64(float) overflow on amd64
+    it "handles absurd rates and rounds half away from zero" do
+      D.to_eur_cents(MAX_CENTS, "USD", 1e-12).should eq Int64::MIN # out of Int64 range
       D.to_eur_cents(5, "EUR", 2.0).should eq 3
       D.to_eur_cents(-5, "EUR", 2.0).should eq -3
       D.to_eur_cents(100, "USD", Float64::INFINITY).should eq 0

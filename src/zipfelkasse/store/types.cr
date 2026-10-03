@@ -61,7 +61,7 @@ module Zipfelkasse
 
       property title : String = ""
       @[JSON::Field(converter: Zipfelkasse::Store::DateConverter, ignore_serialize: true)]
-      property date : Time? = nil # calendar date
+      property date : Time? = nil          # calendar date
       property category_id : Int64 = 0_i64 # 0 = no category
       property paid_by : Int64 = 0_i64
       property notes : String = ""
@@ -97,7 +97,7 @@ module Zipfelkasse
       getter id : Int64
       property input : ExpenseInput
       property shares : Array(Domain::Share) # sorted by participant_id
-      property category_name : String       # "" without category
+      property category_name : String        # "" without category
       property paid_by_name : String
       property created_at : Time?
       property updated_at : Time?
@@ -130,7 +130,7 @@ module Zipfelkasse
 
     # Narrows list_expenses; defaults mean "no filter".
     struct ExpenseFilter
-      property text : String = ""                   # substring of title or notes, folded
+      property text : String = ""                      # substring of title or notes, folded
       property any_text : Array(String) = [] of String # one of them suffices (together with text)
       property category_id : Int64 = 0_i64
       property? without_category : Bool = false # category_id is then ignored

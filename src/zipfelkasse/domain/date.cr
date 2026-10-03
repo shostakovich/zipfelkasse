@@ -41,12 +41,12 @@ module Zipfelkasse::Domain
   end
 
   def format_date(t : Time?) : String
-    return "" if t.nil? || t == GO_ZERO_TIME
+    return "" if t.nil? || t == ZERO_TIME
     t.to_s("%d.%m.%Y")
   end
 
   # 0001-01-01 counts as "not set".
-  private GO_ZERO_TIME = Time.utc(1, 1, 1)
+  private ZERO_TIME = Time.utc(1, 1, 1)
 
   record Frequency, value : String do
     def valid? : Bool

@@ -4,7 +4,7 @@
 # * `<%= x %>` is HTML-escaped (`Zipfelkasse::Web::HTML.write`); raw output
 #   only with `<%== x %>` or values of type `Web::SafeHTML`.
 # * `<%-` and `-%>` trim *all* whitespace before or after the tag (newlines
-#   included), like `{{-` and `-}}` in Go templates.
+#   included).
 #
 # Usage (by the compiler): crystal run ecr_process.cr -- <file> <io name>
 require "ecr/lexer"

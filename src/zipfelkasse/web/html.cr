@@ -1,8 +1,6 @@
 require "html"
 
 module Zipfelkasse::Web
-  # HTML that is already safe and is written without escaping (e.g. the
-  # output of the `icon` helper or a rendered partial).
   struct SafeHTML
     getter html : String
 
@@ -15,8 +13,6 @@ module Zipfelkasse::Web
   end
 
   module HTML
-    # Writes a template value: escaped, unless it is SafeHTML. nil writes
-    # nothing (like a missing value in a Go template).
     def self.write(io : IO, value) : Nil
       case value
       when SafeHTML then value.to_s(io)

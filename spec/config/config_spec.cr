@@ -55,7 +55,7 @@ describe Zipfelkasse::Config do
     c.ynab_delay.should eq 200.milliseconds
   end
 
-  it "masks prefixes and prints them like Go" do
+  it "masks and prints prefixes" do
     Config::Prefix.parse("10.1.2.3/8").to_s.should eq "10.0.0.0/8"
     Config::Prefix.parse("fd00::1/8").to_s.should eq "fd00::/8"
     Config::Prefix.parse("::ffff:1.2.3.4").to_s.should eq "1.2.3.4/32"

@@ -160,7 +160,6 @@ module Zipfelkasse::Web
         path: "/", max_age: 60.seconds, http_only: true, samesite: HTTP::Cookie::SameSite::Lax)
     end
 
-    # Reads and deletes the flash message (every rendered page does this).
     def take_flash : String
       c = request.cookies[FLASH_COOKIE]? || return ""
       response.cookies << HTTP::Cookie.new(FLASH_COOKIE, "", path: "/", max_age: Time::Span.zero)

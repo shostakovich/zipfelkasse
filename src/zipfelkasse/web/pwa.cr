@@ -1,13 +1,9 @@
 module Zipfelkasse::Web
-  # The icons in static/icons/ are exports of the Zipfelkasse logo (mouse
-  # with abacus); static/mascot.webp is the header logo.
-
   # The primary color (Spliit green, --primary in light mode).
   THEME_COLOR = "#047756"
 
   class Handlers
-    # The web app manifest (public, so that installing works even before a
-    # person is selected). The name is the group name.
+    # Public, so that installing works even before a person is selected.
     def manifest(r : Request) : Nil
       name = @d.store.group_name
       r.response.headers["Content-Type"] = "application/manifest+json; charset=utf-8"

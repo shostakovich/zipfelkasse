@@ -1,6 +1,5 @@
 module Zipfelkasse::Web
-  # Registers a route. The handler gets a Request; errors go to the central
-  # handler (Web::ErrorHandler). Kemal's GET routes also answer HEAD.
+  # Errors go to Web::ErrorHandler. Kemal's GET routes also answer HEAD.
   def self.route(d : Deps, method : String, path : String, &block : Request -> _) : Nil
     Kemal::RouteHandler::INSTANCE.add_route(method, path) do |ctx|
       block.call(Request.new(ctx, d))
@@ -8,8 +7,6 @@ module Zipfelkasse::Web
     end
   end
 
-  # The routes of the core app (people, expenses, balances, activity,
-  # settings) plus static files, health check and PWA.
   class Handlers
     include Helpers
 
@@ -31,8 +28,8 @@ module Zipfelkasse::Web
       register_pages
     end
 
-    # Pages of the core app (expenses.cr, balances.cr, activity.cr,
-    # settings.cr reopen this class and add their routes here).
+    # Calls every other register_* method; feature files add them by
+    # reopening this class.
     def register_pages : Nil
       {% for m in @type.methods.select { |m| m.name.starts_with?("register_") && m.name != "register_pages" } %}
         {{ m.name.id }}
@@ -48,8 +45,6 @@ module Zipfelkasse::Web
       r.response.content_type = "text/plain; charset=utf-8"
       r.response.print "ok\n"
     end
-
-    # --- who are you? ------------------------------------------------------------
 
     private def render_who(r : Request, status : Int32, return_to : String, name : String, error : String) : Nil
       participants = @d.store.list_participants(false)

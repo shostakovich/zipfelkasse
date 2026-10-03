@@ -28,7 +28,7 @@ module Zipfelkasse
 
     # Migrations written in Crystal for data fixes that SQL alone cannot do.
     # They share the numbering with the SQL files and register themselves here.
-    GO_MIGRATIONS = {} of Int32 => Proc(Store, DB::Connection, Nil)
+    DATA_MIGRATIONS = {} of Int32 => Proc(Store, DB::Connection, Nil)
 
     getter db : DB::Database
     getter path : String
@@ -111,7 +111,7 @@ module Zipfelkasse
 
     def migrate : Nil
       migrations = MIGRATION_FILES.map { |n, name, sql| {n, name, sql.as(String?)} }
-      GO_MIGRATIONS.each_key { |n| migrations << {n, "%03d (Go)" % n, nil} }
+      DATA_MIGRATIONS.each_key { |n| migrations << {n, "%03d (data)" % n, nil} }
       migrations.sort_by!(&.[0])
       migrations.each_cons_pair do |a, b|
         raise Exception.new("migration #{a[0]} is defined twice") if a[0] == b[0]
@@ -124,7 +124,7 @@ module Zipfelkasse
             if sql
               Store.exec_script(tx, sql)
             else
-              GO_MIGRATIONS[n].call(self, tx)
+              DATA_MIGRATIONS[n].call(self, tx)
             end
             tx.exec("PRAGMA user_version = #{n}")
           end

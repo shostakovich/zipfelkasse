@@ -15,7 +15,7 @@ private def balances(h : Hash(Int32, Int32)) : Hash(Int64, Int64)
 end
 
 describe Zipfelkasse::Domain do
-  it "computes balances (TestBalances)" do
+  it "computes balances" do
     entries = [
       # A (1) pays 30 € for all three
       D::Entry.new(1, 3000, [share(1, 1000), share(2, 1000), share(3, 1000)]),
@@ -29,11 +29,11 @@ describe Zipfelkasse::Domain do
     got.values.sum.should eq 0
   end
 
-  it "returns no balances for no entries (TestBalancesEmpty)" do
+  it "returns no balances for no entries" do
     D.balances([] of D::Entry).should be_empty
   end
 
-  describe ".settle (TestSettle)" do
+  describe ".settle" do
     {
       {"empty", {} of Int32 => Int32, [] of D::Transfer},
       {"settled", {1 => 0, 2 => 0}, [] of D::Transfer},
@@ -44,7 +44,6 @@ describe Zipfelkasse::Domain do
        [transfer(3, 1, 2000), transfer(3, 2, 500), transfer(4, 2, 500)]},
       {"tie broken by ID", {5 => 100, 2 => 100, 9 => -100, 3 => -100},
        [transfer(3, 2, 100), transfer(9, 5, 100)]},
-      # Not in the Go tests; produced with Go.
       {"one creditor, tied debtors", {1 => 300, 2 => -100, 3 => -100, 4 => -100},
        [transfer(2, 1, 100), transfer(3, 1, 100), transfer(4, 1, 100)]},
       {"tied creditors", {1 => 100, 2 => 100, 3 => -150, 4 => -50},
@@ -56,7 +55,7 @@ describe Zipfelkasse::Domain do
     end
   end
 
-  it "does not modify its input (TestSettleDoesNotModifyInput)" do
+  it "does not modify its input" do
     b = balances({1 => 100, 2 => -100})
     D.settle(b)
     b.should eq balances({1 => 100, 2 => -100})

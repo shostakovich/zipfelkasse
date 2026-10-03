@@ -82,7 +82,7 @@ package.
 - [x] Phase 0: inventories in `docs/porting/`, this file
 - [x] Test-only overrides in Go (commit `Add test-only overrides for the E2E suite`)
 - [x] Phase 1: E2E suite (`e2e/`) green against the Go binary (108 examples), seed data, diff mode (Go vs Go: 0 differences); the compatibility test is the read crawl on a Go-built seed
-- [ ] Phase 2: foundation (shard.yml, layout, config, CLI, DB + migrations, Kemal, escaping, assets,
+- [x] Phase 2: foundation (shard.yml, layout, config, CLI, DB + migrations, Kemal, escaping, assets,
       error handling, logging, Dockerfile, conventions below)
 - [ ] Phase 3, wave 1: `domain` (ported, being converted from GoCompat to plain Crystal) → `store` (core, participants, settings, activity done)
 - [ ] Phase 3, wave 2: `web`, `mcp`, `ynab`, `fx`, `export`, `recurring`

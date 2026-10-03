@@ -14,7 +14,7 @@ rescue e : Zipfelkasse::Domain::ValidationError
 end
 
 describe Zipfelkasse::Domain do
-  describe ".next_date (TestNextDate)" do
+  describe ".next_date" do
     {
       {"weekly", D::FREQ_WEEKLY, "2026-01-05", "2026-01-05", "2026-01-12"},
       {"weekly across year boundary", D::FREQ_WEEKLY, "2025-12-29", "2025-12-30", "2026-01-05"},
@@ -36,7 +36,6 @@ describe Zipfelkasse::Domain do
       end
     end
 
-    # Not in the Go tests; produced with Go.
     it "takes the calendar date in the given zone and ignores invalid frequencies" do
       berlin = Time::Location.load("Europe/Berlin")
       D.next_date(D::FREQ_WEEKLY, Time.local(2026, 3, 28, 23, 30, location: berlin), Time.utc(2026, 3, 29, 1, 0)).should eq Time.utc(2026, 4, 4)
@@ -44,15 +43,14 @@ describe Zipfelkasse::Domain do
     end
   end
 
-  it "computes occurrences from the anchor (TestOccurrence)" do
+  it "computes occurrences from the anchor" do
     anchor = d("2026-01-31")
     ["2026-01-31", "2026-02-28", "2026-03-31", "2026-04-30", "2026-05-31"].each_with_index do |want, n|
       D.occurrence(D::FREQ_MONTHLY, anchor, n).to_s(D::DATE_LAYOUT).should eq want
     end
   end
 
-  # Not in the Go tests; produced with Go.
-  it "computes occurrences for negative and large n like Go" do
+  it "computes occurrences for negative and large n" do
     anchor = d("2026-01-31")
     {
        -1 => {"2025-12-31", "2025-01-31", "2026-01-24"},
@@ -70,7 +68,7 @@ describe Zipfelkasse::Domain do
     end
   end
 
-  it "knows the frequencies (TestFrequency)" do
+  it "knows the frequencies" do
     D::FREQUENCIES.each do |f|
       f.valid?.should be_true
       f.label.should_not be_empty
@@ -80,13 +78,13 @@ describe Zipfelkasse::Domain do
     D::FREQUENCIES.map(&.label).should eq %w(Wöchentlich Monatlich Jährlich)
   end
 
-  it "has adverbs (TestFrequencyAdverb)" do
+  it "has adverbs" do
     {D::FREQ_WEEKLY => "wöchentlich", D::FREQ_MONTHLY => "monatlich", D::FREQ_YEARLY => "jährlich", D::Frequency.new("daily") => "daily"}.each do |f, want|
       f.adverb.should eq want
     end
   end
 
-  it "parses dates (TestParseDate)" do
+  it "parses dates" do
     {
       "2026-10-02"   => "2026-10-02",
       "02.10.2026"   => "2026-10-02",
@@ -113,8 +111,7 @@ describe Zipfelkasse::Domain do
     end
   end
 
-  # Not in the Go tests; produced with Go (time.Parse semantics).
-  it "parses dates exactly as strictly as Go" do
+  it "parses dates strictly" do
     {
       "+999-01-01"              => "Ungültiges Datum „+999-01-01“.",
       "0000-01-01"              => "Das Datum „0000-01-01“ liegt nicht zwischen 2000 und 2100.",
@@ -148,14 +145,14 @@ describe Zipfelkasse::Domain do
     end
   end
 
-  it "formats dates (TestFormatDate)" do
+  it "formats dates" do
     D.format_date(d("2026-10-02")).should eq "02.10.2026"
     D.format_date(nil).should eq ""
-    D.format_date(Time.utc(1, 1, 1)).should eq "" # Go's zero time
+    D.format_date(Time.utc(1, 1, 1)).should eq "" # counts as "not set"
     D.format_date(Time.utc(26, 10, 2)).should eq "02.10.0026"
   end
 
-  it "takes today's date in a time zone (TestToday)" do
+  it "takes today's date in a time zone" do
     berlin = Time::Location.load("Europe/Berlin")
     # 23:30 UTC on Oct 1 is already Oct 2 in Berlin.
     got = D.date_of(Time.utc(2026, 10, 1, 23, 30).in(berlin))
@@ -164,7 +161,7 @@ describe Zipfelkasse::Domain do
     D.today(berlin).should eq D.date_of(Time.local(berlin))
   end
 
-  it "names the year range in the message (TestParseDateRangeMessage)" do
+  it "names the year range in the message" do
     message = validation_error { D.parse_date("0026-10-02") }
     message.should contain "2000"
     message.should contain "2100"

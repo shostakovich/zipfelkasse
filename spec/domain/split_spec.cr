@@ -18,7 +18,7 @@ rescue e : Zipfelkasse::Domain::ValidationError
 end
 
 describe Zipfelkasse::Domain do
-  describe ".split (TestSplit)" do
+  describe ".split" do
     {
       {"equal even", D::SPLIT_EQUAL, 900, parts({1, 1}, {2, 1}, {3, 1}), {1 => 300, 2 => 300, 3 => 300}},
       {"equal remainder to smallest ID", D::SPLIT_EQUAL, 1000, parts({3, 1}, {1, 1}, {2, 1}), {1 => 334, 2 => 333, 3 => 333}},
@@ -42,9 +42,7 @@ describe Zipfelkasse::Domain do
     end
   end
 
-  # On tied remainders the extra cent rotates with the start value (expense
-  # ID) round-robin over the tied people (sorted by ID).
-  describe ".split rotating ties (TestSplitRotatesTies)" do
+  describe ".split rotating ties" do
     three = parts({3, 1}, {1, 1}, {2, 1})
     {
       {"two people, even ID", D::SPLIT_EQUAL, 1001, parts({1, 1}, {2, 1}), 10, {1 => 501, 2 => 500}},
@@ -68,11 +66,11 @@ describe Zipfelkasse::Domain do
     end
   end
 
-  it "stores weight 1 for equal splits (TestSplitEqualStoresWeightOne)" do
+  it "stores weight 1 for equal splits" do
     D.split(D::SPLIT_EQUAL, 100, parts({1, 0}, {2, 5}), 0).map(&.weight).should eq [1, 1]
   end
 
-  describe ".split errors (TestSplitErrors)" do
+  describe ".split errors" do
     {
       {"no people", D::SPLIT_EQUAL, 100_i64, [] of D::Part, "Mindestens eine Person"},
       {"amount zero", D::SPLIT_EQUAL, 0_i64, parts({1, 1}), "größer als 0"},
@@ -91,8 +89,7 @@ describe Zipfelkasse::Domain do
       end
     end
 
-    # Not in the Go tests; exact texts produced with Go.
-    it "uses Go's exact messages" do
+    it "uses the exact messages" do
       validation_error { D.split(D::SPLIT_SHARES, 100, parts({1, 1_000_001}), 0) }.should eq "Anteile dürfen höchstens 1000000 sein."
       validation_error { D.split(D::SPLIT_PERCENT, 100, parts({1, 10001}), 0) }.should eq "Die Prozente müssen zusammen 100 % ergeben."
       validation_error { D.split(D::SPLIT_PERCENT, 100, parts({1, 5000}, {2, 4000}), 0) }.should eq "Die Prozente müssen zusammen 100 % ergeben (aktuell 90,00 %)."
@@ -101,7 +98,7 @@ describe Zipfelkasse::Domain do
     end
   end
 
-  it "allocates by largest remainder with rotation (TestAllocate)" do
+  it "allocates by largest remainder with rotation" do
     max = D::MAX_AMOUNT_CENTS
     [
       {667_i64, [600_i64, 400_i64], 0_i64, [400_i64, 267_i64]},
@@ -116,7 +113,6 @@ describe Zipfelkasse::Domain do
       # No overflow: total · weight > Int64::MAX.
       {max, [999_999_999_999_999_i64, 1_i64], 0_i64, [max, 0_i64]},
       {max, [max * 100, max * 100], 1_i64, [max // 2, max // 2]},
-      # Not in the Go tests; produced with Go.
       {0_i64, [1_i64, 2_i64], 5_i64, [0_i64, 0_i64]},
       {7_i64, [1_i64] * 8, 5_i64, [1_i64, 1_i64, 1_i64, 1_i64, 0_i64, 1_i64, 1_i64, 1_i64]},
       {10_i64, [3_i64, 3_i64, 1_i64, 1_i64, 1_i64, 1_i64], -7_i64, [3_i64, 3_i64, 1_i64, 1_i64, 1_i64, 1_i64]},
@@ -125,10 +121,7 @@ describe Zipfelkasse::Domain do
     end
   end
 
-  # By amounts in a foreign currency: the weights are the amounts in that
-  # currency (sum = original amount), the euro amount is distributed in
-  # proportion to them; ties rotate like the other modes.
-  it "splits foreign amounts (TestSplitConverted)" do
+  it "splits foreign amounts" do
     ps = parts({3, 334}, {1, 333}, {2, 333})
     D.split_converted(D::SPLIT_AMOUNT, 909, 1000, "USD", ps, 0).should eq [
       D::Share.new(1, 333, 303), D::Share.new(2, 333, 303), D::Share.new(3, 334, 303),
@@ -148,7 +141,7 @@ describe Zipfelkasse::Domain do
     end
   end
 
-  it "knows the split modes (TestSplitModeValid)" do
+  it "knows the split modes" do
     D::SPLIT_MODES.each do |mode|
       mode.valid?.should be_true
       mode.label.should_not be_empty
@@ -159,8 +152,7 @@ describe Zipfelkasse::Domain do
     D::SPLIT_MODES.map(&.label).should eq ["Gleichmäßig", "Nach Anteilen", "Nach Prozent", "Nach Beträgen"]
   end
 
-  # Not in the Go tests; produced with Go.
-  it "parses weights like Go (ParseWeight, WeightDecimals)" do
+  it "parses weights (parse_weight, weight_decimals)" do
     {"5" => 5, " 5 " => 5, "+5" => 5, "-3" => -3, "\t5" => 5}.each do |v, want|
       D.parse_weight(D::SPLIT_SHARES, "EUR", v).should eq want
     end
@@ -175,7 +167,7 @@ describe Zipfelkasse::Domain do
     D.weight_decimals(D::SPLIT_SHARES, "KWD").should eq 0
   end
 
-  it "reads and writes parts and shares as JSON like Go's tags" do
+  it "reads and writes parts and shares as JSON" do
     D::Part.new(1, 2).to_json.should eq %({"participant_id":1,"weight":2})
     D::Share.from_json(%({"participant_id":3,"weight":1,"amount_cents":250})).should eq D::Share.new(3, 1, 250)
   end

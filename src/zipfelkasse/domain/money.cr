@@ -55,7 +55,7 @@ module Zipfelkasse::Domain
   end
 
   private def parse_fixed(s : String, decimals : Int32) : Int64
-    s = s.gsub(' ', "").gsub('\u{A0}', "") # not U+202F; keeps invalid bytes
+    s = s.gsub(' ', "").gsub('\u{A0}', "") # only space and NBSP, not U+202F
     raise ValidationError.new("Bitte einen Betrag eingeben.") if s.empty?
     number = split_number(s, decimals < 3)
     raise ValidationError.new("Ungültiger Betrag „#{s}“.") unless number

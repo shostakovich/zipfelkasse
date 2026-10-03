@@ -60,7 +60,7 @@ Delete this file at the end of the port.
     graceful shutdown, `App.wire_<feature>` hook per package), `config/config.cr` (+ spec, green), `logger.cr`
     (slog-like lines), `stopper.cr` (shutdown signal for jobs).
   - `store/`: `store.cr` (pool with Go's PRAGMAs, `transaction` = BEGIN IMMEDIATE behind a fiber-aware write mutex,
-    migrations from `internal/store/migrations` + `GO_MIGRATIONS` registry for data migrations 2/4/5, extended error
+    migrations from `internal/store/migrations` + `DATA_MIGRATIONS` registry for data migrations 2/4/5, extended error
     codes, `unique_violation?`), `lib_sqlite.cr` (extra FFI + **patch for crystal-sqlite3's finalize check**, which
     otherwise raises on close after any failed statement), `fold.cr`, `backup.cr`, `settings.cr`,
     `participants.cr`, `activity.cr`. Store core was tested against the Go seed DB (opens at version 5, fold works).

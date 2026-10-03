@@ -1,18 +1,14 @@
 require "digest/sha256"
 
 module Zipfelkasse::Web
-  # The static files (CSS, JS, icons), embedded byte for byte.
   module Static
-    # relative path (e.g. "icons/icon-192.png") → content
     FILES = {} of String => Bytes
     {% for path in system("cd #{__DIR__}/../../../internal/web/static && find . -type f | sort").lines %}
       FILES[{{ path[2..] }}] = {{ read_file("#{__DIR__}/../../../internal/web/static/#{path[2..].id}") }}.to_slice
     {% end %}
 
-    # File name → short hash for cache busting (first 5 bytes of SHA-256).
     HASHES = FILES.to_h { |name, bytes| {name, Digest::SHA256.hexdigest(bytes)[0, 10]} }
 
-    # "app.css" → "/static/app.css?v=…"
     def self.url(name : String) : String
       if h = HASHES[name]?
         "/static/#{name}?v=#{h}"
@@ -33,7 +29,6 @@ module Zipfelkasse::Web
       CONTENT_TYPES[File.extname(name)]? || "application/octet-stream"
     end
 
-    # GET /static/<path>: with ?v=… cached for a year, otherwise 5 minutes.
     def self.serve(req : Request) : Nil
       name = req.path.lchop("/static/")
       bytes = FILES[name]? || return Web.text_error(req.ctx, 404, "404 page not found")
