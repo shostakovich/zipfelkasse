@@ -1,7 +1,10 @@
 .git
 .claude
 data
-zipfelkasse
+bin
+lib
+.crystal
+e2e/data
 *.db
 *.db-shm
 *.db-wal

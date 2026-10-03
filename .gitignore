@@ -1,5 +1,5 @@
 /data/
-/zipfelkasse
+/.crystal/
 *.db-shm
 *.db-wal
 .claude/worktrees/
