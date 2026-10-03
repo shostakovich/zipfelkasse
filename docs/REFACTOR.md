@@ -147,3 +147,37 @@ E2E expectations.
 ### Then
 
 Review per package (subagents), fixes, docs check, delete this file.
+
+## Wave 1 outcome (merged)
+
+State: `crystal spec` 371 green, E2E 115 green + 1 pending (nightly backup, see below). Build the E2E binary
+with `shards build -Dtest_hooks`.
+
+Contract from W1-A, use it as is:
+- Logging: `Log = ::Log.for(self)` in `Zipfelkasse`, `Web`, `MCP`, `FX`, `YNAB`, `Recurring`, `Store`;
+  `Log.info(&.emit("msg", k: v))`, `Log.error(exception: ex) { "msg" }`; `Zipfelkasse.setup_logging(io)`.
+  No `Deps#log`; `App.new(config, store)`.
+- Config: `Config::TEST_HOOKS`, `Config#read_test_hooks(env)`, `Config#now` (frozen or `Time.utc`),
+  `backup_dir` derived from `db_path`.
+- Store: `Store::Error`, `get_x?(id, db = @db)`/`get_x(id, db = @db)`, `Store.on_duplicate`,
+  `Store.format_time`, `Store.check_affected`, `actor_id : Int64?` (nil = system). DB converters
+  `Zipfelkasse::Store::{TimeText,DateText,EnumText(T),FXSourceText,JSONText(T),SecondsSpan}` (fully
+  qualified in `DB::Field`).
+- Enums with `key`/`from_key?`: `Domain::SplitMode`, `Domain::Frequency`, `Domain::FXSource`
+  (`ezb`/`manuell`/`fest`), `Domain::PeriodUnit`, `Store::Action`, `Store::ExpenseSort`, `Store::StatsGroup`.
+  German labels: `Web.split_mode_label`, `Web.frequency_label`, `Web.frequency_adverb`.
+- Records: `Store::Expense` (flat, `shares`, `category_name : String?`, `reimbursement?`, `to_input`),
+  `ExpenseFilter`/`StatsFilter` with nilable fields and `copy_with`, `StatRow` nilable, `Recurring#template`
+  is an `ExpenseInput` (`paid_by : Int64?`, `fx_rate : Float64?`, `fx_source : FXSource?`).
+- MCP: `MCP::SQLSandbox.new(path).query(sql)`, `Store::EXPOSED_TABLES`, `Store#schema`, `Store#overview`,
+  `Store.fill_periods`, `Domain::Period`.
+
+Left over from wave 1, now part of wave 2:
+- W2-A: `ExpenseForm`/`HomeFilter` still use 0/"" (remove the bridges `Web.nil_if_zero`, `Web.form_id?`);
+  `Store.format_date` vs `Domain.format_date` naming (C13); **bug: `App.backup_loop` uses the real clock
+  (`Time.local`) instead of `config.now`** — fix it so one run per day happens even with a frozen clock, then
+  turn the pending scenario in `e2e/process_spec.cr` into a real one and also assert the backup file mode
+  `0600` (B19).
+- W2-B: MCP tool arguments still use 0/""; `YNABStatus`/`YNABSync` still use "" for absent values and are
+  mutable structs; `set_ynab_token(reachable:)` callback (G27); `docs/MCP.md` still says `store.MCPTables`
+  (D2).
