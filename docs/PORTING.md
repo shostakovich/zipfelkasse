@@ -89,4 +89,55 @@ package.
 
 ## Conventions
 
-(Filled in during phase 2.)
+### Layout and names
+
+| Go | Crystal |
+|---|---|
+| `main.go` | `src/zipfelkasse.cr` (entry point, CLI) |
+| `internal/<pkg>/<file>.go` | `src/zipfelkasse/<pkg>/<file>.cr` (same file split) |
+| `internal/<pkg>/<file>_test.go` | `spec/<pkg>/<file>_spec.cr` (same cases) |
+| `internal/<pkg>/templates/*.html` | `src/views/<pkg>/*.ecr` |
+| package `domain`, `store`, `web`, `fx`, … | `Zipfelkasse::Domain`, `Zipfelkasse::Store` (a class), `Zipfelkasse::Web`, `Zipfelkasse::FX`, `Zipfelkasse::Recurring`, `Zipfelkasse::YNAB`, `Zipfelkasse::Export`, `Zipfelkasse::MCP`, `Zipfelkasse::Config` |
+| exported `FormatCents` | `format_cents` (snake_case methods, CamelCase types) |
+| static files, migrations | stay where they are (`internal/web/static`, `internal/store/migrations`) until Go is removed; embedded at compile time |
+
+Each package gets its own folder; agents only write inside their folders (plus their specs).
+
+### Go semantics that Crystal does differently
+
+Helpers live in `src/zipfelkasse/go_compat/` (`Zipfelkasse::GoCompat`); use them instead of ad-hoc code:
+
+- **Whitespace**: Go's `unicode.IsSpace` includes U+0085; Crystal's `Char#whitespace?` does not. Use
+  `GoCompat.space?`, `GoCompat.fields`, `GoCompat.trim_space` where Go uses `strings.Fields`/`TrimSpace`.
+- **Lower case**: Go's `strings.ToLower` maps rune by rune (`İ` → `i`). Use `GoCompat.to_lower`.
+- **Floats**: `GoCompat.format_float(f)` = `strconv.FormatFloat(f, 'f', -1, 64)` (shortest digits, never an
+  exponent, no `.0`). JSON floats like Go: `GoCompat.json_float`.
+- **JSON written to the database or to clients**: `GoCompat::JSON` writes like `encoding/json` (key order as
+  given, `<>&` escaped as `<…` when `html: true`, U+2028/2029 always escaped, floats like Go).
+- **Integer division/modulo on possibly negative numbers**: Go truncates; use `tdiv` / `remainder`, not
+  `//` / `%`. Go wraps on overflow; Crystal raises. Use `Int128` or wrapping ops (`&+`) where Go relies on it.
+- **Rounding**: `math.Round` is half away from zero: `round(:ties_away)` (Crystal's default is ties-to-even).
+- **Dates**: calendar dates are `Time` at UTC midnight (`Time.utc(y, m, d)`); "not set" is `nil`
+  (`Time?`), written as Go's zero time `0001-01-01T00:00:00Z` where Go stores it in JSON. Timestamps are
+  written as RFC 3339 UTC without fraction (`2026-10-03T10:00:00Z`).
+- **Strings in error messages** quoted with Go's `%q`: `GoCompat.quote`.
+- **Rune counts**: `String#size` (code points) equals Go's `len([]rune(s))`; byte counts are `bytesize`.
+
+### Errors
+
+- `Domain::ValidationError` (message shown to the user, German) — handlers render the form again with 422.
+- `Store::NotFound`, and per feature further specific errors where Go has sentinel errors.
+- `Web::HTTPError.new(status, message)` renders the German error page with that status; any other exception
+  reaches the central handler: logged, then the 500 page "Da ist etwas schiefgegangen.".
+
+### HTML and escaping
+
+Templates are ECR files compiled with `Web.render` (our own ECR front end): `<%= x %>` is **always HTML-escaped**
+(`&`, `<`, `>`, `"`, `'`); raw output only with `<%== x %>` or values of type `Web::SafeHTML` (the `icon`
+helper). Never build HTML by string concatenation in Crystal code. Whitespace of the Go templates is kept
+where it is visible (between inline elements); `-%>`/`<%-` trim like Go's `{{-`/`-}}`.
+
+### Tests
+
+- Port each Go test file case by case to `spec/<pkg>/<file>_spec.cr`. `crystal spec` must be green.
+- The E2E suite (`e2e/`) runs the built binary; see `e2e/README.md`.

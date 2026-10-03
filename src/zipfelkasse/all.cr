@@ -1,0 +1,18 @@
+# Everything except the entry point; specs require this file.
+require "./go_compat/*"
+require "./domain/*"
+require "./config/*"
+require "./logger"
+require "./stopper"
+require "./store/store"
+require "./store/*"
+# web/ecr_process.cr is a compile-time program, not part of the app.
+require "./web/html"
+require "./web/deps"
+require "./web/render"
+require "./web/static"
+require "./web/middleware"
+require "./web/server"
+require "./web/web"
+require "./web/pwa"
+require "./app"
