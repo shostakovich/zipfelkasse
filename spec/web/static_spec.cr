@@ -29,22 +29,35 @@ private def template_classes : Set(String)
   end
 end
 
+private def felt_css : String
+  client = HTTP::Client.new(FELT_CSS_URL)
+  client.connect_timeout = client.read_timeout = 10.seconds
+  response = client.get(FELT_CSS_URL.request_target)
+  raise "HTTP #{response.status_code}" unless response.success?
+  response.body
+rescue ex
+  pending!("#{FELT_CSS_URL} not reachable (#{ex.message})")
+end
+
+private def app_css : String
+  String.new(Web::Static::FILES["app.css"])
+end
+
 describe Web::Static do
   it "styles every class the templates use" do
-    felt = begin
-      client = HTTP::Client.new(FELT_CSS_URL)
-      client.connect_timeout = client.read_timeout = 10.seconds
-      response = client.get(FELT_CSS_URL.request_target)
-      raise "HTTP #{response.status_code}" unless response.success?
-      response.body
-    rescue ex
-      pending!("#{FELT_CSS_URL} not reachable (#{ex.message})")
-    end
-    css = felt + String.new(Web::Static::FILES["app.css"])
+    css = felt_css + app_css
     defined = css.scan(/\.(-?[_a-zA-Z][\w-]*)/).map(&.[1]).to_set
     used = template_classes + HELPER_CLASSES
     used.size.should be > 50
     (used - defined - HOOK_CLASSES).to_a.sort.should eq [] of String
     (HOOK_CLASSES - (used - defined)).to_a.sort.should eq [] of String # stale entries of HOOK_CLASSES
+  end
+
+  it "only uses custom properties that felt.css or app.css define" do
+    css = felt_css + app_css
+    defined = css.scan(/(--[\w-]+)\s*:/).map(&.[1]).to_set
+    used = app_css.scan(/var\(\s*(--[\w-]+)/).map(&.[1]).to_set
+    used.size.should be > 2
+    (used - defined).to_a.sort.should eq [] of String
   end
 end

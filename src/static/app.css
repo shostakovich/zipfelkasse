@@ -18,7 +18,7 @@ body { min-height: 100dvh; overflow-x: hidden; }
 
 /* Lists run edge to edge on phones. */
 @media (max-width: 575.98px) {
-  .card-bleed { margin-inline: calc(-1 * var(--space-3)); border-inline-width: 0; border-radius: 0; }
+  .card-bleed { margin-inline: calc(-1 * var(--felt-space-3)); border-inline-width: 0; border-radius: 0; }
   /* felt: no outer seam on a piece cut off at the screen edges */
   .card-bleed::after { content: none; }
 }
@@ -56,7 +56,7 @@ body { min-height: 100dvh; overflow-x: hidden; }
 .app-container { max-width: 48rem; }
 /* Distance to the notch when the app runs installed (standalone). */
 .app-header { padding-top: env(safe-area-inset-top); }
-.app-brand { font-size: 1.5rem; font-weight: 800; letter-spacing: -0.025em; line-height: 1.2; color: var(--primary-text); }
+.app-brand { font-size: 1.5rem; font-weight: 800; letter-spacing: -0.025em; line-height: 1.2; color: var(--felt-primary-text); }
 .app-brand img { flex: none; width: auto; height: 3rem; }
 .app-main { padding-block: 1rem 3rem; }
 
