@@ -1,0 +1,4 @@
+## Idle schedulers must not busy-wait: the app mostly waits for requests.
++sbwt none
++sbwtdcpu none
++sbwtdio none

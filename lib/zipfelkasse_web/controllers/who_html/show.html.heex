@@ -1,0 +1,61 @@
+<Layouts.app flash={@flash} participant={@current_participant} fab={false}>
+  <.header>
+    Wer bist du?
+    <:subtitle>Wähle dich aus. Die App merkt sich das auf diesem Gerät.</:subtitle>
+  </.header>
+
+  <div class="flex flex-col gap-8">
+    <.alert :if={@error} tone={:error}>{@error}</.alert>
+
+    <section aria-label="Personen">
+      <.form
+        :if={@participants != []}
+        for={%{}}
+        as={:choice}
+        action={~p"/who"}
+        id="who-choose"
+        class="grid gap-2 sm:grid-cols-2"
+      >
+        <input type="hidden" name="return_to" value={@return_to} />
+        <.button
+          :for={participant <- @participants}
+          type="submit"
+          name="id"
+          value={participant.id}
+          id={"who-#{participant.id}"}
+          class={[
+            "justify-between",
+            @current_participant && @current_participant.id == participant.id &&
+              "setzkasten-selected"
+          ]}
+          aria-current={
+            @current_participant && @current_participant.id == participant.id && "true"
+          }
+        >
+          <span class="min-w-0 truncate">{participant.name}</span>
+          <.icon name="chevron-right" />
+        </.button>
+      </.form>
+      <.empty_state :if={@participants == []} plush="users" title="Noch niemand da.">
+        Leg dich unten als erste Person an.
+      </.empty_state>
+    </section>
+
+    <section aria-labelledby="who-new">
+      <.section_heading id="who-new">Neue Person</.section_heading>
+      <.form for={@form} action={~p"/who/new"} id="who-create">
+        <input type="hidden" name="return_to" value={@return_to} />
+        <.input
+          field={@form[:name]}
+          label="Name"
+          required
+          maxlength={Zipfelkasse.Names.max_length()}
+          autocomplete="given-name"
+        />
+        <.action_bar>
+          <.button type="submit" variant={:primary} icon="plus">Anlegen und auswählen</.button>
+        </.action_bar>
+      </.form>
+    </section>
+  </div>
+</Layouts.app>

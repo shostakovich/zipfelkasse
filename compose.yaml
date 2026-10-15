@@ -1,21 +1,22 @@
+# An example; put the app behind a reverse proxy that terminates TLS and keeps strangers out.
 services:
   zipfelkasse:
-    build: .
-    image: zipfelkasse:latest
+    image: ghcr.io/shostakovich/zipfelkasse:latest
     restart: unless-stopped
     ports:
-      - "8080:8080"
+      # Only on this host: Docker's published ports bypass the host's firewall.
+      - "127.0.0.1:4000:4000"
     environment:
-      TZ: Europe/Berlin
+      SECRET_KEY_BASE: ${SECRET_KEY_BASE:?the output of `openssl rand -hex 64`}
+      PHX_HOST: ${PHX_HOST:?the public host name, e.g. kasse.example.org}
+      # Turns on the MCP endpoint at /mcp/<secret>; empty leaves it off.
       MCP_SECRET: ${MCP_SECRET:-}
       # MCP_ALLOWED_CIDRS: 160.79.104.0/21
-      # Only the address of the Newt/Pangolin container as /32, not the whole
-      # Docker network – otherwise any container on the network could forge
-      # X-Forwarded-For. Address: log line "mcp: IP not allowed … remote=…" or
-      # docker inspect (see docs/MCP.md).
+      # Only the reverse proxy's own address as /32, never a whole network: every host in a trusted
+      # network could claim any client address (docs/MCP.md).
       # TRUSTED_PROXIES: 172.18.0.5/32
     volumes:
-      - zipfelkasse-data:/data
+      - zipfelkasse-data:/app/data
 
 volumes:
   zipfelkasse-data:

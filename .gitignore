@@ -1,10 +1,20 @@
-/data/
-/.crystal/
-/lib/
-/bin/
-/.shards/
-*.db-shm
-*.db-wal
+.env
 .DS_Store
 /.claude/*
 !/.claude/launch.json
+
+/_build/
+/cover/
+/deps/
+/doc/
+erl_crash.dump
+/tmp/
+
+# SQLite databases.
+/storage/
+/data/
+
+# Built by esbuild, Tailwind and phx.digest.
+/priv/static/assets/
+/priv/static/cache_manifest.json
+/priv/static/images/**/*-[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f].*
