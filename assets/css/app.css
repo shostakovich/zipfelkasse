@@ -1,0 +1,15 @@
+/* Tailwind CSS 4 with daisyUI 5 and Setzkasten's themes and components; this file only holds what
+   is specific to Zipfelkasse. */
+
+@import "tailwindcss" source(none);
+@import "phoenix-colocated/zipfelkasse/colocated.css";
+@source "../css";
+@source "../js";
+@source "../../lib/zipfelkasse_web";
+
+@plugin "daisyui/packages/bundle/daisyui" {
+  themes: false;
+}
+
+/* Resolved through NODE_PATH, which holds the Mix build path (config :tailwind). */
+@import "lib/setzkasten/priv/static/setzkasten.css";

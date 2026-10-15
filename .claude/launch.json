@@ -2,13 +2,23 @@
   "version": "0.0.1",
   "configurations": [
     {
-      "name": "zipfelkasse-production-copy",
-      "runtimeExecutable": "sh",
+      "name": "zipfelkasse",
+      "runtimeExecutable": "/bin/sh",
       "runtimeArgs": [
         "-c",
-        "shards build -Dtest_hooks && mkdir -p data/preview && { [ -f data/preview/zipfelkasse.db ] || cp data/prod/zipfelkasse.db data/preview/zipfelkasse.db; } && exec env ZIPFELKASSE_ADDR=127.0.0.1:8090 ZIPFELKASSE_DB=data/preview/zipfelkasse.db ZIPFELKASSE_TEST_YNAB_URL=http://127.0.0.1:9 TZ=Europe/Berlin bin/zipfelkasse serve"
+        "for d in \"$HOME\"/.elixir-install/installs/otp/*/bin \"$HOME\"/.elixir-install/installs/elixir/*/bin; do [ -d \"$d\" ] && PATH=\"$d:$PATH\"; done; export PATH; mix ecto.create --quiet && mix ecto.migrate && exec mix phx.server"
       ],
-      "port": 8090
+      "port": 4000,
+      "autoPort": true
+    },
+    {
+      "name": "zipfelkasse-production-copy",
+      "runtimeExecutable": "/bin/sh",
+      "runtimeArgs": [
+        "-c",
+        "for d in \"$HOME\"/.elixir-install/installs/otp/*/bin \"$HOME\"/.elixir-install/installs/elixir/*/bin; do [ -d \"$d\" ] && PATH=\"$d:$PATH\"; done; export PATH; [ -f storage/preview.sqlite3 ] || install -m 600 data/prod/zipfelkasse.sqlite3 storage/preview.sqlite3; export DATABASE_PATH=\"$PWD/storage/preview.sqlite3\" PORT=4001 YNAB_BASE_URL=http://127.0.0.1:9; mix ecto.migrate && exec mix phx.server"
+      ],
+      "port": 4001
     }
   ]
 }
